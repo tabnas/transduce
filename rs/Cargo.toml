@@ -1,0 +1,48 @@
+[package]
+name = "tabnas-transduce"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Richard Rodger <http://richardrodger.com>"]
+description = "Streaming transducers over any tabnas parser: source events, selectors, bounded captures and the table protocol."
+license = "MIT"
+repository = "https://github.com/tabnas/transduce"
+readme = "README.md"
+keywords = ["parser", "streaming", "transducer", "json", "csv"]
+categories = ["parsing", "encoding"]
+
+[lib]
+name = "tabnas_transduce"
+path = "src/lib.rs"
+
+[dependencies]
+# The engine is consumed as a SIBLING CHECKOUT, the standard tabnas
+# development model: clone https://github.com/tabnas/parser next to this
+# repo. The `tabnas` crate is not published, so there is no registry
+# version to fall back on. tabnas-json is the grammar the JSON Lines
+# source parses each line with.
+tabnas = { path = "../../parser/rs" }
+tabnas-json = { path = "../../json/rs" }
+indexmap = "2"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+
+[dev-dependencies]
+# The grammars the differential suite runs every fixture through, each a
+# sibling checkout like the engine.
+tabnas-jsonl = { path = "../../jsonl/rs" }
+tabnas-jsonic = { path = "../../jsonic/rs" }
+tabnas-jsonc = { path = "../../jsonc/rs" }
+tabnas-json5 = { path = "../../json5/rs" }
+tabnas-yaml = { path = "../../yaml/rs" }
+tabnas-toml = { path = "../../toml/rs" }
+tabnas-ini = { path = "../../ini/rs" }
+tabnas-csv = { path = "../../csv/rs" }
+tabnas-xml = { path = "../../xml/rs" }
+tabnas-zon = { path = "../../zon/rs" }
+tabnas-markdown = { path = "../../markdown/rs" }
+tabnas-feed = { path = "../../feed/rs" }
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "throughput"
+harness = false

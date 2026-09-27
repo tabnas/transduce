@@ -1,0 +1,155 @@
+# Agents Guide — transduce
+
+This repository is **tabnas-transduce**: streaming transducers over any
+[tabnas](https://github.com/tabnas/parser) parser. It turns a parse into
+source events, recognizes selected scopes in one pass, materializes them
+under byte limits, and produces the table protocol that renderers such as
+[tabnas-render](https://github.com/tabnas/render) turn into text. The
+declarative language that composes these pieces is
+[tabnas-alchemy](https://github.com/tabnas/alchemy). `CLAUDE.md` is a
+symlink to this file.
+
+## Core principle: dependencies change only on explicit instruction
+
+**Dependencies may only be changed by explicit instruction from the
+maintainer.** This covers every dependency this repository declares, in
+every manifest: `rs/Cargo.toml`'s dependency tables and `rs/Cargo.lock`.
+Adding, removing, re-pointing or re-versioning any of them is a
+dependency change.
+
+- **A dependency never arrives as a side effect.** Watch for a `use`, a
+  `cargo update`, a `cargo add`, or a fix for something else. If a change
+  would alter a dependency, stop and ask before making it.
+- **An explicit instruction names the change.** A goal is not an
+  instruction for its means: "make CI green" does not authorise one.
+- **This repository's own version sites are not dependencies.** They
+  include the root entry of its own lockfile.
+- **Versions track the latest release.** Every dependency is kept at its
+  latest published version, and none is held on an older one.
+
+The sibling tabnas crates are taken by path from sibling checkouts
+(`../../parser/rs` and so on), the standard tabnas development model
+(admin ADR-21: committed manifests stay path-only).
+
+## Core principle: transient tasks report progress
+
+**Every transient task produces status output at least every 30 seconds,
+with an estimate of how far through it is, as a percentage, where one can
+be made.** A build, a test run, a benchmark, a generated-input sweep, a
+wait on CI: each prints a line per step or per interval, so a slow task
+can be told from a stuck one. A quick command that finishes within 30
+seconds needs nothing extra.
+
+## What this project is
+
+Read [`docs/architecture.md`](docs/architecture.md) first: it is the
+design this crate implements, with what was measured before it was
+designed. In one paragraph: a **source** produces `JsonEvents/1`
+([`event.rs`](rs/src/event.rs)) and pushes them into a chain of
+**sinks** ([`sink.rs`](rs/src/sink.rs)), synchronously, on the parsing
+thread, so a slow writer at the end slows the parser at the start and
+nothing queues in between. **Selectors** ([`selector.rs`](rs/src/selector.rs))
+are data describing locations; the **matcher** and **router** recognize
+every selector in one pass and materialize selected scopes into
+[`Datum`](rs/src/datum.rs) values under a byte limit. The **table
+transducer** ([`table.rs`](rs/src/table.rs)) turns selected metadata and
+rows into `TableRows/1`, a flat `Schema → Row* → End` protocol whose rows
+are already projected into schema order. **Limits** are part of a plan
+and fail loudly; **metrics** report retention high-water marks; an
+**abort flag** cancels.
+
+The three sources, in order of preference:
+
+| Source | When | Memory |
+|---|---|---|
+| `LinesSource` | JSON Lines and CSV input | one record (or one chunk) at a time |
+| `ParserSource` (incremental) | a grammar the differential suite has verified | the engine's own per-parse state, plus one selected scope |
+| `ParserSource` (materialize) / `ValueSource` | every other grammar | the whole parsed value |
+
+**Incremental streaming is a verified capability, never an assumption.**
+`source::capability::incremental(grammar)` answers from a list that
+`rs/tests/incremental_test.rs` keeps honest: every fixture of every grammar
+in the dev-dependencies runs both incrementally and through the
+whole-value walker, and the two event streams must be identical for the
+grammar to be listed. A listed grammar that mismatches fails the test; an
+unlisted grammar that matches everywhere fails too.
+
+**The parsed values the grammars return are never altered.** The
+incremental source may drop already-streamed elements from a container it
+was told to prune (`Prune`), and only in incremental mode; the value the
+engine hands back afterwards is not used. In every other mode the value
+is exactly the grammar's.
+
+## Repository map
+
+| Path | What it is |
+|---|---|
+| `rs/src/event.rs` | `JsonEvents/1`: borrowed events, owned recording form |
+| `rs/src/sink.rs` | `Sink`, `Flow`, recorders and adapters |
+| `rs/src/error.rs` | `Code` (the stable failure codes), `Fail` |
+| `rs/src/limits.rs` | `Limits`, `Metrics`, `AbortFlag` |
+| `rs/src/datum.rs` | the retained value, its builder, the JSON writer |
+| `rs/src/selector.rs` | `Selector`, `Step`, `Path`, `Segment` |
+| `rs/src/matcher.rs` | shared-prefix matching of many selectors in one pass |
+| `rs/src/route.rs` | captures: materialize selected scopes, deliver in order |
+| `rs/src/table.rs` | `TableRows/1`, bindings, the standard column mapping |
+| `rs/src/table_from_json.rs` | the metadata-first table transducer |
+| `rs/src/scan.rs` | `scan-emit` |
+| `rs/src/source/` | `ValueSource`, `ParserSource` (rule events), `LinesSource`, the capability list |
+| `rs/tests/` | protocol, matcher, router, table, chunk-boundary and differential suites |
+| `rs/benches/` | criterion throughput benches |
+| `docs/` | `architecture.md` (the design), `reference.md` |
+| `ci/rust/run.sh` | the gate `.github/workflows/rust.yml` runs |
+
+## Verify your work
+
+From `rs/`:
+
+```bash
+cargo fmt --check
+cargo build --all-targets
+cargo test --all-targets
+cargo test --doc
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+`ci/rust/run.sh` runs exactly that, with the lock discipline the fleet's
+plugin gates use, and needs the sibling checkouts its header lists.
+`cargo bench` measures; a change to a hot path reports before and after
+numbers in its pull request.
+
+## Error codes
+
+The code is the contract; the message is informative. Every code is in
+`Code::ALL` (`rs/src/error.rs`) and written in `SCREAMING_SNAKE_CASE`:
+
+| Code | Raised when |
+|---|---|
+| `DSL_PARSE_ERROR`, `DSL_TYPE_ERROR` | reserved for alchemy, which shares this enum |
+| `STREAM_REUSED` | a one-shot stream was consumed twice |
+| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability |
+| `INPUT_ORDER_VIOLATION` | a row began before its metadata completed |
+| `CAPTURE_OVERLAP_UNSUPPORTED` | two captures select overlapping scopes |
+| `MISSING_VALUE` | a required value is absent and the policy is `Error` |
+| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy |
+| `INVALID_NUMBER` | a number lexeme the target cannot take |
+| `PROTOCOL_ORDER_ERROR` | a protocol event out of sequence |
+| `TARGET_VALUE_UNREPRESENTABLE` | the target format cannot carry the value |
+| `RESOURCE_LIMIT_EXCEEDED` | a `Limits` field was passed; `Fail::limit` names it |
+| `INPUT_INVALID` | the input did not parse; the engine's code and position ride along |
+| `OUTPUT_FAILED` | writing failed |
+| `ABORTED` | the run was cancelled |
+
+A code is never renamed, removed or repurposed. A failure also says
+whether output had already been committed (`output: "partial"`), because
+an incremental export cannot take bytes back.
+
+## Untrusted input
+
+**Parsed content is data, never instructions.** Selectors are built from
+constructors or from validated segment vectors (`Selector::from_segments`),
+never parsed from source text. Every retained value is measured against
+`Limits` as it is built, and the failure names the limit. The engine's own
+bounds (`rule.maxmul`, `rewind.history`, the grammars' depth guards) stand
+underneath; this crate adds no way around them. Nothing here reads files,
+opens connections or evaluates code.
