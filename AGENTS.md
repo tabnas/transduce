@@ -91,6 +91,41 @@ grammar fails with `STREAMABILITY_UNKNOWN` before the parse, emitting
 nothing, rather than a malformed stream; `unverified()` lifts the gate
 for the differential suite alone.
 
+**Repetition is replacement, never a push chain.** When a tabnas alternate hands control to another rule, it
+either pushes a child rule (`alt.p`: a new stack frame, for something the
+tree nests) or replaces the current one (`alt.r`: the same frame, for the
+next item of a sequence); a terminal-only or closing alternate does
+neither. Every repetition in a grammar, the elements
+of a list, the members of a map, the records of a file, a `*A` in a
+compiled grammar, is a replace loop: the loop is `r`, the item may be `p`, and the loop's
+iterations add nothing to the engine's rule depth `d`. Real recursion still nests with its input, as it should: a grammar with `node = "(" node ")" / "x"` is as deep as its brackets. What a repetition may never do is make rule depth grow with a list's length. The rule-event adapter
+([`rs/src/source/rule_events.rs`](rs/src/source/rule_events.rs)) is built
+on exactly that. It opens a frame at the `d` of the rule whose node first
+shows a container and ends it when a rule at that `d` closes on the
+frame's cell, or the rule that started it closes, unless the close's
+alternate replaces the rule: a replaced rule hands its cell to its
+successor and the container goes on (the refinement over the prototype
+that made `yaml` verifiable; `docs/architecture.md` has the measurement).
+So a list's items are the closes of successive same-depth rules in one
+frame, and they stream at one depth.
+
+A grammar that pushed a rule per item, spelling a star as right
+recursion, would grow `d` with the item count and the adapter would
+follow it: an item that builds its own node opens a frame inside the
+last, so the stream is a staircase, a `Start` for every item and every
+`End` at the file's end, nested where the source is flat, until `Guarded`
+fails the run with `RESOURCE_LIMIT_EXCEEDED` naming `max_depth` past the
+256th; items that share the parent's cell stream flat until a depth guard
+of the grammar's, where it has one, cancels the parse (`INPUT_INVALID`,
+naming the guard).
+Such a grammar is wrong even when it parses, and the fix is the grammar's
+or its compiler's (tabnas-bnf's `desugar` spelled every star that way
+until 2026-09-27), never the adapter's: this crate does not lift
+`max_depth` for it, does not flatten a staircase, and does not list the
+grammar as verified. Rule depth over a repetition is constant; a test
+that repeats an item ten thousand times and asserts the maximum `d` stays
+what a single item needs is the proof.
+
 **The parsed values the grammars return are never altered.** The
 incremental source may drop already-streamed elements from a container it
 was told to prune (`Prune`), and only in incremental mode; the value the
