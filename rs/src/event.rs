@@ -60,7 +60,7 @@ pub enum JsonEvent<'a> {
     End,
 }
 
-impl<'a> JsonEvent<'a> {
+impl JsonEvent<'_> {
     /// An owned copy, for recorders and tests.
     pub fn to_owned(&self) -> OwnedJsonEvent {
         match *self {
