@@ -341,10 +341,15 @@ impl DatumBuilder {
         self.done.is_some()
     }
 
-    /// The value, once [`finished`](Self::finished).
+    /// The value, once [`finished`](Self::finished). Probing an unfinished
+    /// builder returns `None` and leaves the charge for the partial value in
+    /// place: the bytes it holds are still held.
     pub fn take(&mut self) -> Option<Datum> {
-        self.bytes = 0;
-        self.done.take()
+        let done = self.done.take();
+        if done.is_some() {
+            self.bytes = 0;
+        }
+        done
     }
 
     fn charge(&mut self, n: usize) -> Result<(), Fail> {
@@ -371,7 +376,14 @@ impl DatumBuilder {
                 let key = key.take().ok_or_else(|| {
                     Fail::protocol("a value arrived inside an object without a key")
                 })?;
-                if members.contains_key(&key) {
+                // A repeated member was charged in full as its events arrived,
+                // which is right: for a moment both were held. Whichever one
+                // goes now gives its bytes back, so an object that keeps
+                // repeating a small key does not grow towards the limit while
+                // the value it holds stays the same size. A completed value's
+                // `byte_size` is exactly what its events were charged.
+                let mut released = 0;
+                if let Some(existing) = members.get(&key) {
                     match self.duplicates {
                         Duplicates::Reject => {
                             return Err(Fail::new(
@@ -380,11 +392,15 @@ impl DatumBuilder {
                             )
                             .at_path(self.path.to_string()));
                         }
-                        Duplicates::FirstWins => return Ok(()),
-                        Duplicates::LastWins => {}
+                        Duplicates::FirstWins => {
+                            self.bytes = self.bytes.saturating_sub(key.len() + value.byte_size());
+                            return Ok(());
+                        }
+                        Duplicates::LastWins => released = key.len() + existing.byte_size(),
                     }
                 }
                 members.insert(key, value);
+                self.bytes = self.bytes.saturating_sub(released);
             }
         }
         Ok(())
@@ -570,6 +586,62 @@ mod tests {
         assert_eq!(
             run(Duplicates::FirstWins).unwrap().to_string(),
             r#"{"a":true}"#
+        );
+    }
+
+    #[test]
+    fn probing_an_unfinished_builder_keeps_its_charge() {
+        let mut b = DatumBuilder::new(usize::MAX, "max_capture_bytes", Duplicates::Reject);
+        b.event(JsonEvent::ArrayStart).unwrap();
+        b.event(JsonEvent::String("abcd")).unwrap();
+        let held = b.bytes();
+        assert!(b.take().is_none());
+        assert_eq!(b.bytes(), held, "a None from take() releases nothing");
+        b.event(JsonEvent::ArrayEnd).unwrap();
+        assert!(b.take().is_some());
+        assert_eq!(b.bytes(), 0);
+    }
+
+    #[test]
+    fn a_repeated_member_does_not_grow_the_charge() {
+        for policy in [Duplicates::FirstWins, Duplicates::LastWins] {
+            let mut b = DatumBuilder::new(usize::MAX, "max_capture_bytes", policy);
+            b.event(JsonEvent::ObjectStart).unwrap();
+            b.event(JsonEvent::Key("k")).unwrap();
+            b.event(JsonEvent::String("first")).unwrap();
+            let once = b.bytes();
+            for _ in 0..100 {
+                b.event(JsonEvent::Key("k")).unwrap();
+                b.event(JsonEvent::String("again")).unwrap();
+            }
+            assert_eq!(
+                b.bytes(),
+                once,
+                "{policy:?}: the charge is the object's size"
+            );
+            b.event(JsonEvent::ObjectEnd).unwrap();
+            let d = b.take().unwrap();
+            assert_eq!(d.byte_size(), once);
+        }
+    }
+
+    #[test]
+    fn a_repeated_member_still_trips_the_limit_while_both_are_held() {
+        // Both values are held for a moment, and that moment is what the
+        // limit protects: the second value is charged before the first is
+        // released.
+        let mut b = DatumBuilder::new(
+            NODE_BYTES * 2 + 1 + 5 + 3,
+            "max_capture_bytes",
+            Duplicates::LastWins,
+        );
+        b.event(JsonEvent::ObjectStart).unwrap();
+        b.event(JsonEvent::Key("k")).unwrap();
+        b.event(JsonEvent::String("first")).unwrap();
+        b.event(JsonEvent::Key("k")).unwrap();
+        assert_eq!(
+            b.event(JsonEvent::String("second")).unwrap_err().code,
+            Code::ResourceLimitExceeded
         );
     }
 
