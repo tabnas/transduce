@@ -152,7 +152,7 @@ The code is the contract; the message is informative. Every code is in
 |---|---|
 | `DSL_PARSE_ERROR`, `DSL_TYPE_ERROR` | reserved for alchemy, which shares this enum |
 | `STREAM_REUSED` | a one-shot stream was consumed twice |
-| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; an incremental run of a grammar whose rule events do not amount to one document |
+| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; an incremental run of an unnamed or unverified grammar (refused before the parse), or one the adapter refuses mid-way: a list wrapped around a root already streamed, a map rewritten after streaming, a member announced and never stored |
 | `INPUT_ORDER_VIOLATION` | a row began before its metadata completed |
 | `CAPTURE_OVERLAP_UNSUPPORTED` | two captures select overlapping scopes |
 | `MISSING_VALUE` | a required value is absent and the policy is `Error` |
