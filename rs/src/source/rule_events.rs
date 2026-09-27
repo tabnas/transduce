@@ -31,6 +31,13 @@
 //!   whose first half has already left, and the run fails with
 //!   `DUPLICATE_MEMBER`. The whole-value walk sees only the survivor, so
 //!   a repeated name is the one documented place the two streams differ.
+//! - A grammar may rewrite a map's members after the adapter streamed
+//!   them: YAML resolves a `<<` merge key when the mapping closes, removing
+//!   the member and appending the merged ones. The adapter keeps an
+//!   order-independent hash of the distinct names it streamed into each
+//!   map and compares it with the map's names when the frame ends; a
+//!   difference fails the run with `STREAMABILITY_UNKNOWN` rather than
+//!   letting a stream the walk contradicts complete.
 //! - The top frame ENDS when a rule at the frame's depth whose node is the
 //!   frame's cell closes, or the rule that started it closes, unless that
 //!   close REPLACES the rule (`alt.r`): a replaced rule hands its cell to
@@ -68,6 +75,7 @@
 //! so once the parse has returned the driver provably holds the only
 //! strong one and takes the adapter, and the sink, back.
 
+use std::hash::{BuildHasher, RandomState};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
@@ -93,10 +101,14 @@ struct Frame {
     len: usize,
     rule_i: usize,
     depth: usize,
-    /// The key announced early for the next member, when `has_key`.
+    /// The last member name streamed; the one announced early for the
+    /// next member, when `has_key`.
     key: String,
     has_key: bool,
     prune: bool,
+    /// The wrapping sum of the hashes of the distinct names streamed into
+    /// this map, to compare with the map's names when the frame ends.
+    names: u64,
 }
 
 /// How the run stands, as seen from inside the callbacks.
@@ -137,6 +149,8 @@ pub(crate) struct Adapter<S: Sink> {
     prune_hit: bool,
     /// A whole root value (a scalar, or the outermost frame) has been emitted.
     root_done: bool,
+    /// Hashes member names for the frames' `names` sums.
+    hasher: RandomState,
 }
 
 impl<S: Sink + Send + 'static> Adapter<S> {
@@ -175,6 +189,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             prune,
             prune_hit: false,
             root_done: false,
+            hasher: RandomState::new(),
         }
     }
 
@@ -338,6 +353,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                 key: String::new(),
                 has_key: false,
                 prune,
+                names: 0,
             });
         } else {
             let f = &mut self.frames[self.open];
@@ -349,6 +365,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             f.key.clear();
             f.has_key = false;
             f.prune = prune;
+            f.names = 0;
         }
         self.open += 1;
     }
@@ -458,11 +475,17 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                                             return;
                                         }
                                     }
+                                    let name = self.hasher.hash_one(key);
                                     let top = &mut self.frames[top_i];
                                     let announced = top.has_key;
                                     top.has_key = false;
-                                    if !announced && !self.emit(JsonEvent::Key(key)) {
-                                        return;
+                                    top.names = top.names.wrapping_add(name);
+                                    if !announced {
+                                        top.key.clear();
+                                        top.key.push_str(key);
+                                        if !self.emit(JsonEvent::Key(key)) {
+                                            return;
+                                        }
                                     }
                                 }
                                 if !self.entry(value) {
@@ -502,6 +525,16 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                     // member is whatever the map holds under the name now.
                     let node = rule.node.borrow();
                     if !self.settle_pending(&node, top_i) {
+                        return;
+                    }
+                }
+                if !array {
+                    let node = rule.node.borrow();
+                    let names = member_names(&node)
+                        .map(|k| self.hasher.hash_one(k))
+                        .fold(0u64, u64::wrapping_add);
+                    if names != self.frames[top_i].names {
+                        self.fail(rewritten_map());
                         return;
                     }
                 }
@@ -678,6 +711,28 @@ fn same_container(a: &Value, b: &Value) -> bool {
         (Value::ListRef(x), Value::ListRef(y)) => Arc::ptr_eq(x, y),
         _ => false,
     }
+}
+
+/// The member names of a map, in its order.
+fn member_names(v: &Value) -> impl Iterator<Item = &str> {
+    let names: Box<dyn Iterator<Item = &str>> = match v {
+        Value::Object(m) => Box::new(m.keys().map(String::as_str)),
+        Value::MapRef(m) => Box::new(m.value.keys().map(String::as_str)),
+        _ => Box::new(std::iter::empty()),
+    };
+    names
+}
+
+/// The failure for a map whose members the grammar rewrote after the
+/// adapter streamed them (YAML's `<<` merge keys are resolved when the
+/// mapping closes): the stream would contradict the walk.
+pub(crate) fn rewritten_map() -> Fail {
+    Fail::new(
+        Code::StreamabilityUnknown,
+        "the grammar rewrote the members of a map after the incremental source streamed them \
+         (a YAML merge key does), so the stream would not be the document's; run it with \
+         SourceMode::Materialize",
+    )
 }
 
 /// The member of a map under `key`.

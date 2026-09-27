@@ -471,3 +471,30 @@ fn a_repeated_member_a_grammar_refuses_is_the_grammars_error_in_both_modes() {
     assert_eq!(result.unwrap_err().code, Code::InputInvalid);
     assert!(well_formed(&events));
 }
+
+/// YAML resolves a `<<` merge key when the mapping closes, removing the
+/// member and appending the merged ones: the members the adapter streamed
+/// are no longer the map's, so the run is refused rather than completed.
+#[test]
+fn a_map_the_grammar_rewrites_after_streaming_is_refused() {
+    let text = "base: &b\n  x: 1\nd:\n  <<: *b\n  y: 2\n";
+    let (walk, walked) = run(tabnas_yaml::make, text, SourceMode::Materialize);
+    walk.unwrap();
+    assert_eq!(
+        root_value(&walked, Duplicates::Reject).unwrap().to_string(),
+        r#"{"base":{"x":1},"d":{"y":2,"x":1}}"#
+    );
+    let (result, events) = incremental(tabnas_yaml::make, text);
+    let err = result.unwrap_err();
+    assert_eq!(err.code, Code::StreamabilityUnknown, "{err}");
+    assert!(err.message.contains("merge key"), "{err}");
+    assert!(well_formed(&events));
+    assert!(!events.contains(&OwnedJsonEvent::End));
+
+    // An alias without a merge key copies the value and streams as the walk.
+    let text = "a: &r {x: 1}\nb: *r\n";
+    let (result, events) = incremental(tabnas_yaml::make, text);
+    assert_eq!(result.unwrap(), Flow::Continue);
+    let (_, walked) = run(tabnas_yaml::make, text, SourceMode::Materialize);
+    assert_eq!(without_lexemes(&events), walked);
+}
