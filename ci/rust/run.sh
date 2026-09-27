@@ -33,8 +33,13 @@ cd "$ROOT/rs"
 MSRV=$(awk -F'"' '/^rust-version = /{print $2; exit}' Cargo.toml)
 CARGO=(cargo)
 if [[ -n "$MSRV" ]]; then
-  if command -v rustup >/dev/null 2>&1 && rustup toolchain list | grep -q "^$MSRV"; then
-    CARGO=(cargo "+$MSRV")
+  # The INSTALLED toolchain's full name (`1.85.1-x86_64-...`), not the
+  # `1.85` channel: `cargo +1.85` names a release channel, which rustup
+  # would try to synchronize over the network even when 1.85.1 is already
+  # installed, and an offline checkout would fail before cargo ran.
+  TOOLCHAIN=$(rustup toolchain list 2>/dev/null | awk -v m="$MSRV" 'index($1, m) == 1 { print $1; exit }')
+  if [[ -n "$TOOLCHAIN" ]]; then
+    CARGO=(cargo "+$TOOLCHAIN")
   else
     echo "warning: MSRV $MSRV is not installed; running on $(rustc --version 2>/dev/null)" >&2
     echo "         install it with: rustup toolchain install $MSRV" >&2
