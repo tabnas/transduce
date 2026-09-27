@@ -365,8 +365,31 @@ grammar_tests! {
     feed_streams_incrementally_where_the_list_says_so => "feed",
 }
 
+/// The grammar crates `Cargo.toml` takes by path (`tabnas-<name>`), read
+/// from the manifest at test time so a grammar added there without a
+/// `GRAMMARS` row fails here.
+fn manifest_grammars() -> Vec<String> {
+    let mut names: Vec<String> = include_str!("../Cargo.toml")
+        .lines()
+        .filter_map(|line| {
+            let (name, rest) = line.split_once('=')?;
+            let name = name.trim().strip_prefix("tabnas-")?;
+            rest.contains("path").then(|| name.to_string())
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 #[test]
 fn every_grammar_in_the_dev_dependencies_is_verified_here() {
+    let mut suite: Vec<String> = GRAMMARS.iter().map(|g| g.name.to_string()).collect();
+    suite.sort();
+    assert_eq!(
+        manifest_grammars(),
+        suite,
+        "the grammar crates Cargo.toml names and the GRAMMARS this suite runs differ"
+    );
     // The list can only name grammars this suite runs.
     for name in capability::INCREMENTAL {
         assert!(
@@ -374,7 +397,6 @@ fn every_grammar_in_the_dev_dependencies_is_verified_here() {
             "capability::INCREMENTAL names {name:?}, which this suite does not run"
         );
     }
-    assert_eq!(GRAMMARS.len(), 13);
 }
 
 /// Whether a recording is a protocol-valid stream, or a prefix of one:
