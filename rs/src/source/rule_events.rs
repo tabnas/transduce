@@ -18,6 +18,19 @@
 //! - A key is announced early when the rule stashed it in `u["key"]` at
 //!   its OPEN pass (`@key$` and the grammars' own actions do); a key the
 //!   adapter only learns at insertion is announced then.
+//! - A repeated member name does not grow the map: the engine's insert
+//!   replaces the earlier value in place, or the grammar merges the two
+//!   (jsonic's `map.extend`, which yaml, json5, jsonc and zon inherit).
+//!   The announcing rule's CLOSE pass is where the member landed (the
+//!   engine notifies after the close actions), so when that pass leaves
+//!   the map at its old length the adapter looks the member up: a scalar
+//!   is streamed, so the stream reads `Key a, 1, Key a, 2` and a router's
+//!   `Duplicates` policy decides, as it would for any repeated member; a
+//!   container the adapter has just streamed is complete already; any
+//!   other container is a merge of the earlier value with the new one,
+//!   whose first half has already left, and the run fails with
+//!   `DUPLICATE_MEMBER`. The whole-value walk sees only the survivor, so
+//!   a repeated name is the one documented place the two streams differ.
 //! - The top frame ENDS when a rule at the frame's depth whose node is the
 //!   frame's cell closes, or the rule that started it closes, unless that
 //!   close REPLACES the rule (`alt.r`): a replaced rule hands its cell to
@@ -107,9 +120,11 @@ enum PruneState {
 pub(crate) struct Adapter<S: Sink> {
     frames: Vec<Frame>,
     open: usize,
-    /// The container that completed last, by `Arc` pointer: the next entry
-    /// inserted into its parent is this one, already streamed.
-    last_completed: Option<usize>,
+    /// The container that completed last: the next entry inserted into its
+    /// parent is this one, already streamed. Held as the value, not as a
+    /// pointer, so the allocation stays alive and a merged container built
+    /// after it cannot be mistaken for it by landing at the same address.
+    last_completed: Option<Value>,
     lexeme: String,
     lexeme_value: f64,
     lexeme_ready: bool,
@@ -408,6 +423,25 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                 if self.frames[top_i].cell == cell {
                     if let Some((array, len)) = container_len(&node) {
                         let old = self.frames[top_i].len;
+                        if !array && self.frames[top_i].has_key {
+                            // The announced member is settled by the rule
+                            // that announced it closing, unless it is the
+                            // first new entry, which the loop below streams.
+                            let first_new = (len > old)
+                                .then(|| entry_at(&node, old))
+                                .flatten()
+                                .and_then(|(key, _)| key);
+                            let pending = self.frames[top_i].key.as_str();
+                            let announcer = rule.u.get("key").is_some_and(
+                                |k| matches!(k, Value::String(s) if s.as_str() == pending),
+                            );
+                            if first_new != Some(pending)
+                                && (announcer || len > old)
+                                && !self.settle_pending(&node, top_i)
+                            {
+                                return;
+                            }
+                        }
                         if len > old {
                             for i in old..len {
                                 let Some((key, value)) = entry_at(&node, i) else {
@@ -415,21 +449,23 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                                 };
                                 if !array {
                                     let key = key.unwrap_or("");
+                                    let top = &self.frames[top_i];
+                                    if top.has_key && top.key != key {
+                                        // A member landed ahead of the one
+                                        // announced; that one keeps its
+                                        // place in the stream.
+                                        if !self.settle_pending(&node, top_i) {
+                                            return;
+                                        }
+                                    }
                                     let top = &mut self.frames[top_i];
-                                    let announced = top.has_key && top.key == key;
+                                    let announced = top.has_key;
                                     top.has_key = false;
                                     if !announced && !self.emit(JsonEvent::Key(key)) {
                                         return;
                                     }
                                 }
-                                let pointer = container_ptr(value);
-                                if pointer.is_some() && pointer == self.last_completed {
-                                    self.last_completed = None;
-                                } else if pointer.is_some() {
-                                    if !self.walk(value) {
-                                        return;
-                                    }
-                                } else if !self.scalar(value) {
+                                if !self.entry(value) {
                                     return;
                                 }
                             }
@@ -461,6 +497,14 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             let top = &self.frames[top_i];
             if top.rule_i == rule.i || (top.cell == cell && top.depth == rule.d) {
                 let array = top.array;
+                if top.has_key {
+                    // The announcing rule never closed on this cell: the
+                    // member is whatever the map holds under the name now.
+                    let node = rule.node.borrow();
+                    if !self.settle_pending(&node, top_i) {
+                        return;
+                    }
+                }
                 self.open -= 1;
                 self.lexeme_ready = false;
                 if !self.emit(if array {
@@ -470,7 +514,8 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                 }) {
                     return;
                 }
-                self.last_completed = container_ptr(&rule.node.borrow());
+                let node = rule.node.borrow();
+                self.last_completed = is_container(&node).then(|| node.clone());
                 if self.open == 0 {
                     self.root_done = true;
                 }
@@ -486,6 +531,68 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                 self.root_done = true;
             }
         }
+    }
+
+    /// Emit one entry that just landed in the top frame's container: a
+    /// scalar as itself, the container that completed last as nothing (it
+    /// has been streamed), any other container whole, late.
+    fn entry(&mut self, value: &Value) -> bool {
+        if !is_container(value) {
+            return self.scalar(value);
+        }
+        if self
+            .last_completed
+            .as_ref()
+            .is_some_and(|last| same_container(value, last))
+        {
+            self.last_completed = None;
+            return true;
+        }
+        self.walk(value)
+    }
+
+    /// The member announced on the frame `top_i` did not grow its map, so
+    /// it replaced or merged an earlier member of the same name: stream
+    /// what the map holds under that name now. A scalar is emitted; the
+    /// container that completed last was streamed as it was built; any
+    /// other container is the grammar's merge of both values, which cannot
+    /// be streamed because the first half already was, so the run fails
+    /// with `DUPLICATE_MEMBER`. A name the map does not hold at all means
+    /// the grammar announced a member it never stored, which the adapter
+    /// cannot follow.
+    fn settle_pending(&mut self, node: &Value, top_i: usize) -> bool {
+        let top = &mut self.frames[top_i];
+        top.has_key = false;
+        let key = std::mem::take(&mut top.key);
+        let ok = match member(node, &key) {
+            Some(value) => {
+                if !is_container(value) {
+                    self.scalar(value)
+                } else if self
+                    .last_completed
+                    .as_ref()
+                    .is_some_and(|last| same_container(value, last))
+                {
+                    self.last_completed = None;
+                    true
+                } else {
+                    self.fail(merged_member(&key));
+                    false
+                }
+            }
+            None => {
+                self.fail(Fail::new(
+                    Code::StreamabilityUnknown,
+                    format!(
+                        "the grammar announced member {key:?} and never stored it, which the \
+                         incremental source cannot follow; run it with SourceMode::Materialize"
+                    ),
+                ));
+                false
+            }
+        };
+        self.frames[top_i].key = key;
+        ok
     }
 
     /// Keep the source text of a number rule's first token when it is a
@@ -555,14 +662,44 @@ fn container_len(v: &Value) -> Option<(bool, usize)> {
     }
 }
 
-fn container_ptr(v: &Value) -> Option<usize> {
+fn is_container(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Object(_) | Value::Array(_) | Value::MapRef(_) | Value::ListRef(_)
+    )
+}
+
+/// Whether two values are the same shared container.
+fn same_container(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => Arc::ptr_eq(x, y),
+        (Value::Array(x), Value::Array(y)) => Arc::ptr_eq(x, y),
+        (Value::MapRef(x), Value::MapRef(y)) => Arc::ptr_eq(x, y),
+        (Value::ListRef(x), Value::ListRef(y)) => Arc::ptr_eq(x, y),
+        _ => false,
+    }
+}
+
+/// The member of a map under `key`.
+fn member<'v>(v: &'v Value, key: &str) -> Option<&'v Value> {
     match v {
-        Value::Object(m) => Some(Arc::as_ptr(m) as *const () as usize),
-        Value::Array(a) => Some(Arc::as_ptr(a) as *const () as usize),
-        Value::MapRef(m) => Some(Arc::as_ptr(m) as *const () as usize),
-        Value::ListRef(l) => Some(Arc::as_ptr(l) as *const () as usize),
+        Value::Object(m) => m.get(key),
+        Value::MapRef(m) => m.value.get(key),
         _ => None,
     }
+}
+
+/// The failure for a repeated member whose values the grammar merged: the
+/// first value has already been streamed, so the merged one cannot be.
+pub(crate) fn merged_member(key: &str) -> Fail {
+    Fail::new(
+        Code::DuplicateMember,
+        format!(
+            "member {key:?} appears twice and the grammar merged the two values; the first was \
+             already streamed, so the incremental source cannot emit the merged member: run it \
+             with SourceMode::Materialize"
+        ),
+    )
 }
 
 fn entry_at(v: &Value, i: usize) -> Option<(Option<&str>, &Value)> {

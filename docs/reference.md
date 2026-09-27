@@ -65,7 +65,21 @@ other way, and every number a walk emits, has `lexeme: None`.
 
 `capability::INCREMENTAL` lists `json`, `json5`, `jsonc`, `jsonl`, `yaml`
 and `zon`. `rs/tests/incremental_test.rs` runs every fixture each grammar
-reads through both modes and asserts the list in both directions. `jsonic`
+reads through both modes and asserts the list in both directions.
+
+A repeated member name is the one documented place the two streams differ.
+The engine's insert replaces the earlier value in place, so the walk sees
+only the survivor (`{"a":1,"a":2}` walks as `{ key a 2 }`), while the
+incremental source has already streamed the first value and streams the
+second under its own `Key`: `{ key a 1 key a 2 }`. A `Router`'s
+`Duplicates` policy then decides, as for any repeated member: `LastWins`
+yields the engine's value, `Reject` fails with `DUPLICATE_MEMBER`. When
+the grammar MERGES the two values instead of replacing (jsonic's
+`map.extend`, on for `yaml`, `json5` and `jsonic`, off for `json`, `jsonl`
+and `jsonc`), the merged container cannot be streamed because its first
+half already was, and the incremental run fails with `DUPLICATE_MEMBER`
+saying to run materialized. `zon` refuses a repeated field itself, in
+both modes. `jsonic`
 is not listed: its top-level implicit lists whose first element is a
 container (`{a:1}` on one line, `{b:2}` on the next) wrap a value that has
 already been streamed as the root, and the incremental source refuses them

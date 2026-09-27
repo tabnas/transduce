@@ -72,7 +72,11 @@ The three sources, in order of preference:
 in the dev-dependencies reads runs both incrementally and through the
 whole-value walker, and the two event streams must be identical for the
 grammar to be listed. A listed grammar that mismatches fails the test; an
-unlisted grammar that matches everywhere fails too. The list today is
+unlisted grammar that matches everywhere fails too. A repeated member
+name is the one documented difference: the stream carries every
+occurrence where the walk keeps the engine's survivor, a router's
+`Duplicates` policy resolves it, and a grammar that merges the two values
+fails the run with `DUPLICATE_MEMBER` (`docs/reference.md`). The list today is
 `json`, `json5`, `jsonc`, `jsonl`, `yaml`, `zon`; `jsonic` is off it
 because a top-level implicit list whose first element is a container
 wraps a value already streamed as the root (`docs/reference.md` has the
@@ -145,7 +149,7 @@ The code is the contract; the message is informative. Every code is in
 | `INPUT_ORDER_VIOLATION` | a row began before its metadata completed |
 | `CAPTURE_OVERLAP_UNSUPPORTED` | two captures select overlapping scopes |
 | `MISSING_VALUE` | a required value is absent and the policy is `Error` |
-| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy |
+| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy; an incremental run whose grammar merged a repeated member's containers after the first was streamed |
 | `INVALID_NUMBER` | a number lexeme the target cannot take |
 | `PROTOCOL_ORDER_ERROR` | a protocol event out of sequence |
 | `TARGET_VALUE_UNREPRESENTABLE` | the target format cannot carry the value |

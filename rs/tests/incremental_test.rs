@@ -24,7 +24,8 @@ use std::path::PathBuf;
 
 use tabnas::Tabnas;
 use tabnas_transduce::{
-    capability, Code, Fail, Flow, OwnedJsonEvent, ParserSource, Prune, SourceMode,
+    capability, replay, CaptureSpec, Code, Datum, Duplicates, Fail, Flow, Limits, Matcher, Metrics,
+    OwnedJsonEvent, ParserSource, Prune, Router, Selected, Selector, SourceMode,
 };
 
 const RECORDS: usize = 2000;
@@ -318,4 +319,155 @@ fn every_grammar_in_the_dev_dependencies_is_verified_here() {
         );
     }
     assert_eq!(GRAMMARS.len(), 13);
+}
+
+/// Whether a recording is a protocol-valid stream, or a prefix of one:
+/// every event is accepted by a matcher, which validates the sequence.
+fn well_formed(events: &[OwnedJsonEvent]) -> bool {
+    let mut m = Matcher::new(&[]);
+    events.iter().all(|e| m.event(e.as_event()).is_ok())
+}
+
+/// The document's root value as a router materializes it from a recording
+/// under `policy`, which is how every consumer of the stream sees repeated
+/// members.
+fn root_value(events: &[OwnedJsonEvent], policy: Duplicates) -> Result<Datum, Fail> {
+    let mut r = Router::new(
+        vec![CaptureSpec::materialize("root", Selector::root())],
+        &Limits::default(),
+        policy,
+        Metrics::new(),
+        Vec::<Selected>::new(),
+    )?;
+    replay(events, &mut r)?;
+    Ok(r.into_inner().remove(0).value.unwrap_or(Datum::Null))
+}
+
+/// A grammar by name, and a text for it.
+type Case = (&'static str, fn() -> Tabnas, &'static str);
+
+fn incremental(make: fn() -> Tabnas, text: &str) -> (Result<Flow, Fail>, Vec<OwnedJsonEvent>) {
+    run(
+        make,
+        text,
+        SourceMode::Incremental {
+            prune: Prune::Never,
+        },
+    )
+}
+
+/// A repeated member name is the one documented place the incremental
+/// stream and the walk differ: the stream carries every occurrence, the
+/// walk only the engine's survivor. A router's `LastWins` makes them agree
+/// for every grammar that replaces the earlier value; `Reject` sees the
+/// duplicate the walk would have hidden.
+#[test]
+fn a_repeated_scalar_member_streams_every_occurrence_and_last_wins_agrees_with_the_walk() {
+    let cases: [Case; 6] = [
+        ("json", tabnas_json::make, r#"{"a":1,"a":2,"b":3}"#),
+        (
+            "jsonl",
+            tabnas_jsonl::make,
+            "{\"a\":1,\"a\":2}\n{\"a\":3,\"a\":4,\"b\":5}\n",
+        ),
+        ("yaml", tabnas_yaml::make, "a: 1\na: 2\nb: 3\n"),
+        ("json5", tabnas_json5::make, "{a:1,a:2,b:3}"),
+        ("jsonc", tabnas_jsonc::make, r#"{"a":1,"a":2,"b":3}"#),
+        ("jsonic", tabnas_jsonic::make, "a:1,a:2,b:3"),
+    ];
+    for (name, make, text) in cases {
+        let (result, events) = incremental(make, text);
+        assert_eq!(result.unwrap(), Flow::Continue, "{name}");
+        assert!(well_formed(&events), "{name}: {events:?}");
+        let keys = events
+            .iter()
+            .filter(|e| matches!(e, OwnedJsonEvent::Key(k) if &**k == "a"))
+            .count();
+        assert!(keys >= 2, "{name}: both occurrences of a are in the stream");
+        let (_, walked) = run(make, text, SourceMode::Materialize);
+        assert_eq!(
+            root_value(&without_lexemes(&events), Duplicates::LastWins).unwrap(),
+            root_value(&walked, Duplicates::Reject).unwrap(),
+            "{name}: last wins is the engine's value"
+        );
+        assert_eq!(
+            root_value(&events, Duplicates::Reject).unwrap_err().code,
+            Code::DuplicateMember,
+            "{name}"
+        );
+    }
+}
+
+/// The grammars with `map.extend` off (json, jsonl, jsonc) replace the
+/// earlier value whatever the shapes, so both are streamed and last wins.
+#[test]
+fn a_repeated_member_a_grammar_replaces_streams_both_values_whatever_their_shapes() {
+    let grammars: [Case; 3] = [
+        ("json", tabnas_json::make, ""),
+        ("jsonl", tabnas_jsonl::make, ""),
+        ("jsonc", tabnas_jsonc::make, ""),
+    ];
+    for (name, make, _) in grammars {
+        for text in [
+            r#"{"a":{"x":1},"a":{"y":2}}"#,
+            r#"{"a":[1],"a":2}"#,
+            r#"{"a":1,"a":{"y":2}}"#,
+            r#"{"a":1,"a":1,"a":2}"#,
+            r#"{"a":{"x":1},"a":{"x":1}}"#,
+        ] {
+            let (result, events) = incremental(make, text);
+            assert_eq!(result.unwrap(), Flow::Continue, "{name} {text}");
+            assert!(well_formed(&events), "{name} {text}: {events:?}");
+            let (_, walked) = run(make, text, SourceMode::Materialize);
+            assert_eq!(
+                root_value(&without_lexemes(&events), Duplicates::LastWins).unwrap(),
+                root_value(&walked, Duplicates::Reject).unwrap(),
+                "{name} {text}"
+            );
+        }
+    }
+}
+
+/// jsonic's `map.extend`, which yaml and json5 inherit, merges the two
+/// containers of a repeated name. The first was streamed before the
+/// second arrived, so the merged member cannot be, and the run fails
+/// rather than emit a stream that disagrees with the walk.
+#[test]
+fn a_repeated_container_member_the_grammar_merges_fails_with_duplicate_member() {
+    let cases: [Case; 4] = [
+        ("yaml flow", tabnas_yaml::make, "a: {x: 1}\na: {y: 2}\n"),
+        ("yaml block", tabnas_yaml::make, "a:\n  x: 1\na:\n  y: 2\n"),
+        ("json5", tabnas_json5::make, "{a:{x:1},a:{y:2}}"),
+        ("jsonic", tabnas_jsonic::make, "a:{x:1},a:{y:2}"),
+    ];
+    for (name, make, text) in cases {
+        let (result, events) = incremental(make, text);
+        let err = result
+            .map(|flow| panic!("{name}: Ok({flow:?}) after {events:?}"))
+            .unwrap_err();
+        assert_eq!(err.code, Code::DuplicateMember, "{name}: {err}");
+        assert!(
+            err.message.contains("Materialize"),
+            "{name}: the message says what to run instead"
+        );
+        assert!(well_formed(&events), "{name}: what left is a valid prefix");
+        assert!(!events.contains(&OwnedJsonEvent::End), "{name}");
+        let (walk, walked) = run(make, text, SourceMode::Materialize);
+        walk.unwrap();
+        assert_eq!(
+            root_value(&walked, Duplicates::Reject).unwrap().to_string(),
+            r#"{"a":{"x":1,"y":2}}"#,
+            "{name}: the walk has the merged member"
+        );
+    }
+}
+
+#[test]
+fn a_repeated_member_a_grammar_refuses_is_the_grammars_error_in_both_modes() {
+    let text = ".{ .a = 1, .a = 2 }";
+    let (whole, _) = run(tabnas_zon::make, text, SourceMode::Materialize);
+    let (result, events) = incremental(tabnas_zon::make, text);
+    assert_eq!(whole.unwrap_err().code, Code::InputInvalid);
+    assert_eq!(result.unwrap_err().code, Code::InputInvalid);
+    assert!(well_formed(&events));
 }
