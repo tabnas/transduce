@@ -72,7 +72,8 @@ Measured by `tabnas-render`'s criterion bench (`cargo bench` in
 
 | Stage | Input | Rate |
 |---|---|---|
-| `CsvRenderer` over a discarding writer | 20k rows × 5 cells of `TableRows/1` events | about 4.3 M rows/s, about 290 MiB/s of CSV out |
+| `CsvRenderer` over a discarding writer (renderer only, no parse) | 20k rows × 5 cells of `TableRows/1` events | about 4.3 M rows/s, about 290 MiB/s of CSV out |
+| `json_to_csv/text_to_csv_incremental`: JSON text → `ParserSource` (incremental, pruned) → `TableFromJson` → `CsvRenderer` → `WriteOut` | the 20k-record worked-example document (1.66 MB) | 1.37 s, 1.15 MiB/s of JSON in, 0.57 MiB/s of CSV out |
 | `ValueSource` walk + `JsonRenderer` | a parsed 1.66 MB, 20k-record document | about 78 MiB/s of source (about 20 ms) |
 
 So the pipeline downstream of the parse runs two orders of magnitude
@@ -115,3 +116,25 @@ What the table says, in the terms of the engine table above:
   grows with the document, as the first table shows; the line sources
   sidestep that for JSON Lines and CSV by parsing a record or a chunk at a
   time.
+
+## Through aless
+
+`aless --render` (release build, this container, 2026-09-27, two other
+cargo builds running at the time) on generated record documents, peak
+resident set of the aless process:
+
+| Input | Export | Throughput | Peak RSS |
+|---|---|---|---|
+| JSON Lines, 24.6 MB | CSV via `LinesSource` | 1.4 MB/s | 10 MB |
+| JSON Lines, 49.3 MB (the same file twice) | CSV via `LinesSource` | 1.4 MB/s | 10 MB |
+| CSV, 30.9 MB | CSV via `LinesSource` | 1.3 MB/s | 39 MB |
+| CSV, 61.8 MB (twice) | CSV via `LinesSource` | 1.3 MB/s | 39 MB |
+| JSON, 24.6 MB, `--path` to the records | CSV, incremental and pruned | 1.24 MB/s | 1634 MB |
+| JSON, 24.6 MB | JSON, incremental | 1.09 MB/s | 1642 MB |
+| YAML, 17.4 MB, `--path` to the records | CSV, incremental, unpruned | 0.93 MB/s | 1311 MB |
+
+The line sources hold memory flat whatever the file size. A single JSON
+or YAML document costs what the bare engine parse of it costs (the first
+table: 1640 MB and 1309 MB), because the engine's rule history is what is
+retained; the transducer's own retention is one record. Throughput is the
+engine's parse rate throughout.

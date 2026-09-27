@@ -49,7 +49,21 @@ fixtures: MATCH with zero late keys and zero re-walks for json, jsonl, jsonic,
 jsonc, json5, zon and a small yaml; MISMATCH for toml, ini, csv, xml,
 markdown, feed (imperative value construction, containers transformed before
 insertion) and for a large yaml (to be investigated). Consequence: incremental
-streaming is a per-grammar VERIFIED capability, never assumed. Every grammar
+streaming is a per-grammar VERIFIED capability, never assumed.
+
+What the differential suite then established (`rs/tests/incremental_test.rs`,
+over every fixture each grammar reads, under the contract that a listed
+grammar produces the walk's stream, or the walk's stream after a last-wins
+router, or a documented refusal before `End`) differs from that prototype:
+`yaml` is verified, once a close whose alternate replaces the rule no longer
+ends a frame; `jsonic`'s container-first implicit list and yaml's `---`
+document stream are refusals (`STREAMABILITY_UNKNOWN`, a root already
+streamed cannot be re-wrapped), not mismatches; and `markdown`'s events
+equal the walk. The verified list is `json`, `json5`, `jsonc`, `jsonic`,
+`jsonl`, `markdown`, `yaml`, `zon`; `toml`, `ini`, `csv`, `xml` and `feed`
+complete streams the walk contradicts and stay off it.
+[`reference.md`](reference.md) and `rs/src/source/capability.rs` record the
+contract and each refusal's shape. Every grammar
 still works through the whole-document walker. JSONL and CSV additionally get
 a line-chunked source that bounds memory regardless.
 
@@ -168,8 +182,8 @@ pub struct Matcher { … }   // new(&[Selector]) ; fn enter_key / enter_index / 
 
 // route.rs — capture and deliver completed, non-overlapping matches in order
 pub enum CaptureMode { Materialize, Observe }
-pub struct CaptureSpec { pub tag: Box<str>, pub selector: Selector, pub mode: CaptureMode }
-pub struct Selected { pub tag: Box<str>, pub path: Path, pub value: Option<Datum> }
+pub struct CaptureSpec { pub tag: Box<str> /* settled on `Arc<str>` */, pub selector: Selector, pub mode: CaptureMode }
+pub struct Selected { pub tag: Box<str> /* settled on `Arc<str>` */, pub path: Path, pub value: Option<Datum> }
 pub struct Router<F: FnMut(Selected) -> Result<Flow, Fail>> { … }   // impl Sink
 // Rejects overlap (CAPTURE_OVERLAP_UNSUPPORTED); enforces max_capture_bytes and
 // max_depth (RESOURCE_LIMIT_EXCEEDED); DUPLICATE_MEMBER in a captured scope
