@@ -42,7 +42,12 @@ Failure mapping: a sink's `Fail` comes back as it was; a sink that stopped
 is `Ok(Flow::Stop)`; a parse the caller's `AbortFlag` cancelled is
 `ABORTED`; any other engine error is `INPUT_INVALID` with the engine's
 code in the message and its row and column (for a line source, the line's
-number and the column within it). An incremental run whose rule events
+number and the column within it). A `cancel` the caller did not ask for is
+a guard the grammar installed (tabnas-json refuses nesting deeper than
+128, below the default `max_depth` of 256, so that limit is unreachable
+for JSON unless set lower), and the message says "the grammar stopped the
+parse with a guard of its own" rather than reporting a cancellation. An
+incremental run whose rule events
 did not amount to one whole document is `STREAMABILITY_UNKNOWN`, and so
 is one the adapter refuses because the grammar wrapped a value already
 streamed as the root in a list, or rewrote a map after it was streamed;

@@ -27,6 +27,7 @@ pub use parser::ParserSource;
 
 use crate::error::Fail;
 use crate::event::{JsonEvent, Number};
+use crate::limits::AbortFlag;
 use crate::selector::Selector;
 use crate::sink::{Flow, Sink};
 
@@ -50,6 +51,34 @@ pub enum Prune {
     /// names the elements; without one the selector names the array).
     Under(Selector),
     AllArrays,
+}
+
+/// The engine's cancel code: what a parse guard that answered `false`
+/// reports, whether the guard is this crate's abort or the grammar's own.
+const CANCEL: &str = "cancel";
+
+/// Map an engine error to a failure. A cancel while the caller's flag is
+/// set is `ABORTED`. A cancel otherwise is a guard the GRAMMAR installed
+/// (tabnas-json refuses nesting deeper than 128, well below the default
+/// `Limits::max_depth`), so the message says so instead of "parse
+/// cancelled", which would read as the caller's doing; it stays
+/// `INPUT_INVALID`, because the document is what the grammar refused. Any
+/// other error is the input's, with the engine's code and position.
+pub(crate) fn engine_failure(error: &tabnas::TabnasError, abort: &AbortFlag) -> Fail {
+    if error.code != CANCEL {
+        return Fail::from_tabnas(error);
+    }
+    if abort.is_aborted() {
+        return Fail::aborted();
+    }
+    let mut fail = Fail::from_tabnas(error);
+    fail.message = format!(
+        "the grammar stopped the parse with a guard of its own ({}: {}); a grammar may refuse \
+         nesting or size below this crate's Limits",
+        error.code,
+        error.detail.trim_end()
+    );
+    fail
 }
 
 /// Something that can drive a sink with one document's events.

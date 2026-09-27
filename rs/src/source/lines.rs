@@ -45,13 +45,13 @@ use std::sync::{Arc, Mutex};
 use tabnas::Tabnas;
 use tabnas_csv::CsvOptions;
 
-use crate::error::Fail;
+use crate::error::{Code, Fail};
 use crate::event::JsonEvent;
 use crate::limits::{AbortFlag, Limits, Metrics};
 use crate::sink::{Flow, Sink};
 use crate::source::guard::Guarded;
 use crate::source::rule_events::{self, Adapter, Status, GUARD};
-use crate::source::{walk_value, Prune, Source};
+use crate::source::{engine_failure, walk_value, Prune, Source};
 
 /// How much of the input one CSV parse holds, at most one record over.
 pub const DEFAULT_CHUNK_BYTES: usize = 256 * 1024;
@@ -319,12 +319,11 @@ fn install_guard(parser: &mut Tabnas, abort: &AbortFlag) {
 
 /// An engine error on one line: the line's number is the row.
 fn line_failure(error: &tabnas::TabnasError, line: u64, abort: &AbortFlag) -> Fail {
-    if error.code == "cancel" && abort.is_aborted() {
-        return Fail::aborted();
+    let mut fail = engine_failure(error, abort);
+    if fail.code != Code::Aborted {
+        fail.row = Some(line);
+        fail.column = Some(error.col as u64);
     }
-    let mut fail = Fail::from_tabnas(error);
-    fail.row = Some(line);
-    fail.column = Some(error.col as u64);
     fail
 }
 
@@ -563,7 +562,6 @@ impl<R: BufRead> Chunks<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::Code;
     use crate::event::OwnedJsonEvent;
     use crate::sink::FnSink;
     use crate::source::ValueSource;

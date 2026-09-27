@@ -24,7 +24,10 @@
 //! a sink that stopped is `Ok(Flow::Stop)`; a parse cancelled through the
 //! caller's [`AbortFlag`] is `ABORTED`; any other engine error is
 //! `INPUT_INVALID` with the engine's code and position
-//! ([`Fail::from_tabnas`]), a grammar's own depth guard included. An
+//! ([`Fail::from_tabnas`]); a grammar's own guard cancelling the parse is
+//! `INPUT_INVALID` too, with a message that names the grammar's guard
+//! rather than a cancellation nobody asked for (`source::engine_failure`).
+//! An
 //! incremental parse that returned `Ok` without one rule event the adapter
 //! could turn into a value (YAML's empty document is `null`) has its value
 //! walked instead: nothing was streamed, so the walk is the whole stream.
@@ -40,7 +43,7 @@ use crate::limits::{AbortFlag, Limits, Metrics};
 use crate::sink::{Flow, Sink};
 use crate::source::guard::Guarded;
 use crate::source::rule_events::{self, Adapter, Status, GUARD};
-use crate::source::{capability, walk_value, Prune, Source, SourceMode};
+use crate::source::{capability, engine_failure, walk_value, Prune, Source, SourceMode};
 
 /// A tabnas parser applied to one text, as a source.
 pub struct ParserSource<'s> {
@@ -179,20 +182,6 @@ impl Source for ParserSource<'_> {
         let outcome = materialize(self.parser, self.text, &self.abort, &mut guarded);
         guarded.flush();
         outcome
-    }
-}
-
-/// The engine's cancel code: what a parse guard that answered `false`
-/// reports.
-const CANCEL: &str = "cancel";
-
-/// Map an engine error: the caller's abort is `ABORTED`; everything else,
-/// a grammar's own guard included, is the input's fault.
-fn engine_failure(error: &tabnas::TabnasError, abort: &AbortFlag) -> Fail {
-    if error.code == CANCEL && abort.is_aborted() {
-        Fail::aborted()
-    } else {
-        Fail::from_tabnas(error)
     }
 }
 
@@ -443,6 +432,25 @@ mod tests {
             assert!(err.message.starts_with("unexpected"), "{}", err.message);
             assert_eq!(err.row, Some(2));
             assert_eq!(err.column, Some(7));
+        }
+    }
+
+    /// tabnas-json refuses nesting deeper than 128 through a guard of its
+    /// own, below the default `max_depth`; the failure must not read as a
+    /// cancellation the caller asked for.
+    #[test]
+    fn a_grammars_own_guard_is_invalid_input_that_names_the_grammar() {
+        let src = format!("{}1{}", "[".repeat(200), "]".repeat(200));
+        for mode in [SourceMode::Materialize, incremental_mode()] {
+            let (r, _) = record(mode, &src);
+            let err = r.unwrap_err();
+            assert_eq!(err.code, Code::InputInvalid);
+            assert!(
+                err.message.starts_with("the grammar stopped the parse"),
+                "{err}"
+            );
+            assert!(err.message.contains("cancel"), "{err}");
+            assert_eq!(err.column, Some(128));
         }
     }
 
