@@ -338,7 +338,7 @@ impl<D: RouteSink> Sink for Router<D> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::event::OwnedJsonEvent;
     use crate::sink::replay;

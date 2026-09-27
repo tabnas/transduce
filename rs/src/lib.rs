@@ -38,6 +38,7 @@ pub mod selector;
 pub mod sink;
 pub mod source;
 pub mod table;
+pub mod table_from_json;
 
 pub use datum::{
     walk_datum, write_json, write_json_number, write_json_string, Datum, DatumBuilder, Duplicates,
@@ -52,9 +53,10 @@ pub use selector::{Path, Segment, Selector, Step};
 pub use sink::{replay, CountSink, Flow, FnSink, Sink};
 pub use source::{walk_value, Source, ValueSource};
 pub use table::{
-    column_from_meta, BoundColumn, Cell, MissingPolicy, PublicColumn, Schema, Table, TableBinding,
-    TableEvent, TableSink,
+    column_from_meta, BoundColumn, Cell, ColumnMapper, MissingPolicy, PublicColumn, Schema, Table,
+    TableBinding, TableEvent, TableSink,
 };
+pub use table_from_json::TableFromJson;
 
 /// This crate's version, as `Cargo.toml` declares it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
