@@ -6,13 +6,18 @@
 //! the same size must leave `captured_bytes_high` (and so
 //! `retained_bytes_high`) exactly where it was; this is acceptance
 //! criterion 4 of the design brief, measured rather than asserted in
-//! prose.
+//! prose. That metric is the router's own accounting, so the test also
+//! looks where pruning acts: the engine's tree after the run
+//! (`ParserSource::run_owned_with_value`) must hold no row for 200 rows
+//! and none for 2000, and the same bytes for both, while the same run
+//! without pruning holds every row. A pruning that stopped truncating
+//! would leave the metric flat and fail here.
 
 mod support;
 
 use tabnas_transduce::{
-    column_from_meta, Duplicates, Limits, Metrics, OwnedJsonEvent, ParserSource, Prune, Schema,
-    Selector, SourceMode, Table, TableBinding, TableFromJson,
+    column_from_meta, Datum, Duplicates, Limits, Metrics, OwnedJsonEvent, ParserSource, Prune,
+    Schema, Segment, Selector, SourceMode, Table, TableBinding, TableFromJson,
 };
 
 /// The worked example with `rows` copies of one record, so every row has
@@ -33,7 +38,27 @@ fn same_rows(rows: usize) -> String {
     s
 }
 
-fn high_water(rows: usize) -> (u64, u64, usize) {
+/// What one run left behind.
+struct Left {
+    captured_high: u64,
+    retained_high: u64,
+    rows: usize,
+    /// Rows still in the engine's tree after the run.
+    tree_rows: usize,
+    /// The whole tree's size, on the limits' measure.
+    tree_bytes: usize,
+}
+
+fn records() -> Vec<Segment> {
+    vec![
+        Segment::key("response"),
+        Segment::key("payload"),
+        Segment::key("deep"),
+        Segment::key("records"),
+    ]
+}
+
+fn run(rows: usize, prune: Prune) -> Left {
     let text = same_rows(rows);
     let metrics = Metrics::new();
     let selector = Selector::root()
@@ -59,36 +84,81 @@ fn high_water(rows: usize) -> (u64, u64, usize) {
         Table::default(),
     )
     .expect("the binding is valid");
-    let (outcome, table) = ParserSource::new(tabnas_json::make(), &text)
+    let (outcome, table, value) = ParserSource::new(tabnas_json::make(), &text)
         .grammar("json")
-        .mode(SourceMode::Incremental {
-            prune: Prune::Under(selector),
-        })
+        .mode(SourceMode::Incremental { prune })
         .metrics(metrics.clone())
-        .run_owned(table);
+        .run_owned_with_value(table);
     outcome.expect("the run succeeds");
     let table = table.into_inner();
     assert!(table.ended);
-    (
-        Metrics::get(&metrics.captured_bytes_high),
-        Metrics::get(&metrics.retained_bytes_high),
-        table.rows.len(),
-    )
+    let tree = Datum::from_tabnas(&value.expect("the parse returned"));
+    let tree_rows = tree
+        .get_path(&records())
+        .and_then(Datum::as_array)
+        .expect("the records array is in the tree")
+        .len();
+    Left {
+        captured_high: Metrics::get(&metrics.captured_bytes_high),
+        retained_high: Metrics::get(&metrics.retained_bytes_high),
+        rows: table.rows.len(),
+        tree_rows,
+        tree_bytes: tree.byte_size(),
+    }
 }
 
 #[test]
 fn ten_times_the_rows_leave_the_retained_high_water_flat() {
-    let (captured_1, retained_1, rows_1) = high_water(200);
-    println!("retention: 200 rows, captured high-water {captured_1} bytes");
-    let (captured_10, retained_10, rows_10) = high_water(2000);
-    println!("retention: 2000 rows, captured high-water {captured_10} bytes");
-    assert_eq!((rows_1, rows_10), (200, 2000));
-    assert!(captured_1 > 0);
+    let prune = || {
+        Prune::Under(
+            Selector::root()
+                .property("response")
+                .property("payload")
+                .property("deep")
+                .property("records")
+                .each_index(),
+        )
+    };
+    let one = run(200, prune());
+    println!(
+        "retention: 200 rows, captured high-water {} bytes, tree {} bytes",
+        one.captured_high, one.tree_bytes
+    );
+    let ten = run(2000, prune());
+    println!(
+        "retention: 2000 rows, captured high-water {} bytes, tree {} bytes",
+        ten.captured_high, ten.tree_bytes
+    );
+    assert_eq!((one.rows, ten.rows), (200, 2000));
+    assert!(one.captured_high > 0);
     assert_eq!(
-        captured_10, captured_1,
+        ten.captured_high, one.captured_high,
         "the peak is one row's, not the count's"
     );
-    assert_eq!(retained_10, retained_1);
+    assert_eq!(ten.retained_high, one.retained_high);
+    assert_eq!(
+        (one.tree_rows, ten.tree_rows),
+        (0, 0),
+        "every streamed row was dropped from the engine's tree"
+    );
+    assert_eq!(
+        ten.tree_bytes, one.tree_bytes,
+        "the tree left behind does not grow with the rows"
+    );
+}
+
+/// The control: the same runs without pruning keep every row in the tree,
+/// so the assertion above can fail if pruning stops.
+#[test]
+fn without_pruning_the_engines_tree_holds_every_row() {
+    let one = run(200, Prune::Never);
+    let ten = run(2000, Prune::Never);
+    assert_eq!((one.tree_rows, ten.tree_rows), (200, 2000));
+    assert!(ten.tree_bytes > 9 * one.tree_bytes);
+    assert_eq!(
+        ten.captured_high, one.captured_high,
+        "the router's peak is one row with or without pruning"
+    );
 }
 
 /// The README's chain shares one `Metrics` between the source and the

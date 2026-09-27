@@ -139,16 +139,31 @@ impl<'s> ParserSource<'s> {
     /// Run with an owned sink, in the configured mode, and hand the sink
     /// back with the outcome.
     pub fn run_owned<S: Sink + Send + 'static>(self, sink: S) -> (Result<Flow, Fail>, S) {
+        let (outcome, sink, _) = self.run_owned_with_value(sink);
+        (outcome, sink)
+    }
+
+    /// [`ParserSource::run_owned`], also handing back the value the engine
+    /// returned, when the parse returned one. In `Materialize` mode that is
+    /// the grammar's value. In `Incremental` mode it is the engine's tree
+    /// AFTER pruning, which is neither the grammar's value nor the run's
+    /// result (the events are): it exists so a test can measure what
+    /// pruning left in the tree, and nothing else should read it.
+    pub fn run_owned_with_value<S: Sink + Send + 'static>(
+        self,
+        sink: S,
+    ) -> (Result<Flow, Fail>, S, Option<tabnas::Value>) {
         match &self.mode {
             SourceMode::Materialize => {
                 let mut guarded =
                     Guarded::new(sink, &self.limits, self.abort.clone(), self.metrics.clone());
-                let outcome = materialize(self.parser, self.text, &self.abort, &mut guarded);
-                (outcome, guarded.into_inner())
+                let (outcome, value) =
+                    materialize(self.parser, self.text, &self.abort, &mut guarded);
+                (outcome, guarded.into_inner(), value)
             }
             SourceMode::Incremental { prune } => {
                 if let Some(refused) = self.gate() {
-                    return (Err(refused), sink);
+                    return (Err(refused), sink, None);
                 }
                 incremental(
                     self.parser,
@@ -179,26 +194,31 @@ impl Source for ParserSource<'_> {
     /// are the same for a verified grammar; only the retention differs.
     fn run(self, sink: &mut dyn Sink) -> Result<Flow, Fail> {
         let mut guarded = Guarded::new(sink, &self.limits, self.abort.clone(), self.metrics);
-        let outcome = materialize(self.parser, self.text, &self.abort, &mut guarded);
+        let (outcome, _) = materialize(self.parser, self.text, &self.abort, &mut guarded);
         guarded.flush();
         outcome
     }
 }
 
+/// Parse, then walk; the grammar's value comes back beside the outcome.
 fn materialize<S: Sink>(
     mut parser: Tabnas,
     text: &str,
     abort: &AbortFlag,
     guarded: &mut Guarded<S>,
-) -> Result<Flow, Fail> {
+) -> (Result<Flow, Fail>, Option<tabnas::Value>) {
     let flag = abort.clone();
     parser.parse_guard(GUARD, move |_ctx| !flag.is_aborted());
-    let value = parser.parse(text).map_err(|e| engine_failure(&e, abort))?;
+    let value = match parser.parse(text) {
+        Ok(value) => value,
+        Err(e) => return (Err(engine_failure(&e, abort)), None),
+    };
     drop(parser);
-    if walk_value(&value, guarded)? == Flow::Stop {
-        return Ok(Flow::Stop);
-    }
-    guarded.event(JsonEvent::End)
+    let outcome = match walk_value(&value, guarded) {
+        Ok(Flow::Continue) => guarded.event(JsonEvent::End),
+        other => other,
+    };
+    (outcome, Some(value))
 }
 
 fn incremental<S: Sink + Send + 'static>(
@@ -209,7 +229,7 @@ fn incremental<S: Sink + Send + 'static>(
     metrics: Arc<Metrics>,
     prune: &Prune,
     sink: S,
-) -> (Result<Flow, Fail>, S) {
+) -> (Result<Flow, Fail>, S, Option<tabnas::Value>) {
     let stop = AbortFlag::new();
     let adapter = Adapter::new(sink, limits, abort.clone(), metrics, prune, stop.clone());
     let shared = Arc::new(Mutex::new(adapter));
@@ -224,14 +244,14 @@ fn incremental<S: Sink + Send + 'static>(
     let mut adapter = rule_events::take(shared);
     let outcome = match adapter.status() {
         Status::Failed(_) | Status::Stopped => Ok(Flow::Continue),
-        Status::Running => match parsed {
+        Status::Running => match &parsed {
             Ok(_) if adapter.complete() => adapter.send(JsonEvent::End),
-            Ok(value) if adapter.idle() => match adapter.walk_whole(&value) {
+            Ok(value) if adapter.idle() => match adapter.walk_whole(value) {
                 Ok(Flow::Continue) => adapter.send(JsonEvent::End),
                 other => other,
             },
             Ok(_) => Err(rule_events::not_streamable()),
-            Err(e) => Err(engine_failure(&e, &abort)),
+            Err(e) => Err(engine_failure(e, &abort)),
         },
     };
     let (status, sink) = adapter.finish();
@@ -240,7 +260,7 @@ fn incremental<S: Sink + Send + 'static>(
         Status::Stopped => Ok(Flow::Stop),
         Status::Running => outcome,
     };
-    (outcome, sink)
+    (outcome, sink, parsed.ok())
 }
 
 #[cfg(test)]

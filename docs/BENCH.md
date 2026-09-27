@@ -109,7 +109,9 @@ What the table says, in the terms of the engine table above:
   about 3% of the chain from text to rows. The chain runs at the engine's
   speed, 1.2 MiB/s here.
 - **Memory is the other axis, and it is the engine's.** With pruning the
-  transducer retains one record at a time (`captured_bytes_high` says so),
-  while the engine's rule history grows with the document, as the first
-  table shows; the line sources sidestep that for JSON Lines and CSV by
-  parsing a record or a chunk at a time.
+  transducer retains one record at a time (`captured_bytes_high` says so,
+  and `tests/retention_test.rs` checks the engine's tree itself holds no
+  streamed row once the run is over), while the engine's rule history
+  grows with the document, as the first table shows; the line sources
+  sidestep that for JSON Lines and CSV by parsing a record or a chunk at a
+  time.

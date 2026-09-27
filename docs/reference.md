@@ -36,7 +36,10 @@ JSON Lines source walks each line). `run_owned(self, sink) -> (Result<Flow,
 Fail>, sink)` and `run_boxed` take the sink by value, which is what the
 engine's `Fn + Send + Sync + 'static` subscriber needs, and hand it back:
 that is the incremental path, and the one where JSON Lines numbers keep
-their lexemes.
+their lexemes. `run_owned_with_value` also hands back the value the engine
+returned: the grammar's in `Materialize`, and in `Incremental` the
+engine's tree after pruning, which is there for a test to measure what
+pruning left and for nothing else.
 
 Failure mapping: a sink's `Fail` comes back as it was; a sink that stopped
 is `Ok(Flow::Stop)`; a parse the caller's `AbortFlag` cancelled is
