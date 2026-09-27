@@ -54,8 +54,15 @@
 //!   was streamed before the array's start and cannot be taken back. That
 //!   is the shape of a YAML stream of several documents and of a jsonic
 //!   top-level implicit list whose first element is a container; both
-//!   fail after the first value's events, never with a wrong stream.
-//!   `End` is not the adapter's to emit: the source sends it after the
+//!   fail after the first value's events, never with a wrong stream. A
+//!   grammar may also rewrite the root without opening a frame: YAML's
+//!   stream rule wraps every document in a list when the source ends, and
+//!   a stream whose later documents are scalars or empty shows no frame
+//!   after the first. So when the parse root (a depth-0 rule) closes for
+//!   good after a root value was streamed, its cell must still hold that
+//!   value: the same container, or a scalar where a scalar was streamed.
+//!   Anything else is refused with `STREAMABILITY_UNKNOWN`, again before
+//!   `End`. `End` is not the adapter's to emit: the source sends it after the
 //!   engine has returned `Ok`, so a document is complete only when it
 //!   validated. A parse that returned `Ok` without the adapter emitting
 //!   anything (YAML's empty document is `null`) is walked by the source:
@@ -455,6 +462,9 @@ impl<S: Sink + Send + 'static> Adapter<S> {
     fn closed(&mut self, rule: &Rule, cell: usize, replaces: bool) {
         // A root scalar's lexeme has to be known before it is emitted below.
         self.remember_lexeme(rule);
+        // Whether a whole root value had left before this pass: the pass
+        // that completes the root is exempt from the check at the end.
+        let was_done = self.root_done;
 
         let mut prune_from = None;
         {
@@ -585,6 +595,25 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                     return;
                 }
                 self.root_done = true;
+            }
+        }
+
+        // The parse root closing for good after the root value left: the
+        // cell must still hold what was streamed. A grammar's close actions
+        // may replace it (YAML's stream rule wraps its documents in a list
+        // when the source ends, and later documents that are scalars or
+        // empty opened no frame to be refused at), and the events that
+        // left cannot be taken back.
+        if was_done && rule.d == 0 && self.open == 0 {
+            let node = rule.node.borrow();
+            let streamed = match (&self.last_completed, is_container(&node)) {
+                (Some(last), true) => same_container(&node, last),
+                // A root scalar was streamed, and the cell holds a scalar.
+                (None, false) => true,
+                _ => false,
+            };
+            if !streamed {
+                self.fail(rewritten_root());
             }
         }
     }
@@ -720,6 +749,20 @@ pub(crate) fn wrapped_root() -> Fail {
         "the grammar wrapped a value already streamed as the document's root in a list (a YAML \
          stream of several documents, a jsonic top-level implicit list); the incremental source \
          cannot take the root back, so run it with SourceMode::Materialize",
+    )
+}
+
+/// The failure for a parse root whose cell no longer holds the value
+/// streamed as the document when the root rule closes for good: the
+/// grammar replaced it from the closing rule's actions (YAML's stream rule
+/// wraps every document in a list when the source ends, whatever their
+/// shapes), and the events that left cannot be taken back.
+pub(crate) fn rewritten_root() -> Fail {
+    Fail::new(
+        Code::StreamabilityUnknown,
+        "the grammar replaced the document's root after the incremental source streamed it (a \
+         YAML stream of several documents is wrapped in a list when the source ends); the \
+         incremental source cannot take the root back, so run it with SourceMode::Materialize",
     )
 }
 

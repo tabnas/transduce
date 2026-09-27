@@ -17,11 +17,14 @@
 //! `End` with a documented code and never a wrong stream. The refusals
 //! are the shapes the rule events cannot follow: a container that wraps a
 //! value already streamed as the root (a YAML stream of several documents,
-//! a jsonic top-level implicit list whose first element is a container),
-//! a map the grammar rewrote after it was streamed (a YAML merge key), both
-//! `STREAMABILITY_UNKNOWN`; and a repeated member whose containers the
-//! grammar merged (jsonic's `map.extend`, on for yaml, json5 and jsonic),
-//! `DUPLICATE_MEMBER`. `rule_events.rs` documents each.
+//! whatever the documents' shapes, caught at the second document's
+//! container when it has one and otherwise when the root rule closes over
+//! the wrapping list; a jsonic top-level implicit list whose first element
+//! is a container), a map the grammar rewrote after it was streamed (a
+//! YAML merge key), both `STREAMABILITY_UNKNOWN`; and a repeated member
+//! whose containers the grammar merged (jsonic's `map.extend`, on for
+//! yaml, json5 and jsonic), `DUPLICATE_MEMBER`. `rule_events.rs`
+//! documents each.
 //!
 //! markdown is listed although it builds its nodes imperatively: each
 //! node is inserted whole and walked at its insertion, so the events are

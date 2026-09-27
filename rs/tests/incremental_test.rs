@@ -22,8 +22,11 @@
 //! grammar before parsing; that refusal is tested here as well.
 //!
 //! The fixtures are the copies under `tests/fixtures/` (aless's, the
-//! OpenAPI YAML, and the shapes this suite exists to see: an empty and a
-//! multi-document YAML stream, a YAML merge key, repeated member names)
+//! OpenAPI YAML, and the shapes this suite exists to see: the YAML root
+//! shapes, an empty document, a comment alone, one scalar, a lone `---`,
+//! and document streams of every shape, scalars, sequences, mappings,
+//! mixed, and empty documents between separators; a YAML merge key;
+//! repeated member names, and the repeated fields zon refuses)
 //! and four generated documents in the spec's worked-example shape: 2000
 //! records as JSON, as JSON Lines, as CSV and as block YAML (the shape
 //! whose large form mismatched under the prototype). The generated ones go
@@ -120,6 +123,11 @@ const GRAMMARS: &[Grammar] = &[
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
+}
+
+/// One committed fixture's text, by file name.
+fn fixture(name: &str) -> String {
+    fs::read_to_string(fixtures_dir().join(name)).unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 
 /// Every committed fixture, by file name, in a stable order.
@@ -577,35 +585,95 @@ fn a_map_the_grammar_rewrites_after_streaming_is_refused() {
     assert_eq!(without_lexemes(&events), walked);
 }
 
-/// The two root shapes the fixtures did not cover: a YAML stream of several
-/// documents wraps the first, already streamed, in a list and is refused
-/// after it; an empty document is `null`, which no rule event shows, so the
-/// engine's value is walked and the run completes as the walk does.
+/// The YAML root shapes, each a fixture file. A single document (empty, a
+/// comment alone, one scalar, a lone `---`) streams as the walk does: what
+/// no rule event shows is `null`, which the source walks. A stream of
+/// several documents is wrapped in a list by the grammar when the source
+/// ends, whatever the documents' shapes, so the incremental run either
+/// streams exactly the walk (`1` then `---` then `2`: no scalar left early,
+/// so the finished value is walked whole) or is refused with
+/// `STREAMABILITY_UNKNOWN` naming the shape, after a protocol-valid prefix
+/// and before `End`: at the second document's container when there is one,
+/// and otherwise when the root rule closes over a value that is not the one
+/// streamed. Never a completed stream the walk contradicts.
 #[test]
-fn a_yaml_stream_is_refused_after_its_first_document_and_an_empty_one_walks() {
-    let (result, events) = incremental(tabnas_yaml::make, "a: 1\n---\nb: 2\n");
-    let err = result.unwrap_err();
-    assert_eq!(err.code, Code::StreamabilityUnknown, "{err}");
-    assert!(err.message.contains("several documents"), "{err}");
-    assert_eq!(
-        without_lexemes(&events),
-        [
+fn every_yaml_root_shape_fixture_streams_as_the_walk_or_is_refused_before_end() {
+    for name in ["empty.yaml", "comment.yaml", "scalar.yaml", "marker.yaml"] {
+        let text = fixture(name);
+        let (whole, walked) = run(tabnas_yaml::make, &text, SourceMode::Materialize);
+        whole.unwrap();
+        let (result, events) = incremental(tabnas_yaml::make, &text);
+        assert_eq!(result.unwrap(), Flow::Continue, "{name}");
+        assert_eq!(without_lexemes(&events), walked, "{name}");
+    }
+
+    enum Expect {
+        /// The incremental run completes with the walk's events.
+        Walk,
+        /// Refused after exactly these events (lexemes aside).
+        Refused(Vec<OwnedJsonEvent>),
+    }
+    let one = |k: &str, n: f64| {
+        vec![
             OwnedJsonEvent::ObjectStart,
-            OwnedJsonEvent::Key("a".into()),
+            OwnedJsonEvent::Key(k.into()),
             OwnedJsonEvent::Number {
-                value: 1.0,
-                lexeme: None
+                value: n,
+                lexeme: None,
             },
             OwnedJsonEvent::ObjectEnd,
-        ],
-        "the first document left whole, then nothing"
-    );
-    for text in ["", "---\n", "1\n---\n2\n", "# only a comment\n"] {
-        let (whole, walked) = run(tabnas_yaml::make, text, SourceMode::Materialize);
+        ]
+    };
+    let streams = [
+        ("stream.yaml", Expect::Refused(one("a", 1.0))),
+        ("stream-scalars.yaml", Expect::Walk),
+        (
+            "stream-sequences.yaml",
+            Expect::Refused(vec![
+                OwnedJsonEvent::ArrayStart,
+                OwnedJsonEvent::Number {
+                    value: 1.0,
+                    lexeme: None,
+                },
+                OwnedJsonEvent::ArrayEnd,
+            ]),
+        ),
+        ("stream-map-scalar.yaml", Expect::Refused(one("a", 1.0))),
+        ("stream-scalar-map.yaml", Expect::Refused(one("b", 2.0))),
+        ("stream-empty-map.yaml", Expect::Refused(one("b", 2.0))),
+        ("stream-map-empty.yaml", Expect::Refused(one("a", 1.0))),
+    ];
+    for (name, expect) in streams {
+        let text = fixture(name);
+        let (whole, walked) = run(tabnas_yaml::make, &text, SourceMode::Materialize);
         whole.unwrap();
-        let (result, events) = incremental(tabnas_yaml::make, text);
-        assert_eq!(result.unwrap(), Flow::Continue, "{text:?}");
-        assert_eq!(without_lexemes(&events), walked, "{text:?}");
+        assert_eq!(
+            walked.first(),
+            Some(&OwnedJsonEvent::ArrayStart),
+            "{name}: the walk sees the documents wrapped in a list"
+        );
+        let (result, events) = incremental(tabnas_yaml::make, &text);
+        match expect {
+            Expect::Walk => {
+                assert_eq!(result.unwrap(), Flow::Continue, "{name}");
+                assert_eq!(without_lexemes(&events), walked, "{name}");
+            }
+            Expect::Refused(prefix) => {
+                let err = result
+                    .map(|flow| panic!("{name}: Ok({flow:?}) after {events:?}"))
+                    .unwrap_err();
+                assert_eq!(err.code, Code::StreamabilityUnknown, "{name}: {err}");
+                assert!(err.message.contains("several documents"), "{name}: {err}");
+                assert!(err.message.contains("Materialize"), "{name}: {err}");
+                assert!(well_formed(&events), "{name}: {events:?}");
+                assert!(!events.contains(&OwnedJsonEvent::End), "{name}");
+                assert_eq!(
+                    without_lexemes(&events),
+                    prefix,
+                    "{name}: the first document left whole, then nothing"
+                );
+            }
+        }
     }
 }
 

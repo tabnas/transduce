@@ -91,7 +91,14 @@ implicit list whose first element is a container, `{a:1}` on one line and
 (a YAML `<<` merge key, resolved when the mapping closes), both
 `STREAMABILITY_UNKNOWN` after the first value's events; and a repeated
 member whose containers the grammar merged, `DUPLICATE_MEMBER`, below. A
-consumer that wants such a document whole runs it materialized.
+YAML stream is refused whatever its documents' shapes: when a later
+document opens a container, at that container; when none does (`a: 1`
+then `---` then `2`, or a trailing `---` with nothing after it), when the
+stream rule closes with the documents wrapped in a list where the first
+document had been streamed as the root. A stream that streamed nothing
+early (`1` then `---` then `2`: a root scalar leaves only when the root
+rule closes) is walked whole and completes as the walk does. A consumer
+that wants such a document whole runs it materialized.
 
 A repeated member name is where the two streams differ by design.
 The engine's insert replaces the earlier value in place, so the walk sees
