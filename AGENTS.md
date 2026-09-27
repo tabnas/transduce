@@ -91,14 +91,14 @@ grammar fails with `STREAMABILITY_UNKNOWN` before the parse, emitting
 nothing, rather than a malformed stream; `unverified()` lifts the gate
 for the differential suite alone.
 
-**Repetition is replacement, never a push chain.** A tabnas alternate
+**Repetition is replacement, never a push chain.** When a tabnas alternate hands control to another rule, it
 either pushes a child rule (`alt.p`: a new stack frame, for something the
 tree nests) or replaces the current one (`alt.r`: the same frame, for the
-next item of a sequence), and every repetition in a grammar, the elements
+next item of a sequence); a terminal-only or closing alternate does
+neither. Every repetition in a grammar, the elements
 of a list, the members of a map, the records of a file, a `*A` in a
-compiled grammar, is a replace loop: the loop is `r`, the item may be `p`,
-and the engine's rule depth `d` is bounded by the grammar's nesting, never
-by the input's length. The rule-event adapter
+compiled grammar, is a replace loop: the loop is `r`, the item may be `p`, and the loop's
+iterations add nothing to the engine's rule depth `d`. Real recursion still nests with its input, as it should: a grammar with `node = "(" node ")" / "x"` is as deep as its brackets. What a repetition may never do is make rule depth grow with a list's length. The rule-event adapter
 ([`rs/src/source/rule_events.rs`](rs/src/source/rule_events.rs)) is built
 on exactly that. It opens a frame at the `d` of the rule whose node first
 shows a container and ends it when a rule at that `d` closes on the
