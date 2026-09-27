@@ -31,6 +31,7 @@ pub mod datum;
 pub mod error;
 pub mod event;
 pub mod limits;
+pub mod matcher;
 pub mod scan;
 pub mod selector;
 pub mod sink;
@@ -43,6 +44,7 @@ pub use datum::{
 pub use error::{Code, Fail, Limit};
 pub use event::{JsonEvent, Number, OwnedJsonEvent};
 pub use limits::{AbortFlag, Limits, Metrics};
+pub use matcher::{CaptureId, Hit, HitKind, Matcher};
 pub use scan::{ScanEmit, Transition};
 pub use selector::{Path, Segment, Selector, Step};
 pub use sink::{replay, CountSink, Flow, FnSink, Sink};
