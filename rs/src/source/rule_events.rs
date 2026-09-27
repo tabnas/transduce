@@ -19,11 +19,22 @@
 //!   its OPEN pass (`@key$` and the grammars' own actions do); a key the
 //!   adapter only learns at insertion is announced then.
 //! - The top frame ENDS when a rule at the frame's depth whose node is the
-//!   frame's cell closes. Rule identity alone is not enough: `r:`
-//!   replacement gives the same container a new rule.
-//! - A root scalar is emitted at the depth-0 rule's close. `End` is not
-//!   the adapter's to emit: the source sends it after the engine has
-//!   returned `Ok`, so a document is complete only when it validated.
+//!   frame's cell closes, or the rule that started it closes, unless that
+//!   close REPLACES the rule (`alt.r`): a replaced rule hands its cell to
+//!   its successor and the container goes on. This is a refinement over
+//!   the prototype, which ended a frame on the frame rule's close alone
+//!   and so closed YAML's `yamlElemMap` when it became `yamlElemPair`.
+//! - A root scalar is emitted at the depth-0 rule's close, unless that
+//!   close replaces the rule: jsonic's `1,2,3` closes `val` with `1` and
+//!   replaces it by `list`, which promotes the value into a list in the
+//!   same cell, so the scalar is not the root. A frame therefore streams
+//!   the entries already in its container when it starts (the promoted
+//!   value), and a frame that starts at the root after a root value has
+//!   completed is refused with `STREAMABILITY_UNKNOWN`: its first element
+//!   was streamed before the array's start and cannot be taken back.
+//!   `End` is not the adapter's to emit: the source sends it after the
+//!   engine has returned `Ok`, so a document is complete only when it
+//!   validated.
 //!
 //! Number lexemes are best effort: at the close of a rule whose node is a
 //! `Number`, the first open token's source text is kept when it is a JSON
@@ -109,7 +120,8 @@ pub(crate) struct Adapter<S: Sink> {
     prune: PruneState,
     /// Whether the last `Start` the prune matcher saw named a pruned array.
     prune_hit: bool,
-    root_emitted: bool,
+    /// A whole root value (a scalar, or the outermost frame) has been emitted.
+    root_done: bool,
 }
 
 impl<S: Sink + Send + 'static> Adapter<S> {
@@ -147,7 +159,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             stop,
             prune,
             prune_hit: false,
-            root_emitted: false,
+            root_done: false,
         }
     }
 
@@ -175,7 +187,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
 
     /// Whether one whole root value was emitted and every frame closed.
     pub(crate) fn complete(&self) -> bool {
-        self.root_emitted && self.open == 0
+        self.root_done && self.open == 0
     }
 
     /// Send one event straight to the sink, outside the parse (the line
@@ -233,7 +245,10 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                     self.lexeme = lexeme;
                     ok
                 } else {
-                    self.lexeme_ready = false;
+                    // A remembered lexeme that is not this number's may be
+                    // a later entry's of the same batch (a promoted first
+                    // value comes before the number just parsed); the
+                    // batch's end drops it.
                     self.emit(JsonEvent::Number(Number::new(*n)))
                 }
             }
@@ -280,7 +295,14 @@ impl<S: Sink + Send + 'static> Adapter<S> {
         self.emit(JsonEvent::ObjectEnd)
     }
 
-    fn push_frame(&mut self, cell: usize, array: bool, len: usize, rule: &Rule, prune: bool) {
+    /// Open a frame. Its `len` starts at zero whatever the container holds:
+    /// entries present when the adapter first sees a cell were never
+    /// streamed (jsonic's promoted first value), and the next close pass
+    /// emits them before the new ones. The one already-streamed entry a
+    /// container can hold is the last completed frame, which that pass
+    /// recognizes by pointer and skips.
+    fn push_frame(&mut self, cell: usize, array: bool, rule: &Rule, prune: bool) {
+        let len = 0;
         if self.open == self.frames.len() {
             self.frames.push(Frame {
                 cell,
@@ -317,7 +339,10 @@ impl<S: Sink + Send + 'static> Adapter<S> {
         let cell = Rc::as_ptr(&rule.node) as usize;
         match done.state {
             RuleState::Open => self.opened(rule, cell),
-            RuleState::Close => self.closed(rule, cell),
+            RuleState::Close => {
+                let replaces = done.alt.as_ref().is_some_and(|a| !a.r.is_empty());
+                self.closed(rule, cell, replaces)
+            }
         }
     }
 
@@ -327,6 +352,10 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             return;
         };
         if !self.frames[..self.open].iter().any(|f| f.cell == cell) {
+            if self.open == 0 && self.root_done {
+                self.fail(not_streamable());
+                return;
+            }
             self.last_completed = None;
             self.lexeme_ready = false;
             if !self.emit(if array {
@@ -341,7 +370,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                 PruneState::All => array,
                 PruneState::Under(_) => array && self.prune_hit,
             };
-            self.push_frame(cell, array, len, rule, prune);
+            self.push_frame(cell, array, rule, prune);
         } else if !array {
             let top = &self.frames[self.open - 1];
             if top.cell == cell && !top.has_key && top.len == len {
@@ -358,7 +387,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
         }
     }
 
-    fn closed(&mut self, rule: &Rule, cell: usize) {
+    fn closed(&mut self, rule: &Rule, cell: usize, replaces: bool) {
         // A root scalar's lexeme has to be known before it is emitted below.
         self.remember_lexeme(rule);
 
@@ -395,6 +424,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                                 }
                             }
                             self.frames[top_i].len = len;
+                            self.lexeme_ready = false;
                             if array && self.frames[top_i].prune {
                                 prune_from = Some(old);
                             }
@@ -413,6 +443,10 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             self.frames[self.open - 1].len = from;
         }
 
+        if replaces {
+            return;
+        }
+
         if let Some(top_i) = self.open.checked_sub(1) {
             let top = &self.frames[top_i];
             if top.rule_i == rule.i || (top.cell == cell && top.depth == rule.d) {
@@ -427,15 +461,20 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                     return;
                 }
                 self.last_completed = container_ptr(&rule.node.borrow());
+                if self.open == 0 {
+                    self.root_done = true;
+                }
             }
         }
 
-        if rule.d == 0 && self.open == 0 && !self.root_emitted {
+        if rule.d == 0 && self.open == 0 && !self.root_done {
             let node = rule.node.borrow();
-            if container_len(&node).is_none() && !self.scalar(&node) {
-                return;
+            if container_len(&node).is_none() {
+                if !self.scalar(&node) {
+                    return;
+                }
+                self.root_done = true;
             }
-            self.root_emitted = true;
         }
     }
 
