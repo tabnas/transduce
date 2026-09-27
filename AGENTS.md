@@ -108,6 +108,7 @@ is exactly the grammar's.
 | `rs/src/source/lines.rs` | `LinesSource`: JSON Lines and CSV a record or a chunk at a time |
 | `rs/src/source/capability.rs` | the verified list `capability::incremental` answers from |
 | `rs/tests/incremental_test.rs` | the differential suite that keeps that list honest, both ways |
+| `rs/tests/retention_test.rs` | ten times the rows leave the retained high-water flat |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
 | `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML), shared with the benches |
 | `rs/benches/` | criterion throughput benches: parse only, incremental events, walk, router and table |
