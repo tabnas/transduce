@@ -64,3 +64,18 @@ What the table says:
 - Throughput through this crate is the engine's: about 1 MB/s for
   record-shaped data. The stages downstream (events, router, table, CSV)
   are measured separately by `cargo bench` and are not the bottleneck.
+
+## The stages after the engine
+
+Measured by `tabnas-render`'s criterion bench (`cargo bench` in
+`render/rs`), one core, synthetic input, 2026-09-27:
+
+| Stage | Input | Rate |
+|---|---|---|
+| `CsvRenderer` over a discarding writer | 20k rows × 5 cells of `TableRows/1` events | about 4.3 M rows/s, about 290 MiB/s of CSV out |
+| `ValueSource` walk + `JsonRenderer` | a parsed 1.66 MB, 20k-record document | about 78 MiB/s of source (about 20 ms) |
+
+So the pipeline downstream of the parse runs two orders of magnitude
+faster than the parse itself, and the engine's per-rule cost is the
+throughput of the whole. The numbers are also recorded in render's
+`docs/reference.md`.
