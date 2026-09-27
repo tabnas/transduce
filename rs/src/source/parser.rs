@@ -16,7 +16,10 @@
 //! a sink that stopped is `Ok(Flow::Stop)`; a parse cancelled through the
 //! caller's [`AbortFlag`] is `ABORTED`; any other engine error is
 //! `INPUT_INVALID` with the engine's code and position
-//! ([`Fail::from_tabnas`]), a grammar's own depth guard included.
+//! ([`Fail::from_tabnas`]), a grammar's own depth guard included. An
+//! incremental parse that returned `Ok` without one rule event the adapter
+//! could turn into a value (YAML's empty document is `null`) has its value
+//! walked instead: nothing was streamed, so the walk is the whole stream.
 
 use std::sync::{Arc, Mutex};
 
@@ -173,6 +176,10 @@ fn incremental<S: Sink + Send + 'static>(
         Status::Failed(_) | Status::Stopped => Ok(Flow::Continue),
         Status::Running => match parsed {
             Ok(_) if adapter.complete() => adapter.send(JsonEvent::End),
+            Ok(value) if adapter.idle() => match adapter.walk_whole(&value) {
+                Ok(Flow::Continue) => adapter.send(JsonEvent::End),
+                other => other,
+            },
             Ok(_) => Err(rule_events::not_streamable()),
             Err(e) => Err(engine_failure(&e, &abort)),
         },

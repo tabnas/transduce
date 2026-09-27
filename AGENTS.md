@@ -70,18 +70,21 @@ The three sources, in order of preference:
 `source::capability::incremental(grammar)` answers from a list that
 `rs/tests/incremental_test.rs` keeps honest: every fixture each grammar
 in the dev-dependencies reads runs both incrementally and through the
-whole-value walker, and the two event streams must be identical for the
-grammar to be listed. A listed grammar that mismatches fails the test; an
-unlisted grammar that matches everywhere fails too. A repeated member
-name is the one documented difference: the stream carries every
-occurrence where the walk keeps the engine's survivor, a router's
-`Duplicates` policy resolves it, and a grammar that merges the two values
-fails the run with `DUPLICATE_MEMBER` (`docs/reference.md`). The list today is
-`json`, `json5`, `jsonc`, `jsonl`, `yaml`, `zon`; `jsonic` is off it
-because a top-level implicit list whose first element is a container
-wraps a value already streamed as the root (`docs/reference.md` has the
-detail), and the imperative grammars build values the rule events do not
-show. An incremental run of an unverified grammar fails with
+whole-value walker, and for the grammar to be listed no fixture may
+complete an incremental stream the walk contradicts. Two outcomes short of
+identity are the contract: a repeated member name streams every occurrence
+where the walk keeps the engine's survivor, so a router's `LastWins` makes
+the two agree (a grammar that merges the two values fails the run with
+`DUPLICATE_MEMBER` instead); and a shape the rule events cannot follow (a
+list wrapped around a root already streamed, as in a YAML stream of
+several documents or a jsonic top-level implicit list; a map rewritten
+after streaming, as a YAML `<<` merge key does) is refused with
+`STREAMABILITY_UNKNOWN` before `End`. A listed grammar that mismatches
+fails the test; an unlisted grammar that never mismatches fails too. The
+list today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`,
+`yaml`, `zon` (`docs/reference.md` has the detail); the imperative
+grammars `toml`, `ini`, `csv`, `xml` and `feed` build values the rule
+events do not show. An incremental run of an unverified grammar fails with
 `STREAMABILITY_UNKNOWN` rather than emitting a malformed stream.
 
 **The parsed values the grammars return are never altered.** The

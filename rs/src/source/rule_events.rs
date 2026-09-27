@@ -51,10 +51,15 @@
 //!   the entries already in its container when it starts (the promoted
 //!   value), and a frame that starts at the root after a root value has
 //!   completed is refused with `STREAMABILITY_UNKNOWN`: its first element
-//!   was streamed before the array's start and cannot be taken back.
+//!   was streamed before the array's start and cannot be taken back. That
+//!   is the shape of a YAML stream of several documents and of a jsonic
+//!   top-level implicit list whose first element is a container; both
+//!   fail after the first value's events, never with a wrong stream.
 //!   `End` is not the adapter's to emit: the source sends it after the
 //!   engine has returned `Ok`, so a document is complete only when it
-//!   validated.
+//!   validated. A parse that returned `Ok` without the adapter emitting
+//!   anything (YAML's empty document is `null`) is walked by the source:
+//!   with nothing streamed, the walk is the whole stream.
 //!
 //! Number lexemes are best effort: at the close of a rule whose node is a
 //! `Number`, the first open token's source text is kept when it is a JSON
@@ -149,6 +154,8 @@ pub(crate) struct Adapter<S: Sink> {
     prune_hit: bool,
     /// A whole root value (a scalar, or the outermost frame) has been emitted.
     root_done: bool,
+    /// Anything at all has been emitted for the current document.
+    emitted: bool,
     /// Hashes member names for the frames' `names` sums.
     hasher: RandomState,
 }
@@ -189,6 +196,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             prune,
             prune_hit: false,
             root_done: false,
+            emitted: false,
             hasher: RandomState::new(),
         }
     }
@@ -219,6 +227,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
         self.lexeme_ready = false;
         self.prune_hit = false;
         self.root_done = false;
+        self.emitted = false;
     }
 
     pub(crate) fn status(&self) -> &Status {
@@ -228,6 +237,19 @@ impl<S: Sink + Send + 'static> Adapter<S> {
     /// Whether one whole root value was emitted and every frame closed.
     pub(crate) fn complete(&self) -> bool {
         self.root_done && self.open == 0
+    }
+
+    /// Whether nothing at all was emitted for the current document, so
+    /// the value the engine returned can be walked in its place.
+    pub(crate) fn idle(&self) -> bool {
+        !self.emitted
+    }
+
+    /// Emit a whole value through the sink, outside the parse: what the
+    /// source does with an engine value no rule event showed.
+    pub(crate) fn walk_whole(&mut self, value: &Value) -> Result<Flow, Fail> {
+        self.emitted = true;
+        crate::source::walk_value(value, &mut self.sink)
     }
 
     /// Send one event straight to the sink, outside the parse (the line
@@ -248,6 +270,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
     /// Emit one event. `false` means stop: the sink stopped or failed, and
     /// the parse has been told to cancel.
     fn emit(&mut self, ev: JsonEvent<'_>) -> bool {
+        self.emitted = true;
         if let PruneState::Under(matcher) = &mut self.prune {
             match matcher.event(ev) {
                 Ok(hit) => self.prune_hit = hit.kind == HitKind::Start && hit.begins > 0,
@@ -395,7 +418,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
         };
         if !self.frames[..self.open].iter().any(|f| f.cell == cell) {
             if self.open == 0 && self.root_done {
-                self.fail(not_streamable());
+                self.fail(wrapped_root());
                 return;
             }
             self.last_completed = None;
@@ -680,8 +703,23 @@ pub(crate) fn take<S: Sink + Send + 'static>(shared: Arc<Mutex<Adapter<S>>>) -> 
 pub(crate) fn not_streamable() -> Fail {
     Fail::new(
         Code::StreamabilityUnknown,
-        "the grammar did not build its value through rule events the incremental source can follow; \
-         it is not in capability::incremental, so run it with SourceMode::Materialize",
+        "the grammar did not build its value through rule events the incremental source can \
+         follow (the events did not amount to one whole document); run it with \
+         SourceMode::Materialize",
+    )
+}
+
+/// The failure for a container that starts at the root after a root value
+/// has completed: the grammar is wrapping a value already streamed as the
+/// document (a YAML stream of several documents, a jsonic top-level
+/// implicit list whose first element is a container), and the events that
+/// left cannot be taken back.
+pub(crate) fn wrapped_root() -> Fail {
+    Fail::new(
+        Code::StreamabilityUnknown,
+        "the grammar wrapped a value already streamed as the document's root in a list (a YAML \
+         stream of several documents, a jsonic top-level implicit list); the incremental source \
+         cannot take the root back, so run it with SourceMode::Materialize",
     )
 }
 

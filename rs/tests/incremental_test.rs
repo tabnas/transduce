@@ -5,17 +5,28 @@
 //! the events `SourceMode::Materialize` produces (number lexemes aside:
 //! the walk over a parsed value has none, so they are stripped before the
 //! comparison and checked separately to spell the value they accompany).
-//! A grammar is listed in `capability::INCREMENTAL` only when every one of
-//! its fixtures matches, and this suite asserts BOTH directions: a listed
-//! grammar that mismatches anywhere fails, and an unlisted grammar that
-//! matches everywhere fails too, so the list can rot in neither.
+//! Two outcomes short of identity are accepted, because they are the
+//! contract the incremental source documents: a document that repeats a
+//! member name streams every occurrence where the walk keeps the survivor,
+//! so the two must agree once a `LastWins` router has built the value; and
+//! a run the source REFUSES, with `STREAMABILITY_UNKNOWN` (a list wrapped
+//! around a root already streamed, a map rewritten after streaming) or
+//! `DUPLICATE_MEMBER` (a merged repeated member), after a protocol-valid
+//! prefix and before `End`. What is never accepted is a completed stream
+//! that disagrees with the walk. A grammar is listed in
+//! `capability::INCREMENTAL` only when no fixture does that, and this
+//! suite asserts BOTH directions: a listed grammar that mismatches anywhere
+//! fails, and an unlisted grammar that never mismatches fails too, so the
+//! list can rot in neither.
 //!
-//! The fixtures are the copies under `tests/fixtures/` (aless's, plus the
-//! OpenAPI YAML) and four generated documents in the spec's worked-example
-//! shape: 2000 records as JSON, as JSON Lines, as CSV and as block YAML
-//! (the shape whose large form mismatched under the prototype). The generated
-//! ones go only to the grammars of their own family; the small ones are
-//! offered to every grammar, and a grammar reads whatever parses.
+//! The fixtures are the copies under `tests/fixtures/` (aless's, the
+//! OpenAPI YAML, and the shapes this suite exists to see: an empty and a
+//! multi-document YAML stream, a YAML merge key, repeated member names)
+//! and four generated documents in the spec's worked-example shape: 2000
+//! records as JSON, as JSON Lines, as CSV and as block YAML (the shape
+//! whose large form mismatched under the prototype). The generated ones go
+//! only to the grammars of their own family; the small ones are offered to
+//! every grammar, and a grammar reads whatever parses.
 
 mod support;
 
@@ -164,7 +175,21 @@ fn run(
 /// What one (grammar, fixture) pair did.
 enum Outcome {
     NotRead(Code),
-    Match { events: usize, lexemes: usize },
+    Match {
+        events: usize,
+        lexemes: usize,
+    },
+    /// The streams differ only where the document repeats a member name:
+    /// a `LastWins` router builds the same value from both.
+    MatchLastWins {
+        events: usize,
+    },
+    /// The incremental run failed with a documented code after a
+    /// protocol-valid prefix and before `End`.
+    Refused {
+        code: Code,
+        events: usize,
+    },
     Mismatch(String),
 }
 
@@ -181,6 +206,16 @@ fn compare(grammar: &Grammar, text: &str) -> Outcome {
         },
     );
     if let Err(fail) = result {
+        let documented = matches!(
+            fail.code,
+            Code::StreamabilityUnknown | Code::DuplicateMember
+        );
+        if documented && well_formed(&incremental) && !incremental.contains(&OwnedJsonEvent::End) {
+            return Outcome::Refused {
+                code: fail.code,
+                events: incremental.len(),
+            };
+        }
         return Outcome::Mismatch(format!(
             "the incremental run failed with {fail} after {} events",
             incremental.len()
@@ -204,6 +239,14 @@ fn compare(grammar: &Grammar, text: &str) -> Outcome {
         return Outcome::Match {
             events: materialized.len(),
             lexemes,
+        };
+    }
+    if well_formed(&stripped)
+        && root_value(&stripped, Duplicates::LastWins).ok()
+            == root_value(&materialized, Duplicates::Reject).ok()
+    {
+        return Outcome::MatchLastWins {
+            events: stripped.len(),
         };
     }
     let first = stripped
@@ -252,6 +295,16 @@ fn verify(name: &str) {
                 read += 1;
                 format!("MATCH ({events} events, {lexemes} lexemes)")
             }
+            Outcome::MatchLastWins { events } => {
+                read += 1;
+                format!(
+                    "MATCH after LastWins ({events} events; the document repeats a member name)"
+                )
+            }
+            Outcome::Refused { code, events } => {
+                read += 1;
+                format!("REFUSED with {code} after {events} events")
+            }
             Outcome::Mismatch(why) => {
                 read += 1;
                 mismatches.push(format!("{fixture}: {why}"));
@@ -273,7 +326,7 @@ fn verify(name: &str) {
         matches_everywhere,
         "capability::incremental({name:?}) is {listed}, but the grammar {} over {read} fixtures it reads{}{}",
         if matches_everywhere {
-            "matched everywhere; add it to capability::INCREMENTAL"
+            "never mismatched; add it to capability::INCREMENTAL"
         } else {
             "mismatched; remove it from capability::INCREMENTAL, or fix the adapter"
         },
@@ -497,4 +550,57 @@ fn a_map_the_grammar_rewrites_after_streaming_is_refused() {
     assert_eq!(result.unwrap(), Flow::Continue);
     let (_, walked) = run(tabnas_yaml::make, text, SourceMode::Materialize);
     assert_eq!(without_lexemes(&events), walked);
+}
+
+/// The two root shapes the fixtures did not cover: a YAML stream of several
+/// documents wraps the first, already streamed, in a list and is refused
+/// after it; an empty document is `null`, which no rule event shows, so the
+/// engine's value is walked and the run completes as the walk does.
+#[test]
+fn a_yaml_stream_is_refused_after_its_first_document_and_an_empty_one_walks() {
+    let (result, events) = incremental(tabnas_yaml::make, "a: 1\n---\nb: 2\n");
+    let err = result.unwrap_err();
+    assert_eq!(err.code, Code::StreamabilityUnknown, "{err}");
+    assert!(err.message.contains("several documents"), "{err}");
+    assert_eq!(
+        without_lexemes(&events),
+        [
+            OwnedJsonEvent::ObjectStart,
+            OwnedJsonEvent::Key("a".into()),
+            OwnedJsonEvent::Number {
+                value: 1.0,
+                lexeme: None
+            },
+            OwnedJsonEvent::ObjectEnd,
+        ],
+        "the first document left whole, then nothing"
+    );
+    for text in ["", "---\n", "1\n---\n2\n", "# only a comment\n"] {
+        let (whole, walked) = run(tabnas_yaml::make, text, SourceMode::Materialize);
+        whole.unwrap();
+        let (result, events) = incremental(tabnas_yaml::make, text);
+        assert_eq!(result.unwrap(), Flow::Continue, "{text:?}");
+        assert_eq!(without_lexemes(&events), walked, "{text:?}");
+    }
+}
+
+/// markdown is listed although it builds nodes imperatively: they land
+/// whole and are walked at their insertion, so the fixtures alone do not
+/// say much and richer documents are checked here.
+#[test]
+fn markdown_documents_stream_as_the_walk() {
+    for text in [
+        "# Title\n\nSome *emphasis* and a [link](http://x).\n\n- one\n- two\n  - nested\n\n```rust\nfn x() {}\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n> quote\n\n1. first\n2. second\n",
+        "para one\npara one continued\n\npara two\n",
+        "",
+        "***\n\n# A\n## B\n### C\n",
+        "text with `code` and **bold** and ![img](u) end\n",
+        "- a\n\n  b\n- c\n\n> - d\n> - e\n",
+    ] {
+        let (whole, walked) = run(tabnas_markdown::make, text, SourceMode::Materialize);
+        whole.unwrap();
+        let (result, events) = incremental(tabnas_markdown::make, text);
+        assert_eq!(result.unwrap(), Flow::Continue, "{text:?}");
+        assert_eq!(without_lexemes(&events), walked, "{text:?}");
+    }
 }

@@ -266,6 +266,11 @@ impl<R: BufRead> LinesSource<R> {
                 }
                 match parsed {
                     Ok(_) if adapter.complete() => adapter.reset(),
+                    Ok(value) if adapter.idle() => match adapter.walk_whole(&value) {
+                        Ok(Flow::Continue) => adapter.reset(),
+                        Ok(Flow::Stop) => break Ok(Flow::Stop),
+                        Err(fail) => break Err(fail),
+                    },
                     Ok(_) => break Err(rule_events::not_streamable()),
                     Err(e) => break Err(line_failure(&e, number, &abort)),
                 }

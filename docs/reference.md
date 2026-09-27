@@ -43,9 +43,13 @@ is `Ok(Flow::Stop)`; a parse the caller's `AbortFlag` cancelled is
 `ABORTED`; any other engine error is `INPUT_INVALID` with the engine's
 code in the message and its row and column (for a line source, the line's
 number and the column within it). An incremental run whose rule events
-did not amount to one whole document is `STREAMABILITY_UNKNOWN`; that is
-what a grammar outside the verified list produces, and the message says
-to run it materialized.
+did not amount to one whole document is `STREAMABILITY_UNKNOWN`, and so
+is one the adapter refuses because the grammar wrapped a value already
+streamed as the root in a list, or rewrote a map after it was streamed;
+the message names the shape and says to run it materialized. An
+incremental parse that returns `Ok` without one event (YAML's empty
+document is `null`) has its value walked instead, so it completes as the
+walk does.
 
 `Prune::Under(selector)` empties the array whose elements the selector
 names (a trailing `[*]` names the elements; without one it names the
@@ -63,11 +67,25 @@ other way, and every number a walk emits, has `lexeme: None`.
 
 ### The verified grammars
 
-`capability::INCREMENTAL` lists `json`, `json5`, `jsonc`, `jsonl`, `yaml`
-and `zon`. `rs/tests/incremental_test.rs` runs every fixture each grammar
-reads through both modes and asserts the list in both directions.
+`capability::INCREMENTAL` lists `json`, `json5`, `jsonc`, `jsonic`,
+`jsonl`, `markdown`, `yaml` and `zon`. `rs/tests/incremental_test.rs` runs
+every fixture each grammar reads through both modes and asserts the list
+in both directions. What the list promises, precisely: for a listed
+grammar an incremental run either streams exactly what the walk would
+(number lexemes aside), or streams every occurrence of a repeated member
+name so that a `LastWins` router builds the walk's value, or fails before
+`End` with a documented code; it never completes a stream the walk
+contradicts. The refusals are the shapes the rule events cannot follow: a
+container that wraps a value already streamed as the root (a YAML stream
+of several documents, `a: 1` then `---` then `b: 2`; a jsonic top-level
+implicit list whose first element is a container, `{a:1}` on one line and
+`{b:2}` on the next), and a map the grammar rewrote after it was streamed
+(a YAML `<<` merge key, resolved when the mapping closes), both
+`STREAMABILITY_UNKNOWN` after the first value's events; and a repeated
+member whose containers the grammar merged, `DUPLICATE_MEMBER`, below. A
+consumer that wants such a document whole runs it materialized.
 
-A repeated member name is the one documented place the two streams differ.
+A repeated member name is where the two streams differ by design.
 The engine's insert replaces the earlier value in place, so the walk sees
 only the survivor (`{"a":1,"a":2}` walks as `{ key a 2 }`), while the
 incremental source has already streamed the first value and streams the
@@ -79,13 +97,15 @@ the grammar MERGES the two values instead of replacing (jsonic's
 and `jsonc`), the merged container cannot be streamed because its first
 half already was, and the incremental run fails with `DUPLICATE_MEMBER`
 saying to run materialized. `zon` refuses a repeated field itself, in
-both modes. `jsonic`
-is not listed: its top-level implicit lists whose first element is a
-container (`{a:1}` on one line, `{b:2}` on the next) wrap a value that has
-already been streamed as the root, and the incremental source refuses them
-with `STREAMABILITY_UNKNOWN`. The imperative grammars (`toml`, `ini`,
-`csv`, `xml`, `markdown`, `feed`) build their values in ways the rule
-events do not show and are walked whole.
+both modes.
+
+`markdown` builds its nodes imperatively, but each lands whole and is
+walked at its insertion, so its events are the walk's. The other
+imperative grammars (`toml`, `ini`, `csv`, `xml`, `feed`) build their
+values in ways the rule events do not show (`csv` streams its header and
+raw rows as extra elements, a well-formed stream with the wrong shape) and
+are walked whole; `ParserSource` refuses to run an unlisted grammar
+incrementally.
 
 ## Selectors and the matcher
 
