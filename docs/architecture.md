@@ -57,7 +57,7 @@ Engine facts that shape the design: the engine parses a whole `&str` (the
 source is also copied into `Context.source`); values are `Arc`-shared
 containers; `subscribe_rule_done` clones the finished rule per pass when any
 subscriber is installed (cheap: pointer copies plus one `Value` clone).
-Throughput numbers are recorded in `BENCH.md` next to this file.
+Throughput numbers are recorded in [`BENCH.md`](BENCH.md) next to this file.
 
 ## 1. Repositories and layout
 
