@@ -7,8 +7,9 @@
 //!   as they happen, for the grammars the differential suite has verified
 //!   ([`capability::incremental`]); in [`SourceMode::Materialize`] it
 //!   parses and walks.
-//! - `LinesSource` (in progress) reads JSON Lines or CSV a record at a time,
-//!   bounding memory whatever the file size.
+//! - [`LinesSource`] reads JSON Lines or CSV from any `BufRead` a record
+//!   (or a chunk of records) at a time, bounding memory whatever the
+//!   file's size.
 //!
 //! Every source emits through [`Guarded`], which enforces the source
 //! limits (`max_depth`, `max_key_bytes`, `max_scalar_bytes`), polls the
@@ -16,10 +17,12 @@
 
 pub mod capability;
 pub mod guard;
+pub mod lines;
 pub mod parser;
 pub(crate) mod rule_events;
 
 pub use guard::Guarded;
+pub use lines::{LineFormat, LinesSource, DEFAULT_CHUNK_BYTES};
 pub use parser::ParserSource;
 
 use crate::error::Fail;

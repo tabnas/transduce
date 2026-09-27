@@ -20,9 +20,11 @@ path = "src/lib.rs"
 # development model: clone https://github.com/tabnas/parser next to this
 # repo. The `tabnas` crate is not published, so there is no registry
 # version to fall back on. tabnas-json is the grammar the JSON Lines
-# source parses each line with.
+# source parses each line with, and tabnas-csv the one the CSV line source
+# parses each chunk of records with.
 tabnas = { path = "../../parser/rs" }
 tabnas-json = { path = "../../json/rs" }
+tabnas-csv = { path = "../../csv/rs" }
 indexmap = "2"
 serde_json = { version = "1.0", features = ["preserve_order"] }
 
@@ -36,7 +38,6 @@ tabnas-json5 = { path = "../../json5/rs" }
 tabnas-yaml = { path = "../../yaml/rs" }
 tabnas-toml = { path = "../../toml/rs" }
 tabnas-ini = { path = "../../ini/rs" }
-tabnas-csv = { path = "../../csv/rs" }
 tabnas-xml = { path = "../../xml/rs" }
 tabnas-zon = { path = "../../zon/rs" }
 tabnas-markdown = { path = "../../markdown/rs" }
