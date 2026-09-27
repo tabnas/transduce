@@ -23,14 +23,24 @@
 //!   (jsonic's `map.extend`, which yaml, json5, jsonc and zon inherit).
 //!   The announcing rule's CLOSE pass is where the member landed (the
 //!   engine notifies after the close actions), so when that pass leaves
-//!   the map at its old length the adapter looks the member up: a scalar
-//!   is streamed, so the stream reads `Key a, 1, Key a, 2` and a router's
-//!   `Duplicates` policy decides, as it would for any repeated member; a
-//!   container the adapter has just streamed is complete already; any
-//!   other container is a merge of the earlier value with the new one,
-//!   whose first half has already left, and the run fails with
-//!   `DUPLICATE_MEMBER`. The whole-value walk sees only the survivor, so
-//!   a repeated name is the one documented place the two streams differ.
+//!   the map at its old length the adapter looks the member up and HOLDS
+//!   what it finds until its next event. The engine reports a close pass
+//!   whether or not the pass stood: a lifecycle action may have failed the
+//!   parse (zon's own guard refuses a repeated field before jsonic's
+//!   assignment runs), and the map then still holds the earlier value,
+//!   which is not the member. Nothing in the event tells the two apart,
+//!   but a failed pass is the last the engine reports, so a held member is
+//!   streamed only once another rule event, or the end of its frame in the
+//!   same pass, shows that the pass stood; a parse that fails at that pass
+//!   leaves `Key a` as the last event of a protocol-valid prefix, and the
+//!   source reports the grammar's error. A held scalar is streamed, so
+//!   the stream reads `Key a, 1, Key a, 2` and a router's `Duplicates`
+//!   policy decides, as it would for any repeated member; a container the
+//!   adapter has just streamed is complete already; any other container is
+//!   a merge of the earlier value with the new one, whose first half has
+//!   already left, and the run fails with `DUPLICATE_MEMBER`. The
+//!   whole-value walk sees only the survivor, so a repeated name is the
+//!   one documented place the two streams differ.
 //! - A grammar may rewrite a map's members after the adapter streamed
 //!   them: YAML resolves a `<<` merge key when the mapping closes, removing
 //!   the member and appending the merged ones. The adapter keeps an
@@ -123,6 +133,16 @@ struct Frame {
     names: u64,
 }
 
+/// A member announced early whose rule closed without growing the map,
+/// held until the adapter's next event shows that the close stood.
+#[derive(Debug)]
+struct Held {
+    key: String,
+    /// What the map held under the name at that close; `None` when the
+    /// grammar announced a member it never stored.
+    value: Option<Value>,
+}
+
 /// How the run stands, as seen from inside the callbacks.
 #[derive(Debug)]
 pub(crate) enum Status {
@@ -149,6 +169,8 @@ pub(crate) struct Adapter<S: Sink> {
     /// pointer, so the allocation stays alive and a merged container built
     /// after it cannot be mistaken for it by landing at the same address.
     last_completed: Option<Value>,
+    /// The member settled at the last pass, not yet streamed.
+    held: Option<Held>,
     lexeme: String,
     lexeme_value: f64,
     lexeme_ready: bool,
@@ -194,6 +216,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             frames: Vec::new(),
             open: 0,
             last_completed: None,
+            held: None,
             lexeme: String::new(),
             lexeme_value: 0.0,
             lexeme_ready: false,
@@ -231,6 +254,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
     pub(crate) fn reset(&mut self) {
         self.open = 0;
         self.last_completed = None;
+        self.held = None;
         self.lexeme_ready = false;
         self.prune_hit = false;
         self.root_done = false;
@@ -405,6 +429,10 @@ impl<S: Sink + Send + 'static> Adapter<S> {
         if !matches!(self.status, Status::Running) {
             return;
         }
+        // Any further event means the pass that held a member stood.
+        if !self.flush_held() {
+            return;
+        }
         if done.alt.as_ref().is_some_and(|a| a.err.is_some()) {
             return;
         }
@@ -473,23 +501,22 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                 if self.frames[top_i].cell == cell {
                     if let Some((array, len)) = container_len(&node) {
                         let old = self.frames[top_i].len;
-                        if !array && self.frames[top_i].has_key {
-                            // The announced member is settled by the rule
-                            // that announced it closing, unless it is the
-                            // first new entry, which the loop below streams.
-                            let first_new = (len > old)
-                                .then(|| entry_at(&node, old))
-                                .flatten()
-                                .and_then(|(key, _)| key);
+                        if !array && self.frames[top_i].has_key && len == old {
+                            // The announced member did not grow the map, and
+                            // the rule that announced it is closing: it
+                            // replaced or merged an earlier member of the
+                            // same name, or the pass failed the parse before
+                            // storing it. Hold what the map has under the
+                            // name; the next event decides. (A member that
+                            // did grow the map is streamed by the loop below,
+                            // which settles the announced one first when
+                            // another landed ahead of it.)
                             let pending = self.frames[top_i].key.as_str();
                             let announcer = rule.u.get("key").is_some_and(
                                 |k| matches!(k, Value::String(s) if s.as_str() == pending),
                             );
-                            if first_new != Some(pending)
-                                && (announcer || len > old)
-                                && !self.settle_pending(&node, top_i)
-                            {
-                                return;
+                            if announcer {
+                                self.hold_pending(&node, top_i);
                             }
                         }
                         if len > old {
@@ -553,6 +580,11 @@ impl<S: Sink + Send + 'static> Adapter<S> {
             let top = &self.frames[top_i];
             if top.rule_i == rule.i || (top.cell == cell && top.depth == rule.d) {
                 let array = top.array;
+                // A member held by this very pass goes before the frame ends.
+                if !self.flush_held() {
+                    return;
+                }
+                let top = &self.frames[top_i];
                 if top.has_key {
                     // The announcing rule never closed on this cell: the
                     // member is whatever the map holds under the name now.
@@ -649,7 +681,38 @@ impl<S: Sink + Send + 'static> Adapter<S> {
         let top = &mut self.frames[top_i];
         top.has_key = false;
         let key = std::mem::take(&mut top.key);
-        let ok = match member(node, &key) {
+        let ok = self.settle(&key, member(node, &key));
+        self.frames[top_i].key = key;
+        ok
+    }
+
+    /// Like [`Adapter::settle_pending`], but the member is held rather than
+    /// streamed: the announcing rule's close pass may be one the engine
+    /// reports although a lifecycle action failed the parse in it, and the
+    /// map then still holds the earlier value. [`Adapter::flush_held`]
+    /// streams it at the next event, which a failed pass never sends.
+    fn hold_pending(&mut self, node: &Value, top_i: usize) {
+        let top = &mut self.frames[top_i];
+        top.has_key = false;
+        let key = top.key.clone();
+        let value = member(node, &key).cloned();
+        self.held = Some(Held { key, value });
+    }
+
+    /// Stream the member held at the last pass, if any. `false` means stop.
+    fn flush_held(&mut self) -> bool {
+        match self.held.take() {
+            Some(held) => self.settle(&held.key, held.value.as_ref()),
+            None => true,
+        }
+    }
+
+    /// Stream what a map holds under a repeated member's name: a scalar as
+    /// itself; the container that completed last as nothing; any other
+    /// container fails the run as a merge; no value at all fails it as a
+    /// member the grammar announced and never stored.
+    fn settle(&mut self, key: &str, value: Option<&Value>) -> bool {
+        match value {
             Some(value) => {
                 if !is_container(value) {
                     self.scalar(value)
@@ -661,7 +724,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                     self.last_completed = None;
                     true
                 } else {
-                    self.fail(merged_member(&key));
+                    self.fail(merged_member(key));
                     false
                 }
             }
@@ -675,9 +738,7 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                 ));
                 false
             }
-        };
-        self.frames[top_i].key = key;
-        ok
+        }
     }
 
     /// Keep the source text of a number rule's first token when it is a

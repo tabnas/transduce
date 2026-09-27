@@ -12,8 +12,11 @@
 //! a run the source REFUSES, with `STREAMABILITY_UNKNOWN` (a list wrapped
 //! around a root already streamed, a map rewritten after streaming) or
 //! `DUPLICATE_MEMBER` (a merged repeated member), after a protocol-valid
-//! prefix and before `End`. What is never accepted is a completed stream
-//! that disagrees with the walk. A grammar is listed in
+//! prefix and before `End`. A fixture the grammar itself refuses is checked
+//! as well: the incremental run must fail with the same code at the same
+//! position, after a protocol-valid prefix and before `End`, never having
+//! streamed a member the grammar did not store. What is never accepted is
+//! a completed stream that disagrees with the walk. A grammar is listed in
 //! `capability::INCREMENTAL` only when no fixture does that, and this
 //! suite asserts BOTH directions: a listed grammar that mismatches anywhere
 //! fails, and an unlisted grammar that never mismatches fails too, so the
@@ -185,7 +188,12 @@ fn run(
 
 /// What one (grammar, fixture) pair did.
 enum Outcome {
-    NotRead(Code),
+    /// The grammar refused the document, and so did the incremental run,
+    /// with the grammar's failure or a documented refusal.
+    NotRead {
+        walk: Code,
+        incremental: Code,
+    },
     Match {
         events: usize,
         lexemes: usize,
@@ -207,7 +215,51 @@ enum Outcome {
 fn compare(grammar: &Grammar, text: &str) -> Outcome {
     let (whole, materialized) = run(grammar.make, text, SourceMode::Materialize);
     if let Err(fail) = whole {
-        return Outcome::NotRead(fail.code);
+        // The grammar refuses the document: the incremental run must fail
+        // too, after a protocol-valid prefix and before End, either with
+        // the grammar's own failure, code and position alike (zon's
+        // repeated fields: the guard fails the pair's close before the
+        // assignment, and the map's earlier value must not be streamed as
+        // the repeated member), or with a documented refusal, since the
+        // adapter refuses a shape as it meets it and cancels the parse,
+        // which can come before the position where the grammar itself
+        // would have failed (yaml reading merged.json5 sees a second root
+        // before the syntax error). Never a completed stream.
+        let (result, incremental) = run(
+            grammar.make,
+            text,
+            SourceMode::Incremental {
+                prune: Prune::Never,
+            },
+        );
+        return match result {
+            Err(inc)
+                if well_formed(&incremental)
+                    && !incremental.contains(&OwnedJsonEvent::End)
+                    && ((inc.code == fail.code
+                        && (inc.row, inc.column) == (fail.row, fail.column))
+                        || matches!(
+                            inc.code,
+                            Code::StreamabilityUnknown | Code::DuplicateMember
+                        )) =>
+            {
+                Outcome::NotRead {
+                    walk: fail.code,
+                    incremental: inc.code,
+                }
+            }
+            Err(inc) => Outcome::Mismatch(format!(
+                "the walk failed with {fail}; the incremental run failed with {inc} after {} \
+                 events (protocol-valid prefix: {})",
+                incremental.len(),
+                well_formed(&incremental)
+            )),
+            Ok(flow) => Outcome::Mismatch(format!(
+                "the walk failed with {fail}; the incremental run completed with Ok({flow:?}) \
+                 after {} events",
+                incremental.len()
+            )),
+        };
     }
     let (result, incremental) = run(
         grammar.make,
@@ -301,7 +353,9 @@ fn verify(name: &str) {
         let started = std::time::Instant::now();
         let outcome = compare(grammar, text);
         let verdict = match &outcome {
-            Outcome::NotRead(code) => format!("not read ({code})"),
+            Outcome::NotRead { walk, incremental } => {
+                format!("not read ({walk}; the incremental run failed with {incremental})")
+            }
             Outcome::Match { events, lexemes } => {
                 read += 1;
                 format!("MATCH ({events} events, {lexemes} lexemes)")
@@ -548,14 +602,165 @@ fn a_repeated_container_member_the_grammar_merges_fails_with_duplicate_member() 
     }
 }
 
+/// zon refuses a repeated field itself, from the pair rule's close and
+/// before jsonic's assignment, so when the engine reports that close the
+/// map still holds the FIRST value. The incremental run fails exactly as
+/// the walk does (`INPUT_INVALID`, the grammar's code, the same position),
+/// after a protocol-valid prefix and before `End`, and the member the
+/// grammar never stored is not streamed: the prefix ends with the repeated
+/// `Key`, or with the second value's own container, which the adapter
+/// streamed as the grammar built it. A router consumer therefore sees the
+/// grammar's failure, not a protocol one.
 #[test]
-fn a_repeated_member_a_grammar_refuses_is_the_grammars_error_in_both_modes() {
-    let text = ".{ .a = 1, .a = 2 }";
-    let (whole, _) = run(tabnas_zon::make, text, SourceMode::Materialize);
-    let (result, events) = incremental(tabnas_zon::make, text);
-    assert_eq!(whole.unwrap_err().code, Code::InputInvalid);
-    assert_eq!(result.unwrap_err().code, Code::InputInvalid);
-    assert!(well_formed(&events));
+fn every_repeated_field_zon_fixture_fails_as_the_walk_does_after_a_protocol_valid_prefix() {
+    use OwnedJsonEvent::{ArrayEnd, ArrayStart, End, Key, ObjectEnd, ObjectStart};
+    let key = |k: &str| Key(k.into());
+    let num = |n: f64| OwnedJsonEvent::Number {
+        value: n,
+        lexeme: None,
+    };
+    let cases: [(&str, Vec<OwnedJsonEvent>); 7] = [
+        (
+            "repeated-scalar.zon",
+            vec![ObjectStart, key("a"), num(1.0), key("a")],
+        ),
+        (
+            "repeated-scalar-then-struct.zon",
+            vec![
+                ObjectStart,
+                key("a"),
+                num(1.0),
+                key("a"),
+                ObjectStart,
+                key("y"),
+                num(2.0),
+                ObjectEnd,
+            ],
+        ),
+        (
+            "repeated-struct-then-scalar.zon",
+            vec![
+                ObjectStart,
+                key("a"),
+                ObjectStart,
+                key("x"),
+                num(1.0),
+                ObjectEnd,
+                key("a"),
+            ],
+        ),
+        (
+            "repeated-structs.zon",
+            vec![
+                ObjectStart,
+                key("a"),
+                ObjectStart,
+                key("x"),
+                num(1.0),
+                ObjectEnd,
+                key("a"),
+                ObjectStart,
+                key("y"),
+                num(2.0),
+                ObjectEnd,
+            ],
+        ),
+        (
+            "repeated-scalar-then-tuple.zon",
+            vec![
+                ObjectStart,
+                key("a"),
+                num(1.0),
+                key("a"),
+                ArrayStart,
+                num(7.0),
+                num(8.0),
+                ArrayEnd,
+            ],
+        ),
+        (
+            "repeated-after-another.zon",
+            vec![
+                ObjectStart,
+                key("a"),
+                num(1.0),
+                key("b"),
+                num(5.0),
+                key("a"),
+                ObjectStart,
+                key("y"),
+                num(2.0),
+                ObjectEnd,
+            ],
+        ),
+        (
+            "repeated-nested.zon",
+            vec![
+                ObjectStart,
+                key("o"),
+                ObjectStart,
+                key("a"),
+                num(1.0),
+                key("a"),
+                ObjectStart,
+                key("y"),
+                num(2.0),
+                ObjectEnd,
+            ],
+        ),
+    ];
+    for (name, prefix) in cases {
+        let text = fixture(name);
+        let (whole, walked) = run(tabnas_zon::make, &text, SourceMode::Materialize);
+        let expected = whole.unwrap_err();
+        assert_eq!(expected.code, Code::InputInvalid, "{name}: {expected}");
+        assert!(
+            expected.message.contains("zon_dup_field"),
+            "{name}: the grammar's own guard: {expected}"
+        );
+        assert!(walked.is_empty(), "{name}: the walk emits nothing");
+
+        let (result, events) = incremental(tabnas_zon::make, &text);
+        let err = result
+            .map(|flow| panic!("{name}: Ok({flow:?}) after {events:?}"))
+            .unwrap_err();
+        assert_eq!(err.code, expected.code, "{name}: {err}");
+        assert_eq!(err.message, expected.message, "{name}");
+        assert_eq!(
+            (err.row, err.column),
+            (expected.row, expected.column),
+            "{name}: the grammar's position"
+        );
+        assert!(well_formed(&events), "{name}: {events:?}");
+        assert!(!events.contains(&End), "{name}");
+        assert_eq!(
+            without_lexemes(&events),
+            prefix,
+            "{name}: the member the grammar never stored is not streamed"
+        );
+
+        let router = Router::new(
+            vec![CaptureSpec::materialize("root", Selector::root())],
+            &Limits::default(),
+            Duplicates::LastWins,
+            Metrics::new(),
+            Vec::<Selected>::new(),
+        )
+        .unwrap();
+        let (result, router) = ParserSource::new(tabnas_zon::make(), &text)
+            .unverified()
+            .mode(SourceMode::Incremental {
+                prune: Prune::Never,
+            })
+            .run_owned(router);
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.code,
+            Code::InputInvalid,
+            "{name}: a router consumer sees the grammar's failure, not a protocol one: {err}"
+        );
+        assert!(router.into_inner().is_empty(), "{name}: nothing delivered");
+    }
 }
 
 /// YAML resolves a `<<` merge key when the mapping closes, removing the

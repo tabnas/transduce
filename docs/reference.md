@@ -45,7 +45,9 @@ Failure mapping: a sink's `Fail` comes back as it was; a sink that stopped
 is `Ok(Flow::Stop)`; a parse the caller's `AbortFlag` cancelled is
 `ABORTED`; any other engine error is `INPUT_INVALID` with the engine's
 code in the message and its row and column (for a line source, the line's
-number and the column within it). A `cancel` the caller did not ask for is
+number and the column within it), in both modes alike: an incremental run
+of a document the grammar refuses fails with the same code and position
+after a protocol-valid prefix and before `End`. A `cancel` the caller did not ask for is
 a guard the grammar installed (tabnas-json refuses nesting deeper than
 128, below the default `max_depth` of 256, so that limit is unreachable
 for JSON unless set lower), and the message says "the grammar stopped the
@@ -112,7 +114,13 @@ the grammar MERGES the two values instead of replacing (jsonic's
 and `jsonc`), the merged container cannot be streamed because its first
 half already was, and the incremental run fails with `DUPLICATE_MEMBER`
 saying to run materialized. `zon` refuses a repeated field itself, in
-both modes.
+both modes: its guard fails the pair's close before the assignment, so the
+incremental run fails with the grammar's `INPUT_INVALID` at the same
+position as the walk, after a protocol-valid prefix that ends with the
+repeated `Key` (or the second value's own container, streamed as the
+grammar built it). The map's earlier value is not streamed in its place:
+a member whose announcing rule closed without growing the map is held
+until the engine's next event, which a pass that failed never sends.
 
 `markdown` builds its nodes imperatively, but each lands whole and is
 walked at its insertion, so its events are the walk's. The other

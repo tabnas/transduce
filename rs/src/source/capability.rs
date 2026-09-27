@@ -23,8 +23,12 @@
 //! is a container), a map the grammar rewrote after it was streamed (a
 //! YAML merge key), both `STREAMABILITY_UNKNOWN`; and a repeated member
 //! whose containers the grammar merged (jsonic's `map.extend`, on for
-//! yaml, json5 and jsonic), `DUPLICATE_MEMBER`. `rule_events.rs`
-//! documents each.
+//! yaml, json5 and jsonic), `DUPLICATE_MEMBER`. A document the grammar
+//! itself refuses fails the incremental run with the grammar's
+//! `INPUT_INVALID`, at the same position, after a protocol-valid prefix
+//! (zon's repeated fields: the member the grammar never stored is not
+//! streamed), and the suite checks that for every fixture a grammar does
+//! not read. `rule_events.rs` documents each.
 //!
 //! markdown is listed although it builds its nodes imperatively: each
 //! node is inserted whole and walked at its insertion, so the events are
