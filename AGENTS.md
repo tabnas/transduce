@@ -84,8 +84,12 @@ fails the test; an unlisted grammar that never mismatches fails too. The
 list today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`,
 `yaml`, `zon` (`docs/reference.md` has the detail); the imperative
 grammars `toml`, `ini`, `csv`, `xml` and `feed` build values the rule
-events do not show. An incremental run of an unverified grammar fails with
-`STREAMABILITY_UNKNOWN` rather than emitting a malformed stream.
+events do not show. `ParserSource` checks the list by the grammar's name
+(`ParserSource::grammar`, since the json and jsonl parsers register no
+plugin to read it from): an incremental run of an unverified or unnamed
+grammar fails with `STREAMABILITY_UNKNOWN` before the parse, emitting
+nothing, rather than a malformed stream; `unverified()` lifts the gate
+for the differential suite alone.
 
 **The parsed values the grammars return are never altered.** The
 incremental source may drop already-streamed elements from a container it

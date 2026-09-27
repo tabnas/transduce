@@ -7,10 +7,18 @@
 //! and entries land, and optionally prunes streamed array elements from
 //! the engine's tree. It is sound for the grammars
 //! [`super::capability::incremental`] lists, which the differential suite
-//! verifies, and produces the identical stream there. The engine's
-//! subscriber must own its state (`Fn + Send + Sync + 'static`), so the
-//! incremental path takes the sink by value ([`ParserSource::run_owned`],
-//! [`ParserSource::run_boxed`]) and hands it back afterwards.
+//! verifies, and for no other: an imperative grammar's rule events give a
+//! well-formed stream of the wrong shape or a malformed one, and the run
+//! would still return `Ok`. So the incremental path is gated on the list,
+//! by the grammar's name, which the source cannot learn from the `Tabnas`
+//! (the json and jsonl parsers register no plugin) and so must be told
+//! ([`ParserSource::grammar`]); without a listed name it fails with
+//! `STREAMABILITY_UNKNOWN` before the parse, having emitted nothing.
+//! [`ParserSource::unverified`] lifts the gate for the differential suite
+//! that maintains the list. The engine's subscriber must own its state
+//! (`Fn + Send + Sync + 'static`), so the incremental path takes the sink
+//! by value ([`ParserSource::run_owned`], [`ParserSource::run_boxed`]) and
+//! hands it back afterwards.
 //!
 //! Failure mapping, in this order: a sink failure is returned as it was;
 //! a sink that stopped is `Ok(Flow::Stop)`; a parse cancelled through the
@@ -25,13 +33,14 @@ use std::sync::{Arc, Mutex};
 
 use tabnas::Tabnas;
 
+use crate::error::Code;
 use crate::error::Fail;
 use crate::event::JsonEvent;
 use crate::limits::{AbortFlag, Limits, Metrics};
 use crate::sink::{Flow, Sink};
 use crate::source::guard::Guarded;
 use crate::source::rule_events::{self, Adapter, Status, GUARD};
-use crate::source::{walk_value, Prune, Source, SourceMode};
+use crate::source::{capability, walk_value, Prune, Source, SourceMode};
 
 /// A tabnas parser applied to one text, as a source.
 pub struct ParserSource<'s> {
@@ -41,6 +50,8 @@ pub struct ParserSource<'s> {
     limits: Limits,
     abort: AbortFlag,
     metrics: Arc<Metrics>,
+    grammar: Option<Box<str>>,
+    unverified: bool,
 }
 
 impl<'s> ParserSource<'s> {
@@ -54,12 +65,57 @@ impl<'s> ParserSource<'s> {
             limits: Limits::default(),
             abort: AbortFlag::new(),
             metrics: Metrics::new(),
+            grammar: None,
+            unverified: false,
         }
     }
 
     pub fn mode(mut self, mode: SourceMode) -> Self {
         self.mode = mode;
         self
+    }
+
+    /// The grammar the parser implements, by the name its crate uses
+    /// (`json` for `tabnas-json`). `SourceMode::Incremental` runs only for
+    /// a name [`capability::incremental`] lists; with no name, or an
+    /// unlisted one, [`ParserSource::run_owned`] fails with
+    /// `STREAMABILITY_UNKNOWN` before parsing. `Materialize` needs no name.
+    pub fn grammar(mut self, name: &str) -> Self {
+        self.grammar = Some(name.into());
+        self
+    }
+
+    /// Run `SourceMode::Incremental` whatever the verified list says. This
+    /// exists for the differential suite that maintains the list and for
+    /// nothing else: on a grammar the suite has not verified, the events
+    /// may be a well-formed stream of the wrong shape, or malformed, and
+    /// the run still returns `Ok`.
+    pub fn unverified(mut self) -> Self {
+        self.unverified = true;
+        self
+    }
+
+    /// Why the incremental path may not run, when it may not.
+    fn gate(&self) -> Option<Fail> {
+        if self.unverified {
+            return None;
+        }
+        match self.grammar.as_deref() {
+            Some(name) if capability::incremental(name) => None,
+            Some(name) => Some(Fail::new(
+                Code::StreamabilityUnknown,
+                format!(
+                    "grammar {name:?} is not in capability::incremental: the differential suite \
+                     has not verified that its rule events stream as the walk does; run it with \
+                     SourceMode::Materialize"
+                ),
+            )),
+            None => Some(Fail::new(
+                Code::StreamabilityUnknown,
+                "SourceMode::Incremental needs the grammar's name (ParserSource::grammar) to \
+                 check capability::incremental; without one, run SourceMode::Materialize",
+            )),
+        }
     }
 
     pub fn limits(mut self, limits: Limits) -> Self {
@@ -87,15 +143,20 @@ impl<'s> ParserSource<'s> {
                 let outcome = materialize(self.parser, self.text, &self.abort, &mut guarded);
                 (outcome, guarded.into_inner())
             }
-            SourceMode::Incremental { prune } => incremental(
-                self.parser,
-                self.text,
-                &self.limits,
-                self.abort,
-                self.metrics,
-                prune,
-                sink,
-            ),
+            SourceMode::Incremental { prune } => {
+                if let Some(refused) = self.gate() {
+                    return (Err(refused), sink);
+                }
+                incremental(
+                    self.parser,
+                    self.text,
+                    &self.limits,
+                    self.abort,
+                    self.metrics,
+                    prune,
+                    sink,
+                )
+            }
         }
     }
 
@@ -209,8 +270,41 @@ mod tests {
 
     fn record(mode: SourceMode, src: &str) -> (Result<Flow, Fail>, Vec<OwnedJsonEvent>) {
         ParserSource::new(tabnas_json::make(), src)
+            .grammar("json")
             .mode(mode)
             .run_owned(Vec::new())
+    }
+
+    #[test]
+    fn incremental_mode_needs_a_verified_grammar_name_and_emits_nothing_without_one() {
+        let (r, events) = ParserSource::new(tabnas_json::make(), DOC)
+            .mode(incremental_mode())
+            .run_owned(Vec::<OwnedJsonEvent>::new());
+        let err = r.unwrap_err();
+        assert_eq!(err.code, Code::StreamabilityUnknown);
+        assert!(err.message.contains("ParserSource::grammar"), "{err}");
+        assert!(events.is_empty());
+
+        let (r, events) = ParserSource::new(tabnas_csv::make(), "a,b\n1,2\n")
+            .grammar("csv")
+            .mode(incremental_mode())
+            .run_owned(Vec::<OwnedJsonEvent>::new());
+        let err = r.unwrap_err();
+        assert_eq!(err.code, Code::StreamabilityUnknown);
+        assert!(err.message.contains("\"csv\""), "{err}");
+        assert!(events.is_empty(), "refused before the parse");
+
+        // Materialize needs no name, and the unverified switch lifts the
+        // gate for the suite: csv then streams the wrong shape and says Ok.
+        let (r, walked) = ParserSource::new(tabnas_csv::make(), "a,b\n1,2\n")
+            .run_owned(Vec::<OwnedJsonEvent>::new());
+        r.unwrap();
+        let (r, streamed) = ParserSource::new(tabnas_csv::make(), "a,b\n1,2\n")
+            .unverified()
+            .mode(incremental_mode())
+            .run_owned(Vec::<OwnedJsonEvent>::new());
+        r.unwrap();
+        assert_ne!(streamed, walked);
     }
 
     fn without_lexemes(events: &[OwnedJsonEvent]) -> Vec<OwnedJsonEvent> {
@@ -280,6 +374,7 @@ mod tests {
         for mode in [SourceMode::Materialize, incremental_mode()] {
             let mut rec: Vec<OwnedJsonEvent> = Vec::new();
             let r = ParserSource::new(tabnas_json::make(), DOC)
+                .grammar("json")
                 .mode(mode)
                 .run(&mut rec);
             assert_eq!(r.unwrap(), Flow::Continue);
@@ -297,6 +392,7 @@ mod tests {
                 Ok(if n == 3 { Flow::Stop } else { Flow::Continue })
             });
             let (r, _sink) = ParserSource::new(tabnas_json::make(), DOC)
+                .grammar("json")
                 .mode(mode)
                 .run_owned(sink);
             assert_eq!(r.unwrap(), Flow::Stop);
@@ -315,6 +411,7 @@ mod tests {
                 }
             });
             let (r, _) = ParserSource::new(tabnas_json::make(), DOC)
+                .grammar("json")
                 .mode(mode)
                 .run_owned(sink);
             let err = r.unwrap_err();
@@ -329,6 +426,7 @@ mod tests {
             let abort = AbortFlag::new();
             abort.abort();
             let (r, _) = ParserSource::new(tabnas_json::make(), DOC)
+                .grammar("json")
                 .mode(mode)
                 .abort(abort)
                 .run_owned(Vec::<OwnedJsonEvent>::new());
@@ -356,6 +454,7 @@ mod tests {
                 ..Limits::default()
             };
             let (r, _) = ParserSource::new(tabnas_json::make(), r#"{"ab":1}"#)
+                .grammar("json")
                 .mode(mode.clone())
                 .limits(limits)
                 .run_owned(Vec::<OwnedJsonEvent>::new());
@@ -368,6 +467,7 @@ mod tests {
                 ..Limits::default()
             };
             let (r, _) = ParserSource::new(tabnas_json::make(), "[[[1]]]")
+                .grammar("json")
                 .mode(mode.clone())
                 .limits(limits)
                 .run_owned(Vec::<OwnedJsonEvent>::new());
@@ -378,6 +478,7 @@ mod tests {
                 ..Limits::default()
             };
             let (r, _) = ParserSource::new(tabnas_json::make(), r#"["abc"]"#)
+                .grammar("json")
                 .mode(mode)
                 .limits(limits)
                 .run_owned(Vec::<OwnedJsonEvent>::new());
@@ -390,6 +491,7 @@ mod tests {
         for mode in [SourceMode::Materialize, incremental_mode()] {
             let metrics = Metrics::new();
             let (r, events) = ParserSource::new(tabnas_json::make(), DOC)
+                .grammar("json")
                 .mode(mode)
                 .metrics(metrics.clone())
                 .run_owned(Vec::<OwnedJsonEvent>::new());

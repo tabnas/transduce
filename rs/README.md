@@ -34,6 +34,7 @@ let binding = TableBinding {
 };
 let table = TableFromJson::new(binding, &Limits::default(), Duplicates::Reject, Metrics::new(), Table::default())?;
 let (outcome, table) = ParserSource::new(tabnas_json::make(), text)
+    .grammar("json")
     .mode(SourceMode::Incremental { prune: Prune::Under(rows) })
     .run_owned(table);
 outcome?;

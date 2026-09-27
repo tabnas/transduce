@@ -27,7 +27,7 @@ source metrics (`events`, `keys`, `scalars`).
 | Source | Input | Modes | Retains |
 |---|---|---|---|
 | `ValueSource(&Value)` | a parsed engine value | walk | the value (the caller's) |
-| `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
+| `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists, named with `.grammar("json")`; no name or an unlisted one is `STREAMABILITY_UNKNOWN` before the parse (`.unverified()` lifts the gate, for the differential suite) | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
 | `LinesSource::new(BufRead, LineFormat)` | JSON Lines or CSV | one record per line (`Jsonl`) or chunks of whole records (`Csv { header, options }`), each parsed with one reused grammar | one line, or one chunk (`DEFAULT_CHUNK_BYTES`, 256 KiB, never a fraction of a record) |
 
 `Source::run(self, &mut dyn Sink)` drives a borrowed sink and is always
@@ -104,8 +104,13 @@ walked at its insertion, so its events are the walk's. The other
 imperative grammars (`toml`, `ini`, `csv`, `xml`, `feed`) build their
 values in ways the rule events do not show (`csv` streams its header and
 raw rows as extra elements, a well-formed stream with the wrong shape) and
-are walked whole; `ParserSource` refuses to run an unlisted grammar
-incrementally.
+are walked whole. `ParserSource` refuses to run an unlisted grammar
+incrementally: the grammar's name cannot be read from the `Tabnas` (the
+json and jsonl parsers register no plugin), so `SourceMode::Incremental`
+needs `ParserSource::grammar(name)` and fails with `STREAMABILITY_UNKNOWN`
+before the parse, emitting nothing, when the name is missing or unlisted.
+`ParserSource::unverified()` lifts that gate for the differential suite,
+which is how an unlisted grammar's events get measured at all.
 
 ## Selectors and the matcher
 

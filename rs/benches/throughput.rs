@@ -110,6 +110,7 @@ fn incremental(c: &mut Criterion) {
     group.bench_function("events_into_count_sink", |b| {
         b.iter(|| {
             let (r, count) = ParserSource::new(parser.clone(), &src)
+                .grammar("json")
                 .mode(SourceMode::Incremental {
                     prune: Prune::Never,
                 })
@@ -121,6 +122,7 @@ fn incremental(c: &mut Criterion) {
     group.bench_function("events_pruned_into_count_sink", |b| {
         b.iter(|| {
             let (r, count) = ParserSource::new(parser.clone(), &src)
+                .grammar("json")
                 .mode(SourceMode::Incremental {
                     prune: Prune::Under(records_selector()),
                 })
@@ -181,6 +183,7 @@ fn table_from_text(c: &mut Criterion) {
     group.bench_function("incremental_pruned_into_table", |b| {
         b.iter(|| {
             let (r, t) = ParserSource::new(parser.clone(), &src)
+                .grammar("json")
                 .mode(SourceMode::Incremental {
                     prune: Prune::Under(records_selector()),
                 })

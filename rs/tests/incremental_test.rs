@@ -17,7 +17,9 @@
 //! `capability::INCREMENTAL` only when no fixture does that, and this
 //! suite asserts BOTH directions: a listed grammar that mismatches anywhere
 //! fails, and an unlisted grammar that never mismatches fails too, so the
-//! list can rot in neither.
+//! list can rot in neither. The suite runs the adapter with
+//! `ParserSource::unverified`, since the source itself refuses an unlisted
+//! grammar before parsing; that refusal is tested here as well.
 //!
 //! The fixtures are the copies under `tests/fixtures/` (aless's, the
 //! OpenAPI YAML, and the shapes this suite exists to see: an empty and a
@@ -168,6 +170,7 @@ fn run(
     mode: SourceMode,
 ) -> (Result<Flow, Fail>, Vec<OwnedJsonEvent>) {
     ParserSource::new(make(), text)
+        .unverified()
         .mode(mode)
         .run_owned(Vec::new())
 }
@@ -603,4 +606,42 @@ fn markdown_documents_stream_as_the_walk() {
         assert_eq!(result.unwrap(), Flow::Continue, "{text:?}");
         assert_eq!(without_lexemes(&events), walked, "{text:?}");
     }
+}
+
+/// The source consults the list by the grammar's name: an unlisted grammar
+/// in `Incremental` mode is refused before the parse, with nothing
+/// emitted, and a listed one runs; the suite above is what may bypass it.
+#[test]
+fn an_unlisted_grammar_in_incremental_mode_is_refused_before_it_emits_anything() {
+    let text = fs::read_to_string(fixtures_dir().join("sample.csv")).unwrap();
+    let mut refused = 0;
+    for grammar in GRAMMARS {
+        let (result, events) = ParserSource::new((grammar.make)(), &text)
+            .grammar(grammar.name)
+            .mode(SourceMode::Incremental {
+                prune: Prune::Never,
+            })
+            .run_owned(Vec::<OwnedJsonEvent>::new());
+        if capability::incremental(grammar.name) {
+            // Listed: the gate is open; whether csv text parses is the
+            // grammar's business.
+            assert_ne!(
+                result.as_ref().err().map(|e| e.code),
+                Some(Code::StreamabilityUnknown),
+                "{}: {result:?}",
+                grammar.name
+            );
+        } else {
+            let err = result.unwrap_err();
+            assert_eq!(err.code, Code::StreamabilityUnknown, "{}", grammar.name);
+            assert!(err.message.contains(grammar.name), "{err}");
+            assert!(
+                events.is_empty(),
+                "{}: nothing left the source",
+                grammar.name
+            );
+            refused += 1;
+        }
+    }
+    assert_eq!(refused, GRAMMARS.len() - capability::INCREMENTAL.len());
 }

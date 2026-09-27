@@ -598,6 +598,14 @@ mod tests {
 
     const JSONL: &str = "{\"a\":1.50,\"b\":[true,null]}\r\n\n  \n{\"a\":2,\"b\":\"x\"}\n[3]\n\"s\"";
 
+    /// The JSON Lines source installs the adapter on `tabnas-json` itself,
+    /// without the `ParserSource` gate, which is sound only while json is
+    /// verified.
+    #[test]
+    fn the_line_sources_grammar_is_verified() {
+        assert!(crate::source::capability::incremental("json"));
+    }
+
     #[test]
     fn jsonl_matches_the_whole_file_parse_at_every_reader_boundary() {
         let want = walked(&tabnas_jsonl::parse(JSONL).unwrap());

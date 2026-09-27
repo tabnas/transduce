@@ -60,6 +60,7 @@ fn high_water(rows: usize) -> (u64, u64, usize) {
     )
     .expect("the binding is valid");
     let (outcome, table) = ParserSource::new(tabnas_json::make(), &text)
+        .grammar("json")
         .mode(SourceMode::Incremental {
             prune: Prune::Under(selector),
         })
