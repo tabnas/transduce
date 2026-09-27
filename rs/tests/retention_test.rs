@@ -11,8 +11,8 @@
 mod support;
 
 use tabnas_transduce::{
-    column_from_meta, Duplicates, Limits, Metrics, ParserSource, Prune, Schema, Selector,
-    SourceMode, Table, TableBinding, TableFromJson,
+    column_from_meta, Duplicates, Limits, Metrics, OwnedJsonEvent, ParserSource, Prune, Schema,
+    Selector, SourceMode, Table, TableBinding, TableFromJson,
 };
 
 /// The worked example with `rows` copies of one record, so every row has
@@ -89,4 +89,50 @@ fn ten_times_the_rows_leave_the_retained_high_water_flat() {
         "the peak is one row's, not the count's"
     );
     assert_eq!(retained_10, retained_1);
+}
+
+/// The README's chain shares one `Metrics` between the source and the
+/// table transducer; the source counts are the source's, once.
+#[test]
+fn a_chain_sharing_one_metrics_counts_the_source_events_once() {
+    let text = r#"{"meta":[{"title":"Id","path":["id"]}],"rows":[{"id":1},{"id":2}]}"#;
+    let rows = Selector::root().property("rows").each_index();
+    let metrics = Metrics::new();
+    let table = TableFromJson::new(
+        TableBinding {
+            schema: Schema::FromMetadata {
+                columns: Selector::root().property("meta"),
+                column: Box::new(column_from_meta),
+            },
+            rows: rows.clone(),
+        },
+        &Limits::default(),
+        Duplicates::Reject,
+        metrics.clone(),
+        Table::default(),
+    )
+    .expect("the binding is valid");
+    let (outcome, _) = ParserSource::new(tabnas_json::make(), text)
+        .grammar("json")
+        .mode(SourceMode::Incremental {
+            prune: Prune::Under(rows),
+        })
+        .metrics(metrics.clone())
+        .run_owned(table);
+    outcome.expect("the run succeeds");
+    let (_, recorded) =
+        ParserSource::new(tabnas_json::make(), text).run_owned(Vec::<OwnedJsonEvent>::new());
+    assert_eq!(Metrics::get(&metrics.events), recorded.len() as u64);
+    assert_eq!(
+        Metrics::get(&metrics.keys),
+        recorded
+            .iter()
+            .filter(|e| matches!(e, OwnedJsonEvent::Key(_)))
+            .count() as u64
+    );
+    assert_eq!(
+        Metrics::get(&metrics.scalars),
+        recorded.iter().filter(|e| e.as_event().is_scalar()).count() as u64
+    );
+    assert_eq!(Metrics::get(&metrics.rows), 2);
 }

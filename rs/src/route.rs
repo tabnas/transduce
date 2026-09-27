@@ -150,6 +150,9 @@ pub struct Router<D: RouteSink> {
     max_depth: usize,
     max_capture_bytes: usize,
     duplicates: Duplicates,
+    /// For the capture accounting only (`captured_bytes` and its high-water
+    /// marks). The source counts `events`, `keys` and `scalars` through
+    /// `Guarded`, so a chain sharing one `Metrics` counts each once.
     metrics: Arc<Metrics>,
     ended: bool,
 }
@@ -276,23 +279,17 @@ impl<D: RouteSink> Router<D> {
 impl<D: RouteSink> Sink for Router<D> {
     fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
         let hit = self.matcher.event(ev)?;
-        Metrics::add(&self.metrics.events, 1);
-        match hit.kind {
-            HitKind::Key => Metrics::add(&self.metrics.keys, 1),
-            HitKind::Scalar => Metrics::add(&self.metrics.scalars, 1),
-            HitKind::Start if hit.depth + 1 > self.max_depth => {
-                let path = self.matcher.path(hit.depth);
-                return Err(Fail::limit(
-                    "max_depth",
-                    self.max_depth as u64,
-                    format!(
-                        "a container at {path} is nested deeper than {}",
-                        self.max_depth
-                    ),
-                )
-                .at_path(path.to_string()));
-            }
-            _ => {}
+        if hit.kind == HitKind::Start && hit.depth + 1 > self.max_depth {
+            let path = self.matcher.path(hit.depth);
+            return Err(Fail::limit(
+                "max_depth",
+                self.max_depth as u64,
+                format!(
+                    "a container at {path} is nested deeper than {}",
+                    self.max_depth
+                ),
+            )
+            .at_path(path.to_string()));
         }
         for k in 0..hit.begins {
             let id = self.matcher.begins()[k];
@@ -768,8 +765,10 @@ pub(crate) mod tests {
         assert_eq!(run(Duplicates::FirstWins).unwrap(), r#"{"a":1}"#);
     }
 
+    /// The source counts events, keys and scalars; a router sharing its
+    /// `Metrics` must not count them again.
     #[test]
-    fn metrics_count_events_keys_scalars_and_capture_bytes() {
+    fn the_router_accounts_for_captures_and_leaves_the_source_counts_alone() {
         let metrics = Metrics::new();
         let mut r = Router::new(
             vec![CaptureSpec::materialize("row", records_selector())],
@@ -781,18 +780,9 @@ pub(crate) mod tests {
         .unwrap();
         let events = worked_example();
         replay(&events, &mut r).unwrap();
-        assert_eq!(Metrics::get(&metrics.events), events.len() as u64);
-        assert_eq!(
-            Metrics::get(&metrics.keys),
-            events
-                .iter()
-                .filter(|e| matches!(e, OwnedJsonEvent::Key(_)))
-                .count() as u64
-        );
-        assert_eq!(
-            Metrics::get(&metrics.scalars),
-            events.iter().filter(|e| e.as_event().is_scalar()).count() as u64
-        );
+        assert_eq!(Metrics::get(&metrics.events), 0);
+        assert_eq!(Metrics::get(&metrics.keys), 0);
+        assert_eq!(Metrics::get(&metrics.scalars), 0);
         assert_eq!(Metrics::get(&metrics.captured_bytes), 0);
         let biggest = r
             .into_inner()
