@@ -508,7 +508,6 @@ impl<R: BufRead> Chunks<R> {
         }
         let mut first_line = None;
         loop {
-            let before = text.len();
             match self.read_record(&mut text)? {
                 None => {
                     self.done = true;
@@ -516,7 +515,7 @@ impl<R: BufRead> Chunks<R> {
                 }
                 Some(line) => {
                     first_line.get_or_insert(line);
-                    if text.len() - before == 0 || text.len() >= self.chunk_bytes {
+                    if text.len() >= self.chunk_bytes {
                         break;
                     }
                 }

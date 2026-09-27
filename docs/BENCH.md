@@ -79,3 +79,37 @@ So the pipeline downstream of the parse runs two orders of magnitude
 faster than the parse itself, and the engine's per-rule cost is the
 throughput of the whole. The numbers are also recorded in render's
 `docs/reference.md`.
+
+## This crate's stages
+
+`cargo bench` in `rs/` (`benches/throughput.rs`), release build, one core
+of the same kind of container (a 2.1 GHz Xeon vCPU), on the generated
+worked-example document of 20,000 records (1.7 MB; `tests/support`
+generates it). Criterion's mean of 10 samples for the parse-bound
+groups.
+
+| Group | What runs | Time | Throughput |
+|---|---|---|---|
+| `parse_only/json` | `tabnas_json::make().parse` alone | 1.10 s | 1.45 MiB/s |
+| `incremental/events_into_count_sink` | the rule-event adapter, no pruning, into `CountSink` | 1.35 s | 1.18 MiB/s |
+| `incremental/events_pruned_into_count_sink` | the same with `Prune::Under(records)` | 1.32 s | 1.21 MiB/s |
+| `walk/value_source_into_count_sink` | `ValueSource` over the parsed value | 4.1 ms | 385 MiB/s |
+| `table_from_recording/router_and_table_into_count_table` | `Router` + `TableFromJson` from a recording, no parse | 41.8 ms | 37.9 MiB/s |
+| `table_from_text/incremental_pruned_into_table` | text to table rows, incremental and pruned | 1.32 s | 1.20 MiB/s |
+
+What the table says, in the terms of the engine table above:
+
+- **The adapter costs about 20% over the bare parse** (1.35 s against
+  1.10 s), the per-pass `Rule` clone and the subscriber's lock included,
+  and pruning gives a little of it back. That is the whole price of
+  streaming a verified grammar instead of parsing it whole.
+- **The stages downstream are not where the time goes.** Walking the
+  parsed value is 385 MiB/s and the router plus the table transducer,
+  materializing every record and projecting three columns, is 38 MiB/s:
+  about 3% of the chain from text to rows. The chain runs at the engine's
+  speed, 1.2 MiB/s here.
+- **Memory is the other axis, and it is the engine's.** With pruning the
+  transducer retains one record at a time (`captured_bytes_high` says so),
+  while the engine's rule history grows with the document, as the first
+  table shows; the line sources sidestep that for JSON Lines and CSV by
+  parsing a record or a chunk at a time.
