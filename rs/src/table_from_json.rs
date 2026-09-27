@@ -14,6 +14,7 @@
 //! order of members inside a row never matters, and a number keeps the
 //! lexeme the source events carried.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
@@ -65,6 +66,9 @@ struct Core<S: TableSink> {
     public: Vec<PublicColumn>,
     schema_sent: bool,
     cells: Vec<Cell>,
+    /// Whether no column's path is another's prefix, so each cell can be
+    /// moved out of the row instead of copied.
+    disjoint: bool,
     max_columns: usize,
     metrics: Arc<Metrics>,
 }
@@ -83,6 +87,7 @@ impl<S: TableSink> Core<S> {
             ));
         }
         self.public = columns.iter().map(BoundColumn::public).collect();
+        self.disjoint = paths_are_disjoint(&columns);
         match &mut self.columns {
             Columns::Static(c) => *c = columns,
             Columns::FromMetadata { bound, .. } => *bound = Some(columns),
@@ -150,7 +155,7 @@ impl<S: TableSink> Core<S> {
     }
 
     fn row(&mut self, selected: Selected) -> Result<Flow, Fail> {
-        let row = selected.value.unwrap_or(Datum::Null);
+        let mut row = selected.value.unwrap_or(Datum::Null);
         if !self.schema_sent {
             if let Columns::Infer(None) = &self.columns {
                 let members = row.as_object().ok_or_else(|| {
@@ -176,8 +181,13 @@ impl<S: TableSink> Core<S> {
             .ok_or_else(|| Fail::protocol("a row was projected before its schema was bound"))?;
         self.cells.clear();
         for col in columns {
-            let cell = match row.get_path(&col.source) {
-                Some(d) => Cell::from_datum(d),
+            let found = if self.disjoint {
+                row.take_path(&col.source).map(Cell::from_owned)
+            } else {
+                row.get_path(&col.source).map(Cell::from_datum)
+            };
+            let cell = match found {
+                Some(cell) => cell,
                 None => match col.missing {
                     MissingPolicy::Missing => Cell::Missing,
                     MissingPolicy::Null => Cell::Null,
@@ -306,6 +316,7 @@ impl<S: TableSink> TableFromJson<S> {
             public: Vec::new(),
             schema_sent: false,
             cells: Vec::new(),
+            disjoint: false,
             max_columns: limits.max_columns,
             metrics: metrics.clone(),
         };
@@ -340,6 +351,21 @@ impl<S: TableSink> Sink for TableFromJson<S> {
     fn event(&mut self, ev: JsonEvent<'_>) -> Result<Flow, Fail> {
         self.router.event(ev)
     }
+}
+
+/// Whether every column's path can be moved out of a row without robbing
+/// another column: no path is another's prefix, and none repeats. The
+/// projection then takes each cell instead of copying its text.
+fn paths_are_disjoint(columns: &[BoundColumn]) -> bool {
+    let mut seen: HashSet<&[Segment]> = HashSet::with_capacity(columns.len());
+    for column in columns {
+        if !seen.insert(column.source.as_slice()) {
+            return false;
+        }
+    }
+    columns
+        .iter()
+        .all(|column| (0..column.source.len()).all(|n| !seen.contains(&column.source[..n])))
 }
 
 /// The path of a value within a row, for messages.
@@ -585,6 +611,55 @@ mod tests {
                 vec!["2", "\"b\"", "\"u0\"", "missing"],
             ]
         );
+    }
+
+    /// Cells are moved out of an owned row when no column's path is
+    /// another's prefix; when one is, the row is read in place so the
+    /// second column still finds its value.
+    #[test]
+    fn a_column_whose_path_is_another_columns_prefix_still_gets_its_value() {
+        let events = doc(r#"{"rows":[{"p":{"n":"a"},"id":1},{"p":{"n":"b"},"id":1}]}"#);
+        let overlapping = vec![
+            BoundColumn::new("P", vec![Segment::key("p")]),
+            BoundColumn::new("N", vec![Segment::key("p"), Segment::key("n")]),
+            BoundColumn::new("Id", vec![Segment::key("id")]),
+            BoundColumn::new("Id again", vec![Segment::key("id")]),
+        ];
+        assert!(!paths_are_disjoint(&overlapping));
+        let t = run(
+            TableBinding {
+                schema: Schema::Static(overlapping),
+                rows: Selector::root().property("rows").each_index(),
+            },
+            &events,
+        )
+        .unwrap();
+        assert_eq!(
+            rows(&t),
+            vec![
+                vec![r#""{\"n\":\"a\"}""#, "\"a\"", "1", "1"],
+                vec![r#""{\"n\":\"b\"}""#, "\"b\"", "1", "1"],
+            ]
+        );
+        let disjoint = vec![
+            BoundColumn::new("N", vec![Segment::key("p"), Segment::key("n")]),
+            BoundColumn::new("Id", vec![Segment::key("id")]),
+        ];
+        assert!(paths_are_disjoint(&disjoint));
+        assert!(paths_are_disjoint(&[BoundColumn::new("Row", vec![])]));
+        assert!(!paths_are_disjoint(&[
+            BoundColumn::new("Row", vec![]),
+            BoundColumn::new("Id", vec![Segment::key("id")]),
+        ]));
+        let t = run(
+            TableBinding {
+                schema: Schema::Static(disjoint),
+                rows: Selector::root().property("rows").each_index(),
+            },
+            &events,
+        )
+        .unwrap();
+        assert_eq!(rows(&t), vec![vec!["\"a\"", "1"], vec!["\"b\"", "1"]]);
     }
 
     #[test]

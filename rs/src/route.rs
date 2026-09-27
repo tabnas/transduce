@@ -44,7 +44,9 @@ pub struct Budget {
 /// One capture: a tag for the consumer, the selector to match, the mode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaptureSpec {
-    pub tag: Box<str>,
+    /// Shared with every `Selected` delivered for this capture, so a
+    /// delivery costs a reference count and no allocation.
+    pub tag: Arc<str>,
     pub selector: Selector,
     pub mode: CaptureMode,
     /// The budget for a `Materialize` capture; `None` takes the router's
@@ -54,7 +56,7 @@ pub struct CaptureSpec {
 }
 
 impl CaptureSpec {
-    pub fn new(tag: impl Into<Box<str>>, selector: Selector, mode: CaptureMode) -> CaptureSpec {
+    pub fn new(tag: impl Into<Arc<str>>, selector: Selector, mode: CaptureMode) -> CaptureSpec {
         CaptureSpec {
             tag: tag.into(),
             selector,
@@ -63,11 +65,11 @@ impl CaptureSpec {
         }
     }
 
-    pub fn materialize(tag: impl Into<Box<str>>, selector: Selector) -> CaptureSpec {
+    pub fn materialize(tag: impl Into<Arc<str>>, selector: Selector) -> CaptureSpec {
         CaptureSpec::new(tag, selector, CaptureMode::Materialize)
     }
 
-    pub fn observe(tag: impl Into<Box<str>>, selector: Selector) -> CaptureSpec {
+    pub fn observe(tag: impl Into<Arc<str>>, selector: Selector) -> CaptureSpec {
         CaptureSpec::new(tag, selector, CaptureMode::Observe)
     }
 
@@ -83,7 +85,7 @@ pub struct Selected {
     /// The spec's position in the router's list, for dispatch without a
     /// string comparison.
     pub id: CaptureId,
-    pub tag: Box<str>,
+    pub tag: Arc<str>,
     pub path: Path,
     /// The value for a `Materialize` capture; `None` for `Observe`.
     pub value: Option<Datum>,
@@ -137,6 +139,9 @@ where
 struct Active {
     id: CaptureId,
     builder: DatumBuilder,
+    /// The depth its value began at, from which the matcher spells the
+    /// value's path when a delivery or a failure needs one.
+    depth: usize,
 }
 
 /// Recognizes every capture in one pass and delivers completed matches.
@@ -257,9 +262,8 @@ impl<D: RouteSink> Router<D> {
                     bytes: self.max_capture_bytes,
                     name: "max_capture_bytes",
                 });
-                let builder = DatumBuilder::new(budget.bytes, budget.name, self.duplicates)
-                    .at(self.matcher.path(depth));
-                self.active = Some(Active { id, builder });
+                let builder = DatumBuilder::new(budget.bytes, budget.name, self.duplicates);
+                self.active = Some(Active { id, builder, depth });
                 Ok(())
             }
         }
@@ -268,7 +272,7 @@ impl<D: RouteSink> Router<D> {
     fn deliver(&mut self, id: CaptureId, path: Path, value: Option<Datum>) -> Result<Flow, Fail> {
         let selected = Selected {
             id,
-            tag: self.specs[id].tag.clone(),
+            tag: Arc::clone(&self.specs[id].tag),
             path,
             value,
         };
@@ -296,7 +300,12 @@ impl<D: RouteSink> Sink for Router<D> {
             self.begin(id, hit.depth)?;
         }
         if let Some(active) = &mut self.active {
-            active.builder.event(ev)?;
+            if let Err(fail) = active.builder.event(ev) {
+                // The builder reports no position; the value's path is
+                // spelled here, only now that something went wrong.
+                let path = self.matcher.path(active.depth);
+                return Err(fail.at_path(path.to_string()));
+            }
             if active.builder.finished() {
                 let bytes = active.builder.bytes() as u64;
                 let id = active.id;

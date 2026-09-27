@@ -12,7 +12,7 @@ use indexmap::IndexMap;
 use crate::error::{Code, Fail};
 use crate::event::{JsonEvent, Number};
 use crate::limits::NODE_BYTES;
-use crate::selector::{Path, Segment};
+use crate::selector::Segment;
 use crate::sink::{Flow, Sink};
 
 /// A retained JSON-like value.
@@ -60,6 +60,22 @@ impl Datum {
             };
         }
         Some(here)
+    }
+
+    /// The value at a concrete path below this one, moved out and replaced
+    /// by `Null`. For a consumer that owns the datum and reads each path
+    /// once: a later read of the same path, or of one below it, finds the
+    /// `Null`, so the caller checks its paths are disjoint first.
+    pub fn take_path(&mut self, path: &[Segment]) -> Option<Datum> {
+        let mut here = self;
+        for seg in path {
+            here = match (seg, here) {
+                (Segment::Key(k), Datum::Object(m)) => m.get_mut(k.as_ref())?,
+                (Segment::Index(i), Datum::Array(a)) => a.get_mut(*i)?,
+                _ => return None,
+            };
+        }
+        Some(std::mem::replace(here, Datum::Null))
     }
 
     pub fn is_container(&self) -> bool {
@@ -292,7 +308,9 @@ pub enum Duplicates {
 /// Feed it every event from the value's first to its last; `finished()`
 /// says when the value is complete. Bytes are counted as they arrive, and
 /// the limit fails at the first byte over it rather than after the value
-/// is whole.
+/// is whole. The builder knows nothing of where in a document its value
+/// sits: a failure leaves `path` unset and the stage that placed the
+/// builder adds it, so no path is built for the values that succeed.
 #[derive(Debug)]
 pub struct DatumBuilder {
     stack: Vec<Frame>,
@@ -301,7 +319,6 @@ pub struct DatumBuilder {
     limit: usize,
     limit_name: &'static str,
     duplicates: Duplicates,
-    path: Path,
 }
 
 #[derive(Debug)]
@@ -323,14 +340,7 @@ impl DatumBuilder {
             limit,
             limit_name,
             duplicates,
-            path: Path::root(),
         }
-    }
-
-    /// Where the failure is: the builder reports paths relative to `base`.
-    pub fn at(mut self, base: Path) -> Self {
-        self.path = base;
-        self
     }
 
     pub fn bytes(&self) -> usize {
@@ -358,12 +368,8 @@ impl DatumBuilder {
             return Err(Fail::limit(
                 self.limit_name,
                 self.limit as u64,
-                format!(
-                    "a value at {} is larger than {} bytes",
-                    self.path, self.limit
-                ),
-            )
-            .at_path(self.path.to_string()));
+                format!("a value is larger than {} bytes", self.limit),
+            ));
         }
         Ok(())
     }
@@ -388,9 +394,8 @@ impl DatumBuilder {
                         Duplicates::Reject => {
                             return Err(Fail::new(
                                 Code::DuplicateMember,
-                                format!("member {key:?} appears twice at {}", self.path),
-                            )
-                            .at_path(self.path.to_string()));
+                                format!("member {key:?} appears twice"),
+                            ));
                         }
                         Duplicates::FirstWins => {
                             self.bytes = self.bytes.saturating_sub(key.len() + value.byte_size());
@@ -545,6 +550,25 @@ mod tests {
         assert!(d.get_path(&[Segment::Key("z".into())]).is_none());
         assert!(d.get_path(&[Segment::Index(0)]).is_none());
         assert!(d.get_path(&[]).is_some());
+    }
+
+    #[test]
+    fn take_path_moves_the_value_out_and_leaves_null() {
+        let mut d = Datum::from_json(&serde_json::json!({"a": [{"b": "x"}], "c": 2}));
+        let p = [
+            Segment::Key("a".into()),
+            Segment::Index(0),
+            Segment::Key("b".into()),
+        ];
+        assert_eq!(d.take_path(&p), Some(Datum::String("x".into())));
+        assert_eq!(d.get_path(&p), Some(&Datum::Null));
+        assert!(d.take_path(&[Segment::Key("z".into())]).is_none());
+        assert_eq!(d.to_string(), r#"{"a":[{"b":null}],"c":2}"#);
+        assert_eq!(
+            d.take_path(&[]).unwrap().to_string(),
+            r#"{"a":[{"b":null}],"c":2}"#
+        );
+        assert_eq!(d, Datum::Null);
     }
 
     #[test]

@@ -44,6 +44,18 @@ impl Cell {
         }
     }
 
+    /// [`Cell::from_datum`] for a value the caller owns: the text moves
+    /// instead of being copied.
+    pub fn from_owned(d: Datum) -> Cell {
+        match d {
+            Datum::Null => Cell::Null,
+            Datum::Bool(b) => Cell::Bool(b),
+            Datum::Number { value, lexeme } => Cell::Number { value, lexeme },
+            Datum::String(s) => Cell::String(s),
+            Datum::Array(_) | Datum::Object(_) => Cell::String(d.to_string().into()),
+        }
+    }
+
     pub fn is_missing(&self) -> bool {
         matches!(self, Cell::Missing)
     }
