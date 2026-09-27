@@ -68,11 +68,17 @@ The three sources, in order of preference:
 
 **Incremental streaming is a verified capability, never an assumption.**
 `source::capability::incremental(grammar)` answers from a list that
-`rs/tests/incremental_test.rs` keeps honest: every fixture of every grammar
-in the dev-dependencies runs both incrementally and through the
+`rs/tests/incremental_test.rs` keeps honest: every fixture each grammar
+in the dev-dependencies reads runs both incrementally and through the
 whole-value walker, and the two event streams must be identical for the
 grammar to be listed. A listed grammar that mismatches fails the test; an
-unlisted grammar that matches everywhere fails too.
+unlisted grammar that matches everywhere fails too. The list today is
+`json`, `json5`, `jsonc`, `jsonl`, `yaml`, `zon`; `jsonic` is off it
+because a top-level implicit list whose first element is a container
+wraps a value already streamed as the root (`docs/reference.md` has the
+detail), and the imperative grammars build values the rule events do not
+show. An incremental run of an unverified grammar fails with
+`STREAMABILITY_UNKNOWN` rather than emitting a malformed stream.
 
 **The parsed values the grammars return are never altered.** The
 incremental source may drop already-streamed elements from a container it
@@ -91,13 +97,20 @@ is exactly the grammar's.
 | `rs/src/datum.rs` | the retained value, its builder, the JSON writer |
 | `rs/src/selector.rs` | `Selector`, `Step`, `Path`, `Segment` |
 | `rs/src/matcher.rs` | shared-prefix matching of many selectors in one pass |
-| `rs/src/route.rs` | captures: materialize selected scopes, deliver in order |
+| `rs/src/route.rs` | captures: materialize or observe selected scopes, deliver in order |
 | `rs/src/table.rs` | `TableRows/1`, bindings, the standard column mapping |
 | `rs/src/table_from_json.rs` | the metadata-first table transducer |
 | `rs/src/scan.rs` | `scan-emit` |
-| `rs/src/source/` | `ValueSource`, `ParserSource` (rule events), `LinesSource`, the capability list |
-| `rs/tests/` | protocol, matcher, router, table, chunk-boundary and differential suites |
-| `rs/benches/` | criterion throughput benches |
+| `rs/src/source/mod.rs` | `Source`, `ValueSource`, `SourceMode`, `Prune` |
+| `rs/src/source/guard.rs` | `Guarded`: the source limits, the abort flag and the source metrics on every event |
+| `rs/src/source/rule_events.rs` | the rule-event adapter: `JsonEvents/1` from a live parse |
+| `rs/src/source/parser.rs` | `ParserSource`: one text, materialized or incremental |
+| `rs/src/source/lines.rs` | `LinesSource`: JSON Lines and CSV a record or a chunk at a time |
+| `rs/src/source/capability.rs` | the verified list `capability::incremental` answers from |
+| `rs/tests/incremental_test.rs` | the differential suite that keeps that list honest, both ways |
+| `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
+| `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML), shared with the benches |
+| `rs/benches/` | criterion throughput benches: parse only, incremental events, walk, router and table |
 | `docs/` | `architecture.md` (the design), `reference.md` |
 | `ci/rust/run.sh` | the gate `.github/workflows/rust.yml` runs |
 
@@ -127,7 +140,7 @@ The code is the contract; the message is informative. Every code is in
 |---|---|
 | `DSL_PARSE_ERROR`, `DSL_TYPE_ERROR` | reserved for alchemy, which shares this enum |
 | `STREAM_REUSED` | a one-shot stream was consumed twice |
-| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability |
+| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; an incremental run of a grammar whose rule events do not amount to one document |
 | `INPUT_ORDER_VIOLATION` | a row began before its metadata completed |
 | `CAPTURE_OVERLAP_UNSUPPORTED` | two captures select overlapping scopes |
 | `MISSING_VALUE` | a required value is absent and the policy is `Error` |

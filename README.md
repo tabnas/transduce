@@ -17,8 +17,11 @@ tabnas parse ──rule events──▶ JsonEvents/1 ──▶ router/captures �
 - **Any parser.** The source events come from the engine's rule
   subscribers, so every tabnas grammar (JSON, JSON Lines, jsonic, YAML,
   TOML, CSV, XML, …) feeds the same transducers. Grammars the
-  differential suite has verified stream incrementally; the rest are
-  walked whole.
+  differential suite has verified (`json`, `json5`, `jsonc`, `jsonl`,
+  `yaml`, `zon`) stream incrementally, with the streamed rows pruned from
+  the engine's tree on request; the rest are walked whole. JSON Lines and
+  CSV also have a line source that holds one record or one chunk at a
+  time, whatever the file's size.
 - **Bounded by contract.** Retained values are measured against named
   limits as they are built; a breach fails with the limit's name, never
   a silent fallback to a bigger algorithm.
