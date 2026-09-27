@@ -198,8 +198,10 @@ See `Code::ALL` in `rs/src/error.rs` and the table in `AGENTS.md`. A
 `max_key_bytes`, `max_scalar_bytes`, `max_metadata_bytes`, `max_columns`,
 `max_record_bytes`, `max_capture_bytes`, `max_output_bytes`. Sizes are
 payload bytes plus `NODE_BYTES` per node. The line sources also apply
-`max_record_bytes` to a record's source bytes before parsing it, so a
-record never grows a chunk without bound.
+`max_record_bytes` to a record's source bytes as the record is read, so a
+record never grows a chunk without bound: a line is taken from the reader
+in pieces of at most its buffer and refused the moment it passes the
+limit, whatever its length.
 
 ## Metrics
 

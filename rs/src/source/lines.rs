@@ -29,13 +29,17 @@
 //!
 //! Memory is bounded by one chunk, and a record is never split, so a
 //! single record larger than `max_record_bytes` (a line, for JSON Lines)
-//! fails with that limit's name rather than growing a chunk without bound;
-//! `max_depth`, `max_key_bytes` and `max_scalar_bytes` apply to the events
-//! as everywhere. `max_record_bytes` counts the record's source bytes here,
+//! fails with that limit's name rather than growing a chunk without bound.
+//! The bound holds while the record is READ, not only once it is whole: a
+//! line is taken from the reader in pieces of at most its buffer and
+//! refused the moment it passes the limit, so an unterminated line of any
+//! length costs one buffer beyond the limit and no more. `max_depth`,
+//! `max_key_bytes` and `max_scalar_bytes` apply to the events as
+//! everywhere. `max_record_bytes` counts the record's source bytes here,
 //! where a table transducer downstream would count its retained bytes; it
 //! is the same idea of "one row" measured before it is parsed.
 
-use std::io::BufRead;
+use std::io::{self, BufRead};
 use std::sync::{Arc, Mutex};
 
 use tabnas::Tabnas;
@@ -370,31 +374,47 @@ impl<R: BufRead> Lines<R> {
         }
     }
 
-    /// The next line with its line ending, as bytes.
+    /// The next line with its line ending, as bytes, taken from the reader
+    /// in pieces so the buffer never holds more than `max_bytes + 1`: one
+    /// byte over is all the failure needs to know, and an unterminated
+    /// line is refused there instead of after it has been read whole.
     fn next_raw(&mut self) -> Result<Option<(u64, &[u8])>, Fail> {
         self.buf.clear();
-        let read = self
-            .reader
-            .read_until(b'\n', &mut self.buf)
-            .map_err(|e| Fail::input(format!("reading line {}: {e}", self.number + 1)))?;
-        if read == 0 {
+        let number = self.number + 1;
+        loop {
+            let available = match self.reader.fill_buf() {
+                Ok(available) => available,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(Fail::input(format!("reading line {number}: {e}"))),
+            };
+            if available.is_empty() {
+                break;
+            }
+            let newline = available.iter().position(|&b| b == b'\n');
+            let wanted = newline.map_or(available.len(), |i| i + 1);
+            let room = self.max_bytes.saturating_add(1) - self.buf.len();
+            let take = wanted.min(room);
+            self.buf.extend_from_slice(&available[..take]);
+            self.reader.consume(take);
+            if self.buf.len() > self.max_bytes {
+                return Err(Fail::limit(
+                    "max_record_bytes",
+                    self.max_bytes as u64,
+                    format!("line {number} is longer than {} bytes", self.max_bytes),
+                )
+                .at(number, 1));
+            }
+            // Under the limit, the whole of what was wanted was taken, so a
+            // newline seen is a newline kept.
+            if newline.is_some() {
+                break;
+            }
+        }
+        if self.buf.is_empty() {
             return Ok(None);
         }
-        self.number += 1;
-        if self.buf.len() > self.max_bytes {
-            return Err(Fail::limit(
-                "max_record_bytes",
-                self.max_bytes as u64,
-                format!(
-                    "line {} is {} bytes, longer than {}",
-                    self.number,
-                    self.buf.len(),
-                    self.max_bytes
-                ),
-            )
-            .at(self.number, 1));
-        }
-        Ok(Some((self.number, &self.buf)))
+        self.number = number;
+        Ok(Some((number, &self.buf)))
     }
 }
 
@@ -745,6 +765,60 @@ mod tests {
             .run(&mut Vec::<OwnedJsonEvent>::new())
             .unwrap_err();
         assert_eq!(err.row, Some(3), "{err}");
+    }
+
+    /// Counts the bytes handed out, so a test can see how far past the
+    /// limit a reader was pulled.
+    struct Counting<R> {
+        inner: R,
+        read: usize,
+    }
+
+    impl<R: Read> Read for Counting<R> {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            let n = self.inner.read(out)?;
+            self.read += n;
+            Ok(n)
+        }
+    }
+
+    /// A reader that repeats one byte without end and never a newline.
+    struct Endless(u8);
+
+    impl Read for Endless {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            out.fill(self.0);
+            Ok(out.len())
+        }
+    }
+
+    #[test]
+    fn an_unterminated_line_is_refused_at_the_limit_not_after_being_read_whole() {
+        const BUFFER: usize = 4096;
+        let limits = Limits {
+            max_record_bytes: 8,
+            ..Limits::default()
+        };
+        for format in [LineFormat::Jsonl, LineFormat::csv()] {
+            let mut reader = io::BufReader::with_capacity(
+                BUFFER,
+                Counting {
+                    inner: Endless(b'a'),
+                    read: 0,
+                },
+            );
+            let err = LinesSource::new(&mut reader, format.clone())
+                .limits(limits.clone())
+                .run(&mut Vec::<OwnedJsonEvent>::new())
+                .unwrap_err();
+            assert_eq!(err.limit.as_ref().unwrap().name, "max_record_bytes");
+            assert_eq!(err.row, Some(1));
+            let read = reader.into_inner().read;
+            assert!(
+                read <= limits.max_record_bytes + BUFFER,
+                "{format:?}: {read} bytes were pulled from an endless line"
+            );
+        }
     }
 
     #[test]
