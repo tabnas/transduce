@@ -2,15 +2,52 @@
 //!
 //! - [`ValueSource`] walks a parsed engine value. Always correct, retains
 //!   the whole value: the fallback for every grammar.
-//! - `ParserSource` (this module's `parser` submodule, in progress) drives a
-//!   tabnas parse and turns its rule events into source events as they
-//!   happen, for the grammars the differential suite has verified.
+//! - [`ParserSource`] drives a tabnas parse of one text and, in
+//!   [`SourceMode::Incremental`], turns its rule events into source events
+//!   as they happen, for the grammars the differential suite has verified
+//!   ([`capability::incremental`]); in [`SourceMode::Materialize`] it
+//!   parses and walks.
 //! - `LinesSource` (in progress) reads JSON Lines or CSV a record at a time,
 //!   bounding memory whatever the file size.
+//!
+//! Every source emits through [`Guarded`], which enforces the source
+//! limits (`max_depth`, `max_key_bytes`, `max_scalar_bytes`), polls the
+//! abort flag and counts the source metrics.
+
+pub mod capability;
+pub mod guard;
+pub mod parser;
+pub(crate) mod rule_events;
+
+pub use guard::Guarded;
+pub use parser::ParserSource;
 
 use crate::error::Fail;
 use crate::event::{JsonEvent, Number};
+use crate::selector::Selector;
 use crate::sink::{Flow, Sink};
+
+/// How [`ParserSource`] produces its events.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SourceMode {
+    /// Parse the whole text, then walk the value. Sound for every grammar.
+    Materialize,
+    /// Emit from the engine's rule events as the parse proceeds. Sound for
+    /// the grammars [`capability::incremental`] lists.
+    Incremental { prune: Prune },
+}
+
+/// Which arrays the incremental source empties as it streams them.
+/// Pruning alters the value the engine returns, which the incremental
+/// source discards; it is never applied in `Materialize` mode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Prune {
+    Never,
+    /// The array whose elements the selector names (a trailing `[*]`
+    /// names the elements; without one the selector names the array).
+    Under(Selector),
+    AllArrays,
+}
 
 /// Something that can drive a sink with one document's events.
 pub trait Source {

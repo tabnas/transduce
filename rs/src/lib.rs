@@ -51,7 +51,9 @@ pub use route::{Budget, CaptureMode, CaptureSpec, FnRoute, RouteSink, Router, Se
 pub use scan::{ScanEmit, Transition};
 pub use selector::{Path, Segment, Selector, Step};
 pub use sink::{replay, CountSink, Flow, FnSink, Sink};
-pub use source::{walk_value, Source, ValueSource};
+pub use source::{
+    capability, walk_value, Guarded, ParserSource, Prune, Source, SourceMode, ValueSource,
+};
 pub use table::{
     column_from_meta, BoundColumn, Cell, ColumnMapper, MissingPolicy, PublicColumn, Schema, Table,
     TableBinding, TableEvent, TableSink,
