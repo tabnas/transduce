@@ -198,7 +198,10 @@ gives the table sink back.
   metadata completed, are `INPUT_ORDER_VIOLATION`, the latter raised at
   the row's start. Metadata that never arrives is `INPUT_INVALID`.
 - `Schema::Infer`: the first row's member names, in its order; a
-  non-object first row is `INPUT_INVALID`. No rows gives an empty schema.
+  non-object first row is `INPUT_INVALID`. The names are the table's
+  metadata for as long as it lasts, so they are bound under
+  `max_metadata_bytes`, measured as the array of their strings would
+  be, as well as under `max_columns`. No rows gives an empty schema.
 
 Rows are one `Materialize` capture under `max_record_bytes`, projected
 by `Datum::get_path` into schema order, `Cell::from_datum` per column

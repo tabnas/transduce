@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::datum::{Datum, Duplicates};
 use crate::error::{Code, Fail};
 use crate::event::JsonEvent;
-use crate::limits::{Limits, Metrics};
+use crate::limits::{Limits, Metrics, NODE_BYTES};
 use crate::matcher::CaptureId;
 use crate::route::{CaptureSpec, RouteSink, Router, Selected};
 use crate::selector::{Path, Segment, Selector};
@@ -70,6 +70,9 @@ struct Core<S: TableSink> {
     /// moved out of the row instead of copied.
     disjoint: bool,
     max_columns: usize,
+    /// The bound on the inferred columns' names, the table's metadata
+    /// when the first row supplies it.
+    max_metadata_bytes: usize,
     metrics: Arc<Metrics>,
 }
 
@@ -165,6 +168,23 @@ impl<S: TableSink> Core<S> {
                     ))
                     .at_path(selected.path.to_string())
                 })?;
+                // The names are the table's metadata for as long as it
+                // lasts, so they are held to the bound a metadata capture
+                // is: measured as the array of their strings would be.
+                let bytes =
+                    members.keys().map(|k| NODE_BYTES + k.len()).sum::<usize>() + NODE_BYTES;
+                if bytes > self.max_metadata_bytes {
+                    return Err(Fail::limit(
+                        "max_metadata_bytes",
+                        self.max_metadata_bytes as u64,
+                        format!(
+                            "the first row's {} member names take {bytes} bytes as the table's columns, more than {}",
+                            members.len(),
+                            self.max_metadata_bytes
+                        ),
+                    )
+                    .at_path(selected.path.to_string()));
+                }
                 let columns = members
                     .keys()
                     .map(|k| BoundColumn::new(k.clone(), vec![Segment::Key(k.clone())]))
@@ -318,6 +338,7 @@ impl<S: TableSink> TableFromJson<S> {
             cells: Vec::new(),
             disjoint: false,
             max_columns: limits.max_columns,
+            max_metadata_bytes: limits.max_metadata_bytes,
             metrics: metrics.clone(),
         };
         if let Columns::Static(c) = &core.columns {
@@ -704,6 +725,23 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.limit.as_ref().unwrap().name, "max_columns");
+
+        // The inferred names are the table's metadata, held to its bound:
+        // two one-byte names take 16 + 2 * (16 + 1) = 50 bytes.
+        let infer = || TableBinding {
+            schema: Schema::Infer,
+            rows: Selector::root().each_index(),
+        };
+        let at = |max_metadata_bytes| Limits {
+            max_metadata_bytes,
+            ..Limits::default()
+        };
+        let err = run_with(infer(), &at(49), &doc(r#"[{"a":1,"b":2}]"#)).unwrap_err();
+        assert_eq!(err.code, Code::ResourceLimitExceeded, "{err}");
+        assert_eq!(err.limit.as_ref().unwrap().name, "max_metadata_bytes");
+        assert_eq!(err.path.as_deref(), Some("[0]"));
+        let t = run_with(infer(), &at(50), &doc(r#"[{"a":1,"b":2}]"#)).unwrap();
+        assert_eq!(labels(&t), ["a", "b"]);
     }
 
     #[test]
