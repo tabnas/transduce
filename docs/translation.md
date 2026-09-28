@@ -547,12 +547,19 @@ departs from the steps above, and what it measured:
   the manifest carries the file names so that they can, and until they
   do a translation is the Rust host's. The parts are text, so the ports
   add nothing to the grammar repositories when they arrive.
-- **Sequencing across repositories.** Seven pull requests in five
-  repositories, in the order the pilot gives; within the fleet a
-  grammar repository takes alchemy by sibling path (admin ADR-21), so a
-  change to `events` or to the linking reaches a grammar's own test the
-  moment the sibling checkout moves, and breaks it at once; only aless
-  moves by `Cargo.lock` pin.
+- **Sequencing across repositories.** The pilot planned seven pull
+  requests in five repositories and took nine, in the order it gives:
+  the render needed three more natives (tabnas/alchemy#12), and the
+  inferred binding a bound in the transducer (#6). The coupling this
+  risk foresaw did not arise. Within the fleet a grammar repository
+  would take alchemy by sibling path (admin ADR-21), so that a change
+  to `events` or to the linking broke a grammar's own test the moment
+  the sibling checkout moved; but tabnas-yaml does not take alchemy at
+  all, since its crate embeds the render as text and the round trip that
+  compiles it runs in aless, which moves by `Cargo.lock` pin. A change
+  to `events` or to the linking meets the render first in aless's
+  tests. A format whose own tests compile its render takes alchemy as a
+  dependency, which is the maintainer's call.
 
 ## Proposed decision (for admin `DECISIONS.md`)
 
@@ -561,7 +568,10 @@ A format's repository ships its shapes, an optional lift, a render and
 a loss declaration, as alchemy text named in `tabnas.plugin.json` and
 embedded in its crate. The host composes lift, adapter and render into
 one program; the two adapters are shared; a pair of formats is never
-written by hand. What a format cannot carry is declared, and
+written by hand. A render that writes from a tree takes a tree's
+events, one root value with each key once per object, and the host
+holds a stream to that in front of it. What a format cannot carry is
+declared, and
 the host refuses where the shape is decided, before any output when it
 is decided before any. The cost of N formats is one set of parts per format and two adapters,
 never a program per pair.
