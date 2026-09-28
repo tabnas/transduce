@@ -213,7 +213,9 @@ document's `End`. The `rows` metric counts the rows delivered.
 
 See `Code::ALL` in `rs/src/error.rs` and the table in `AGENTS.md`. A
 `Fail` carries `code`, `message`, and when they apply `path`, `limit`
-(`{name, value}`), `row`, `col`, and `output` (`"partial"` or `"none"`).
+(`{name, value}`), `row`, `col`, `file` (the source the position is in,
+when the program was compiled from several), and `output` (`"partial"`
+or `"none"`).
 
 ## Limits
 
