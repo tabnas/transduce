@@ -145,8 +145,9 @@ pub enum Code { DslParseError, DslTypeError, StreamReused, StreamabilityUnknown,
     ResourceLimitExceeded, InputInvalid, OutputFailed, Aborted }
 impl Code { pub fn as_str(&self) -> &'static str }   // "INPUT_ORDER_VIOLATION"
 pub struct Fail { pub code: Code, pub message: String, pub path: Option<String>,
-    pub limit: Option<Limit>, pub committed_output: bool,
-    pub row: Option<u64>, pub column: Option<u64> }
+    pub limit: Option<Box<Limit>>, pub committed_output: bool,
+    pub row: Option<u64>, pub column: Option<u64>,
+    pub file: Option<Box<str>> }   // the source a position is in, when several
 pub struct Limit { pub name: &'static str, pub value: u64 }
 
 // limits.rs
