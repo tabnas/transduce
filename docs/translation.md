@@ -137,13 +137,14 @@ them:
   as built-ins (JSON writes from a tree through the `json` native, CSV
   from records through the library's `csv`, with their loss lines in
   aless), and their manifests take the object, naming those renders,
-  when they next change. The manifest schema at
-  `tabnas.dev/schema/plugin.schema.json` gains the object; that is the
-  admin repository's change, and a manifest without it means a format
-  that is read and not written. The language server's fleet registry is
-  generated from these manifests and copies named fields only, so the
-  object does not reach it, and nothing there needs it: the host reads
-  the parts from the crates, below.
+  when they next change. No manifest schema is published (the
+  `$schema` URL every manifest names answers 404, tabnas/admin#94), so
+  the admin repository's descriptor task, which regenerates manifests,
+  keeps the object and checks its shape (tabnas/admin#93); a manifest
+  without it means a format that is read and not written. The language
+  server's fleet registry is generated from these manifests and copies
+  named fields only, so the object does not reach it, and nothing there
+  needs it: the host reads the parts from the crates, below.
 - **In the repository**, the files: `alchemy/lift.alc` and
   `alchemy/render.alc`, each a library of definitions with no `export`.
   Every definition's name is prefixed by the format's name
@@ -236,13 +237,12 @@ render side with a format alchemy cannot render yet (a tree of any
 nesting) and the adapter side with the inferred table. Each step is one pull request, in
 this order (the dependencies are below the list):
 
-0. **admin: the manifest schema.** `plugin.schema.json` gains the
-   `translate` object (`reads`, `writes`, `lift`, `render`, `loss`), and
-   the descriptor task that regenerates manifests learns to keep it, so
-   that the first manifest to carry it validates and survives
-   regeneration. Whether a manifest with an unknown key validates before
-   that is the admin repository's to say; this step comes first so that
-   the question does not arise.
+0. **admin: the descriptor task.** The task that regenerates manifests
+   learns to keep the `translate` object (`reads`, `writes`, `lift`,
+   `render`, `loss`) and to check its shape, a part's path included, so
+   that the first manifest to carry it survives regeneration. The design
+   first had `plugin.schema.json` gain the object, but no schema is
+   published (tabnas/admin#94), so the task is the one check there is.
 1. **alchemy: `events`.** A native, `events input -> Stream<Event>`,
    turning `JsonEvents` into items a `scan-emit` can read: `object-start`,
    `object-end`, `array-start`, `array-end`, `(key name)` and
@@ -302,17 +302,19 @@ this order (the dependencies are below the list):
    spaces in. A number with no lexeme, which is every number from a
    walked value (CSV at the root is read a record at a time and walked,
    so CSV to YAML carries none), is written as the JSON renderer writes
-   it, and the crate's test pins that with a lexeme-less input. A repeated key in one mapping, which an incremental
-   source streams as it was read (a walked value carries one), is
-   refused with `TARGET_VALUE_UNREPRESENTABLE` naming the key: YAML 1.2
-   forbids it, and a mapping written with it would be read by a
-   conforming reader as nothing, or as the last, not as the document.
-   To see it, each open mapping's frame keeps the keys written so far,
-   which is the one part of the state that grows with a document's
-   width rather than its nesting, measured under `max_metadata_bytes`
-   with the rest. A container's opening line is held until its first
-   child or its end, so that an empty container writes as `{}` or `[]`
-   on the key's line. The crate's test reads every YAML fixture, writes
+   it, and the crate's test pins that with a lexeme-less input. The
+   render takes a tree's events, each key once per mapping: YAML 1.2
+   forbids a repeated key, and a mapping written with one would be read
+   by a conforming reader as nothing, or as the last, not as the
+   document. A walked value keeps that contract by construction; an
+   incremental source streams a repeated member as it was read, so the
+   host refuses one before the render sees it (see [What the pilot
+   found](#what-the-pilot-found), which says why the render does not
+   keep the keys itself). The state is one marker per open container,
+   so it grows with a document's nesting alone, measured under
+   `max_metadata_bytes`. A container's opening line is held until its
+   first child or its end, so that an empty container writes as `{}` or
+   `[]` on the key's line. The crate's test reads every YAML fixture, writes
    it through the render and reads it back: the value is the same,
    compared as JSON text with the non-finite numbers by their YAML
    spellings, and
@@ -320,7 +322,8 @@ this order (the dependencies are below the list):
    aliases, which the reader resolves by copying, tags, styles, and a
    stream of several documents, which the reader builds as one sequence
    and the render writes back as one). The manifest gains its
-   `translate` object; the crate exposes `render_text()`.
+   `translate` object; the crate exposes `render_text()` and
+   `manifest_text()`.
 4. **alchemy: the inferred binding.** `table-from-json` with `:columns`
    given as the keyword `:infer`, lowered to the transducer's
    `Schema::Infer` natively, and, for the interpreted twin the
@@ -372,6 +375,81 @@ should pay, a native renderer in the render crate takes over as the fast
 path the way `csv` runs natively when its options match the dialect, and
 the differential test holds the two equal. The measurement comes first.
 
+## What the pilot found
+
+The pilot landed as tabnas/admin#93, tabnas/alchemy#9, #10, #11 and #12,
+tabnas/transduce#5 and #6, tabnas/yaml#87 and rjrodger/aless#21. Where it
+departs from the steps above, and what it measured:
+
+- **No manifest schema is published.** The `$schema` URL every manifest
+  names answers 404 (tabnas/admin#94), so step 0 changed the descriptor
+  task alone: it keeps the `translate` object and checks its shape, a
+  part's path included, which must stay inside the repository, by its
+  spelling and through any symlink.
+- **The render needed three more natives**: `length` and `compare`, for
+  the 1024-character key, and `number-class`, for `.inf`, `-.inf` and
+  `.nan` (tabnas/alchemy#12).
+- **The render keeps no keys.** Step 3 first had each open mapping keep
+  the keys it had written, to refuse a repeat. That state grows with a
+  mapping's width, and since `put` copies a record and a scan-emit state
+  is measured again on every change, the render's time grew with the
+  square of one mapping's width: 10.9 s for 16,000 keys in a release
+  build, against 0.34 s once the state was one marker per open
+  container. So the render takes a tree's events, each key once per
+  mapping, one root value, and fails with `INPUT_INVALID` naming the
+  break for a stream that is not one; the check that matters is the
+  host's. aless holds a stream to the contract natively, a lookup per
+  key: a member the parse streams twice (JSON's `{"a":1,"a":2}`, which
+  the incremental source does stream) is `DUPLICATE_MEMBER`, and events
+  no tree has are `STREAMABILITY_UNKNOWN`. Either falls back once to the
+  parsed value, as `--json` reads it, when nothing had been written.
+  The second case is real: for a YAML key that is itself a mapping, the
+  incremental source streams the member's value before its key
+  (tabnas/transduce#7).
+- **The crate embeds copies.** A crate packaged for crates.io holds
+  nothing outside `rs/`, so `include_str!` of the files the manifest
+  names would fail the verification build `cargo publish` runs. The
+  crate embeds its own copies under `rs/translate/`, and its test holds
+  them to the files, as the grammar's embedded copy is held.
+- **The round trip runs in aless** (`tests/yaml_render.rs`), not in
+  the crate's test step 3 names: running the render needs alchemy,
+  which tabnas-yaml does not depend on, and adding that dependency is
+  the maintainer's call. aless has both crates, so the test runs there,
+  through the path `--render yaml` takes, over the pinned tabnas-yaml
+  checkout's fixtures, found through `cargo metadata`, each case once as
+  tabnas-yaml's own runner gathers them. 673 of the 694 inputs the
+  reader reads come back as the same value. The other 21 meet two
+  reader defects, which a checked ledger names: a quoted key at the
+  start of a line after a block sequence is read into the sequence
+  (tabnas/yaml#86), and a flow sequence first in an indented block
+  sequence replaces it (tabnas/yaml#88, which also fails
+  `matrix:\n  - [1, 2]\n  - [3, 4]`). The render's output for each is
+  valid YAML 1.2.
+- **`--alchemy` with `--render yaml` is refused.** Composing a program's
+  JSON events with a part's render needs a way to feed one program's
+  events into another program's sink, which alchemy does not have yet;
+  until it does, a program's output renders as CSV or JSON.
+- **The loss declaration** reaches standard error as a JSON warning,
+  `{"warning": {"kind": "loss", "message", "file", "render", "loss"}}`,
+  on a write that succeeds, and an error met while writing carries the
+  sentences as `loss`. It is YAML's alone: `--render json` and
+  `--render csv` write nothing new on standard error.
+- **The cost, measured** on 200,000 generated records (33 MB of JSON)
+  with a release build on a shared four-core container:
+
+  | `--render` | Time | Peak memory |
+  |---|---|---|
+  | `json` | 25.9 s | 2.09 GB |
+  | `csv` | 16.6 s | 2.09 GB |
+  | `yaml` | 51.8 s | 2.09 GB |
+
+  The peak is the parse's in all three (tabnas/parser#252); the render
+  retains nothing a row adds, as its retention test holds. The
+  interpreted render adds about 26 s, some 8 µs an event, so YAML costs
+  twice the native JSON export. Whether that is past what an export
+  should pay, which would bring the native renderer above, is the
+  maintainer's call.
+
 ## What this does not solve
 
 - **Schema-first targets.** A format whose writer needs a schema the
@@ -408,7 +486,9 @@ the differential test holds the two equal. The measurement comes first.
   interpreter's per row. Per event is more often than per row. The pilot measures the YAML render against the native
   JSON renderer on the transducer's generated documents before the
   wiring lands in aless, and the native fallback above is the answer if
-  the ratio is past what an export should pay.
+  the ratio is past what an export should pay. The measurement is in
+  [What the pilot found](#what-the-pilot-found): twice the JSON export's
+  time.
 - **A part is code from another repository.** A grammar's parts run
   under the host's limits like any program, with no I/O and no access
   beyond the events; they are embedded at build time from a crate the
