@@ -32,7 +32,12 @@ third is the render crate's text output, which alchemy types as `Text`:
 | records | `TableRows/1` (one schema, rows as wide as it) | a table | CSV, JSON Lines of flat objects, a Markdown table |
 | tree | `JsonEvents/1` | nested containers and scalars | JSON, YAML, TOML, ZON, XML's element tree |
 
-A renderer is a function from one of the last two to the first. The
+A renderer is a function from one of the last two to the first. A tree
+is a value's events: one root value, each key once per object.
+`JsonEvents/1` can carry more, since an incremental source streams
+every occurrence of a repeated member, so the host checks a stream
+against that before a render that writes from a tree takes it ([In the
+host](#where-the-parts-live-and-how-they-reach-the-host)). The
 render crate ships two natively, CSV from records and JSON from a tree.
 alchemy expresses the first: its standard library's `csv` is alchemy
 text, held to the native renderer's bytes by a differential test. Its
@@ -137,13 +142,14 @@ them:
   as built-ins (JSON writes from a tree through the `json` native, CSV
   from records through the library's `csv`, with their loss lines in
   aless), and their manifests take the object, naming those renders,
-  when they next change. The manifest schema at
-  `tabnas.dev/schema/plugin.schema.json` gains the object; that is the
-  admin repository's change, and a manifest without it means a format
-  that is read and not written. The language server's fleet registry is
-  generated from these manifests and copies named fields only, so the
-  object does not reach it, and nothing there needs it: the host reads
-  the parts from the crates, below.
+  when they next change. No manifest schema is published (the
+  `$schema` URL every manifest names answers 404, tabnas/admin#94), so
+  the admin repository's descriptor task, which regenerates manifests,
+  keeps the object and checks its shape (tabnas/admin#93); a manifest
+  without it means a format that is read and not written. The language
+  server's fleet registry is generated from these manifests and copies
+  named fields only, so the object does not reach it, and nothing there
+  needs it: the host reads the parts from the crates, below.
 - **In the repository**, the files: `alchemy/lift.alc` and
   `alchemy/render.alc`, each a library of definitions with no `export`.
   Every definition's name is prefixed by the format's name
@@ -158,18 +164,23 @@ them:
   and the parts do not go that way), and a render handed the wrong shape
   fails the composed program's check with `protocol_mismatch` at the
   render's file and line.
-- **In the Rust crate**, `include_str!` of each file (the compiler
-  reads the file, so the embedded text and the file cannot differ and
-  no test holds them equal), exposed as `lift_text()` and
-  `render_text()`, and `include_str!` of the manifest itself, exposed
+- **In the Rust crate**, the parts embedded with `include_str!` and
+  exposed as `lift_text()` and `render_text()`, and the manifest itself
   as `manifest_text()`, so that the shapes and the loss declaration
   reach the host from the one place they are written and nothing is
-  copied into it. One test holds the two together: it reads the paths
-  the embedded manifest names, from the repository, and compares each
-  file with the accessor's text, so that a renamed file or a manifest
-  edited alone fails the crate's own gate before a port could load one
-  part and the host another. yaml, whose grammar text is private today,
-  gains these accessors and nothing else. The manifest names the files so that
+  copied into the host. A crate packaged for crates.io holds nothing
+  outside its own directory, so `include_str!` of a file at the
+  repository's root compiles in a checkout and fails the verification
+  build `cargo publish` runs. The crate embeds copies instead, under
+  `rs/translate/` (`manifest.json`, and a file per part: `render.alc`
+  for yaml), as it embeds its grammar's copy, and a change to a part is
+  made at the root and copied there. One test holds the copies to the
+  files: the embedded manifest is the repository's, and each path it
+  names, read from the repository, is the accessor's text, so that a
+  renamed file, or a part or a manifest edited alone, fails the crate's
+  own gate before a port could load one part and the host another. yaml,
+  whose grammar text is private today, gains these accessors and
+  nothing else. The manifest names the files so that
   the TypeScript and Go ports, when they run alchemy, find the same
   text; until then translation is the Rust host's.
 - **In alchemy**, the linking: `compile_sources`, taking several named
@@ -208,7 +219,18 @@ them:
   a `--render <format>` that composes the program from the registry and
   runs it through the same plumbing as `--alchemy`: the input read as
   the source's plan says, the parse pruned under the program's rows, the
-  host's limits and timeout on the run. `--render json` and
+  host's limits and timeout on the run. Every host keeps a tree's
+  contract in front of a render that writes from one: a walked value
+  keeps it by construction, and a host that streams a parse checks the
+  stream natively, a lookup per key, refusing a repeated member
+  (`DUPLICATE_MEMBER`) and events no tree has (`STREAMABILITY_UNKNOWN`),
+  and falls back to the parsed value when nothing has been written. The
+  render checks only what its state can see, which is nesting, not
+  keys: keeping each mapping's keys made its time grow with the square
+  of a mapping's width ([What the pilot found](#what-the-pilot-found)).
+  The check lives in aless (`export::UniqueMembers`) while aless is the
+  one host; a second host moves it into this crate as a shared sink
+  rather than writing its own. `--render json` and
   `--render csv` keep their native renderers; the registry's JSON entry
   names the `json` native, which is the render crate's renderer, and its
   CSV entry names the library's `csv`, which runs natively when its
@@ -236,13 +258,12 @@ render side with a format alchemy cannot render yet (a tree of any
 nesting) and the adapter side with the inferred table. Each step is one pull request, in
 this order (the dependencies are below the list):
 
-0. **admin: the manifest schema.** `plugin.schema.json` gains the
-   `translate` object (`reads`, `writes`, `lift`, `render`, `loss`), and
-   the descriptor task that regenerates manifests learns to keep it, so
-   that the first manifest to carry it validates and survives
-   regeneration. Whether a manifest with an unknown key validates before
-   that is the admin repository's to say; this step comes first so that
-   the question does not arise.
+0. **admin: the descriptor task.** The task that regenerates manifests
+   learns to keep the `translate` object (`reads`, `writes`, `lift`,
+   `render`, `loss`) and to check its shape, a part's path included, so
+   that the first manifest to carry it survives regeneration. The design
+   first had `plugin.schema.json` gain the object, but no schema is
+   published (tabnas/admin#94), so the task is the one check there is.
 1. **alchemy: `events`.** A native, `events input -> Stream<Event>`,
    turning `JsonEvents` into items a `scan-emit` can read: `object-start`,
    `object-end`, `array-start`, `array-end`, `(key name)` and
@@ -302,17 +323,19 @@ this order (the dependencies are below the list):
    spaces in. A number with no lexeme, which is every number from a
    walked value (CSV at the root is read a record at a time and walked,
    so CSV to YAML carries none), is written as the JSON renderer writes
-   it, and the crate's test pins that with a lexeme-less input. A repeated key in one mapping, which an incremental
-   source streams as it was read (a walked value carries one), is
-   refused with `TARGET_VALUE_UNREPRESENTABLE` naming the key: YAML 1.2
-   forbids it, and a mapping written with it would be read by a
-   conforming reader as nothing, or as the last, not as the document.
-   To see it, each open mapping's frame keeps the keys written so far,
-   which is the one part of the state that grows with a document's
-   width rather than its nesting, measured under `max_metadata_bytes`
-   with the rest. A container's opening line is held until its first
-   child or its end, so that an empty container writes as `{}` or `[]`
-   on the key's line. The crate's test reads every YAML fixture, writes
+   it, and the crate's test pins that with a lexeme-less input. The
+   render takes a tree's events, each key once per mapping: YAML 1.2
+   forbids a repeated key, and a mapping written with one would be read
+   by a conforming reader as nothing, or as the last, not as the
+   document. A walked value keeps that contract by construction; an
+   incremental source streams a repeated member as it was read, so the
+   host refuses one before the render sees it (see [What the pilot
+   found](#what-the-pilot-found), which says why the render does not
+   keep the keys itself). The state is one marker per open container,
+   so it grows with a document's nesting alone, measured under
+   `max_metadata_bytes`. A container's opening line is held until its
+   first child or its end, so that an empty container writes as `{}` or
+   `[]` on the key's line. The crate's test reads every YAML fixture, writes
    it through the render and reads it back: the value is the same,
    compared as JSON text with the non-finite numbers by their YAML
    spellings, and
@@ -320,7 +343,8 @@ this order (the dependencies are below the list):
    aliases, which the reader resolves by copying, tags, styles, and a
    stream of several documents, which the reader builds as one sequence
    and the render writes back as one). The manifest gains its
-   `translate` object; the crate exposes `render_text()`.
+   `translate` object; the crate exposes `render_text()` and
+   `manifest_text()`.
 4. **alchemy: the inferred binding.** `table-from-json` with `:columns`
    given as the keyword `:infer`, lowered to the transducer's
    `Schema::Infer` natively, and, for the interpreted twin the
@@ -372,6 +396,93 @@ should pay, a native renderer in the render crate takes over as the fast
 path the way `csv` runs natively when its options match the dialect, and
 the differential test holds the two equal. The measurement comes first.
 
+## What the pilot found
+
+The pilot landed as tabnas/admin#93, tabnas/alchemy#9, #10, #11 and #12,
+tabnas/transduce#5 and #6, tabnas/yaml#87 and rjrodger/aless#21. Where it
+departs from the steps above, and what it measured:
+
+- **No manifest schema is published.** The `$schema` URL every manifest
+  names answers 404 (tabnas/admin#94), so step 0 changed the descriptor
+  task alone: it keeps the `translate` object and checks its shape, a
+  part's path included, which must stay inside the repository, by its
+  spelling and through any symlink.
+- **The render needed three more natives**: `length` and `compare`, for
+  the 1024-character key, and `number-class`, for `.inf`, `-.inf` and
+  `.nan` (tabnas/alchemy#12).
+- **The render keeps no keys.** Step 3 first had each open mapping keep
+  the keys it had written, to refuse a repeat. That state grows with a
+  mapping's width, and since `put` copies a record and a scan-emit state
+  is measured again on every change, the render's time grew with the
+  square of one mapping's width: 10.9 s for 16,000 keys in a release
+  build, against 0.34 s once the state was one marker per open
+  container. So the render takes a tree's events, each key once per
+  mapping, one root value, and the check that matters is the host's,
+  which every host keeps ([In the
+  host](#where-the-parts-live-and-how-they-reach-the-host)). aless
+  holds a stream to the contract natively: a member the parse streams
+  twice (JSON's `{"a":1,"a":2}`, which the incremental source does
+  stream) is `DUPLICATE_MEMBER`, and events no tree has are
+  `STREAMABILITY_UNKNOWN`. Either falls back once to the parsed value,
+  as `--json` reads it, when nothing had been written. The second case
+  is real: for a YAML key that is itself a mapping, the incremental
+  source streams the member's value before its key
+  (tabnas/transduce#7). Behind the host's check, the render fails a
+  stream that breaks nesting, naming the break, with `INPUT_INVALID`:
+  that is the one code alchemy's `fail` raises. `PROTOCOL_ORDER_ERROR`
+  would name a broken event stream better, and waits on `fail` taking a
+  code.
+- **The crate embeds copies.** Step 3 had the crate `include_str!` the
+  files the manifest names, and a crate packaged for crates.io holds
+  nothing outside `rs/`, so the verification build `cargo publish` runs
+  would have failed. The crate embeds copies under `rs/translate/`,
+  held to the files by its test, as [where the parts
+  live](#where-the-parts-live-and-how-they-reach-the-host) now says.
+- **The round trip runs in aless** (`tests/yaml_render.rs`), not in
+  the crate's test step 3 names: running the render needs alchemy,
+  which tabnas-yaml does not depend on, and adding that dependency is
+  the maintainer's call. aless has both crates, so the test runs there,
+  through the path `--render yaml` takes, over the pinned tabnas-yaml
+  checkout's fixtures, found through `cargo metadata`, each case once as
+  tabnas-yaml's own runner gathers them. 673 of the 694 inputs the
+  reader reads come back as the same value. The other 21 meet two
+  reader defects, which a checked ledger names: a quoted key at the
+  start of a line after a block sequence is read into the sequence
+  (tabnas/yaml#86), and a flow sequence first in an indented block
+  sequence replaces it (tabnas/yaml#88, which also fails
+  `matrix:\n  - [1, 2]\n  - [3, 4]`). The render's output for each is
+  valid YAML 1.2.
+- **`--alchemy` with `--render yaml` is refused.** Composing a program's
+  JSON events with a part's render needs a way to feed one program's
+  events into another program's sink, which alchemy does not have yet;
+  until it does, a program's output renders as CSV or JSON.
+- **A render that writes from records is read and not run.** aless's
+  registry lists the renders that write from a tree, which take the
+  source's events as they are. One that writes from records needs the
+  inferred table in front of it, behind the row check `--render csv`
+  has, which aless does not compose yet; no format ships one today.
+- **The loss declaration** reaches standard error on a write that
+  succeeds, as a JSON object whose `warning` member holds `kind`
+  (`"loss"`), `message`, `file`, `render` and `loss`, the render's
+  sentences; an error met while writing carries the sentences as
+  `loss`. It is YAML's alone: `--render json` and `--render csv` write
+  nothing new on standard error.
+- **The cost, measured** on 200,000 generated records (33 MB of JSON)
+  with a release build on a shared four-core container:
+
+  | `--render` | Time | Peak memory |
+  |---|---|---|
+  | `json` | 25.9 s | 2.09 GB |
+  | `csv` | 16.6 s | 2.09 GB |
+  | `yaml` | 51.8 s | 2.09 GB |
+
+  The peak is the parse's in all three (tabnas/parser#252); the render
+  retains nothing a row adds, as its retention test holds. The
+  interpreted render adds about 26 s, some 8 µs an event, so YAML costs
+  twice the native JSON export. Whether that is past what an export
+  should pay, which would bring the native renderer above, is the
+  maintainer's call.
+
 ## What this does not solve
 
 - **Schema-first targets.** A format whose writer needs a schema the
@@ -408,7 +519,9 @@ the differential test holds the two equal. The measurement comes first.
   interpreter's per row. Per event is more often than per row. The pilot measures the YAML render against the native
   JSON renderer on the transducer's generated documents before the
   wiring lands in aless, and the native fallback above is the answer if
-  the ratio is past what an export should pay.
+  the ratio is past what an export should pay. The measurement is in
+  [What the pilot found](#what-the-pilot-found): twice the JSON export's
+  time.
 - **A part is code from another repository.** A grammar's parts run
   under the host's limits like any program, with no I/O and no access
   beyond the events; they are embedded at build time from a crate the
@@ -434,12 +547,19 @@ the differential test holds the two equal. The measurement comes first.
   the manifest carries the file names so that they can, and until they
   do a translation is the Rust host's. The parts are text, so the ports
   add nothing to the grammar repositories when they arrive.
-- **Sequencing across repositories.** Seven pull requests in five
-  repositories, in the order the pilot gives; within the fleet a
-  grammar repository takes alchemy by sibling path (admin ADR-21), so a
-  change to `events` or to the linking reaches a grammar's own test the
-  moment the sibling checkout moves, and breaks it at once; only aless
-  moves by `Cargo.lock` pin.
+- **Sequencing across repositories.** The pilot planned seven pull
+  requests in five repositories and took nine, in the order it gives:
+  the render needed three more natives (tabnas/alchemy#12), and the
+  inferred binding a bound in the transducer (#6). The coupling this
+  risk foresaw did not arise. Within the fleet a grammar repository
+  would take alchemy by sibling path (admin ADR-21), so that a change
+  to `events` or to the linking broke a grammar's own test the moment
+  the sibling checkout moved; but tabnas-yaml does not take alchemy at
+  all, since its crate embeds the render as text and the round trip that
+  compiles it runs in aless, which moves by `Cargo.lock` pin. A change
+  to `events` or to the linking meets the render first in aless's
+  tests. A format whose own tests compile its render takes alchemy as a
+  dependency, which is the maintainer's call.
 
 ## Proposed decision (for admin `DECISIONS.md`)
 
@@ -448,7 +568,10 @@ A format's repository ships its shapes, an optional lift, a render and
 a loss declaration, as alchemy text named in `tabnas.plugin.json` and
 embedded in its crate. The host composes lift, adapter and render into
 one program; the two adapters are shared; a pair of formats is never
-written by hand. What a format cannot carry is declared, and
+written by hand. A render that writes from a tree takes a tree's
+events, one root value with each key once per object, and the host
+holds a stream to that in front of it. What a format cannot carry is
+declared, and
 the host refuses where the shape is decided, before any output when it
 is decided before any. The cost of N formats is one set of parts per format and two adapters,
 never a program per pair.
