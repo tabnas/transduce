@@ -226,6 +226,9 @@ impl Fail {
         if let Some(c) = self.column {
             m.insert("col".into(), c.into());
         }
+        if let Some(file) = &self.file {
+            m.insert("file".into(), file.to_string().into());
+        }
         m.insert(
             "output".into(),
             if self.committed_output {
@@ -313,6 +316,18 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "RESOURCE_LIMIT_EXCEEDED: a row of 65 bytes at .rows[3] [max_record_bytes = 64]"
+        );
+        // No file is written when there is none; the file beside the
+        // position when there is.
+        assert!(j.get("file").is_none(), "{j}");
+        let filed = Fail::new(Code::DslTypeError, "arity: one argument")
+            .at(2, 3)
+            .in_file("render.alc")
+            .to_json();
+        assert_eq!(filed["file"], "render.alc");
+        assert_eq!(
+            (filed["row"].clone(), filed["col"].clone()),
+            (2.into(), 3.into())
         );
     }
 }
