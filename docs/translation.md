@@ -32,7 +32,12 @@ third is the render crate's text output, which alchemy types as `Text`:
 | records | `TableRows/1` (one schema, rows as wide as it) | a table | CSV, JSON Lines of flat objects, a Markdown table |
 | tree | `JsonEvents/1` | nested containers and scalars | JSON, YAML, TOML, ZON, XML's element tree |
 
-A renderer is a function from one of the last two to the first. The
+A renderer is a function from one of the last two to the first. A tree
+is a value's events: one root value, each key once per object.
+`JsonEvents/1` can carry more, since an incremental source streams
+every occurrence of a repeated member, so the host checks a stream
+against that before a render that writes from a tree takes it ([In the
+host](#where-the-parts-live-and-how-they-reach-the-host)). The
 render crate ships two natively, CSV from records and JSON from a tree.
 alchemy expresses the first: its standard library's `csv` is alchemy
 text, held to the native renderer's bytes by a differential test. Its
@@ -159,18 +164,23 @@ them:
   and the parts do not go that way), and a render handed the wrong shape
   fails the composed program's check with `protocol_mismatch` at the
   render's file and line.
-- **In the Rust crate**, `include_str!` of each file (the compiler
-  reads the file, so the embedded text and the file cannot differ and
-  no test holds them equal), exposed as `lift_text()` and
-  `render_text()`, and `include_str!` of the manifest itself, exposed
+- **In the Rust crate**, the parts embedded with `include_str!` and
+  exposed as `lift_text()` and `render_text()`, and the manifest itself
   as `manifest_text()`, so that the shapes and the loss declaration
   reach the host from the one place they are written and nothing is
-  copied into it. One test holds the two together: it reads the paths
-  the embedded manifest names, from the repository, and compares each
-  file with the accessor's text, so that a renamed file or a manifest
-  edited alone fails the crate's own gate before a port could load one
-  part and the host another. yaml, whose grammar text is private today,
-  gains these accessors and nothing else. The manifest names the files so that
+  copied into the host. A crate packaged for crates.io holds nothing
+  outside its own directory, so `include_str!` of a file at the
+  repository's root compiles in a checkout and fails the verification
+  build `cargo publish` runs. The crate embeds copies instead, under
+  `rs/translate/` (`manifest.json`, and a file per part: `render.alc`
+  for yaml), as it embeds its grammar's copy, and a change to a part is
+  made at the root and copied there. One test holds the copies to the
+  files: the embedded manifest is the repository's, and each path it
+  names, read from the repository, is the accessor's text, so that a
+  renamed file, or a part or a manifest edited alone, fails the crate's
+  own gate before a port could load one part and the host another. yaml,
+  whose grammar text is private today, gains these accessors and
+  nothing else. The manifest names the files so that
   the TypeScript and Go ports, when they run alchemy, find the same
   text; until then translation is the Rust host's.
 - **In alchemy**, the linking: `compile_sources`, taking several named
@@ -209,7 +219,18 @@ them:
   a `--render <format>` that composes the program from the registry and
   runs it through the same plumbing as `--alchemy`: the input read as
   the source's plan says, the parse pruned under the program's rows, the
-  host's limits and timeout on the run. `--render json` and
+  host's limits and timeout on the run. Every host keeps a tree's
+  contract in front of a render that writes from one: a walked value
+  keeps it by construction, and a host that streams a parse checks the
+  stream natively, a lookup per key, refusing a repeated member
+  (`DUPLICATE_MEMBER`) and events no tree has (`STREAMABILITY_UNKNOWN`),
+  and falls back to the parsed value when nothing has been written. The
+  render checks only what its state can see, which is nesting, not
+  keys: keeping each mapping's keys made its time grow with the square
+  of a mapping's width ([What the pilot found](#what-the-pilot-found)).
+  The check lives in aless (`export::UniqueMembers`) while aless is the
+  one host; a second host moves it into this crate as a shared sink
+  rather than writing its own. `--render json` and
   `--render csv` keep their native renderers; the registry's JSON entry
   names the `json` native, which is the render crate's renderer, and its
   CSV entry names the library's `csv`, which runs natively when its
@@ -396,21 +417,27 @@ departs from the steps above, and what it measured:
   square of one mapping's width: 10.9 s for 16,000 keys in a release
   build, against 0.34 s once the state was one marker per open
   container. So the render takes a tree's events, each key once per
-  mapping, one root value, and fails with `INPUT_INVALID` naming the
-  break for a stream that is not one; the check that matters is the
-  host's. aless holds a stream to the contract natively, a lookup per
-  key: a member the parse streams twice (JSON's `{"a":1,"a":2}`, which
-  the incremental source does stream) is `DUPLICATE_MEMBER`, and events
-  no tree has are `STREAMABILITY_UNKNOWN`. Either falls back once to the
-  parsed value, as `--json` reads it, when nothing had been written.
-  The second case is real: for a YAML key that is itself a mapping, the
-  incremental source streams the member's value before its key
-  (tabnas/transduce#7).
-- **The crate embeds copies.** A crate packaged for crates.io holds
-  nothing outside `rs/`, so `include_str!` of the files the manifest
-  names would fail the verification build `cargo publish` runs. The
-  crate embeds its own copies under `rs/translate/`, and its test holds
-  them to the files, as the grammar's embedded copy is held.
+  mapping, one root value, and the check that matters is the host's,
+  which every host keeps ([In the
+  host](#where-the-parts-live-and-how-they-reach-the-host)). aless
+  holds a stream to the contract natively: a member the parse streams
+  twice (JSON's `{"a":1,"a":2}`, which the incremental source does
+  stream) is `DUPLICATE_MEMBER`, and events no tree has are
+  `STREAMABILITY_UNKNOWN`. Either falls back once to the parsed value,
+  as `--json` reads it, when nothing had been written. The second case
+  is real: for a YAML key that is itself a mapping, the incremental
+  source streams the member's value before its key
+  (tabnas/transduce#7). Behind the host's check, the render fails a
+  stream that breaks nesting, naming the break, with `INPUT_INVALID`:
+  that is the one code alchemy's `fail` raises. `PROTOCOL_ORDER_ERROR`
+  would name a broken event stream better, and waits on `fail` taking a
+  code.
+- **The crate embeds copies.** Step 3 had the crate `include_str!` the
+  files the manifest names, and a crate packaged for crates.io holds
+  nothing outside `rs/`, so the verification build `cargo publish` runs
+  would have failed. The crate embeds copies under `rs/translate/`,
+  held to the files by its test, as [where the parts
+  live](#where-the-parts-live-and-how-they-reach-the-host) now says.
 - **The round trip runs in aless** (`tests/yaml_render.rs`), not in
   the crate's test step 3 names: running the render needs alchemy,
   which tabnas-yaml does not depend on, and adding that dependency is
@@ -429,11 +456,17 @@ departs from the steps above, and what it measured:
   JSON events with a part's render needs a way to feed one program's
   events into another program's sink, which alchemy does not have yet;
   until it does, a program's output renders as CSV or JSON.
-- **The loss declaration** reaches standard error as a JSON warning,
-  `{"warning": {"kind": "loss", "message", "file", "render", "loss"}}`,
-  on a write that succeeds, and an error met while writing carries the
-  sentences as `loss`. It is YAML's alone: `--render json` and
-  `--render csv` write nothing new on standard error.
+- **A render that writes from records is read and not run.** aless's
+  registry lists the renders that write from a tree, which take the
+  source's events as they are. One that writes from records needs the
+  inferred table in front of it, behind the row check `--render csv`
+  has, which aless does not compose yet; no format ships one today.
+- **The loss declaration** reaches standard error on a write that
+  succeeds, as a JSON object whose `warning` member holds `kind`
+  (`"loss"`), `message`, `file`, `render` and `loss`, the render's
+  sentences; an error met while writing carries the sentences as
+  `loss`. It is YAML's alone: `--render json` and `--render csv` write
+  nothing new on standard error.
 - **The cost, measured** on 200,000 generated records (33 MB of JSON)
   with a release build on a shared four-core container:
 
