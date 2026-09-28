@@ -157,7 +157,7 @@ is exactly the grammar's.
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
 | `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML), shared with the benches |
 | `rs/benches/` | criterion throughput benches: parse only, incremental events, walk, router and table |
-| `docs/` | `architecture.md` (the design), `reference.md` |
+| `docs/` | `architecture.md` (the design), `reference.md`, `translation.md` (any format to any other: the parts a format ships and the host composes) |
 | `ci/rust/run.sh` | the gate `.github/workflows/rust.yml` runs |
 
 ## Verify your work
