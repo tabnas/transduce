@@ -82,7 +82,7 @@ anything, one in the standard library today and one the pilot adds:
 
 | From \ to | text | records | tree |
 |---|---|---|---|
-| records | render | identity | `records` (one object per row, keyed by label): a missing cell is an absent member, and of two columns with one label the last contributes the member, the render crate's `RecordsToJson` policies, which the loss declaration of every tree target names |
+| records | render | identity | `records` (one object per row, keyed by label): a missing cell is an absent member, and of two columns with one label the last contributes the member, the render crate's `RecordsToJson` policies |
 | tree | render | the inferred table (pilot step 4), the policy aless's own CSV export runs today: the root must be an array and its elements are the rows; an object row's members are cells and a scalar row is one cell in a column named `value`; the first row's member names are the schema; an absent member is an empty field and a repeated member keeps its last value; an array row, or a table of mixed rows, is refused with the reason | identity |
 
 No format reads as text: text is where a translation ends, never where
@@ -101,6 +101,10 @@ program's sink whenever a tree is adapted to records, as it stands in
 front of `--render csv` today; the transducer's own refusals (a first
 row that is not an object, a table of no columns) stay behind it and
 name the position.
+
+An adapter's losses are the host's, printed only when that adapter
+runs: a format's `loss` says what its own render loses, and a
+translation that composes no adapter prints that alone.
 
 Cost: N shapes, N renders, at most N lifts, one adapter per pair of
 shapes (two that do anything). Testing stays at N: each repository tests
@@ -124,9 +128,16 @@ them:
 - **In the manifest**, a `translate` object: `reads` (a shape, or an
   array in order of preference), `writes` (one shape), `lift` and
   `render` (paths to the alchemy files, relative to the repository
-  root; `lift` absent where the events carry the shape), and `loss` (an
-  array of short sentences the host prints verbatim when it warns or
-  refuses). The manifest schema at
+  root, or for `render` the name of a render alchemy carries, `json`
+  or `csv`; `lift` absent where the events carry the shape), and `loss`
+  (an array of short sentences the host prints verbatim when it warns
+  or refuses, about what this format's render loses and nothing else).
+  JSON's and CSV's renders live in alchemy and the render crate, not in
+  their repositories, so in the pilot the host owns their two entries
+  as built-ins (JSON writes from a tree through the `json` native, CSV
+  from records through the library's `csv`, with their loss lines in
+  aless), and their manifests take the object, naming those renders,
+  when they next change. The manifest schema at
   `tabnas.dev/schema/plugin.schema.json` gains the object; that is the
   admin repository's change, and a manifest without it means a format
   that is read and not written. The language server's fleet registry is
@@ -153,19 +164,26 @@ them:
   `render_text()`, and `include_str!` of the manifest itself, exposed
   as `manifest_text()`, so that the shapes and the loss declaration
   reach the host from the one place they are written and nothing is
-  copied into it; yaml, whose grammar text is private today, gains
-  these accessors and nothing else. The manifest names the files so that
+  copied into it. One test holds the two together: it reads the paths
+  the embedded manifest names, from the repository, and compares each
+  file with the accessor's text, so that a renamed file or a manifest
+  edited alone fails the crate's own gate before a port could load one
+  part and the host another. yaml, whose grammar text is private today,
+  gains these accessors and nothing else. The manifest names the files so that
   the TypeScript and Go ports, when they run alchemy, find the same
   text; until then translation is the Rust host's.
 - **In alchemy**, the linking: `compile_sources`, taking several named
   sources and resolving them into one namespace (a program's is today's
   `compile`, with one source). A span already carries its file
   (`SourceSpan.file`); what positions it, the checker and the runtime,
-  holds one source text today and must hold one per file, and the file
-  goes into the message as the standard library's does today
-  (`at stdlib/table.alc:38:5`), since a `Fail` carries a row and a
-  column and no file. A file field on `Fail` is transduce's change and
-  the pilot does not need it. A collision is `duplicate_def`, as within
+  holds one source text today and must hold one per file. A `Fail`
+  carries a row and a column and no file, and aless's headless error
+  object carries a `file` field that names the program's file today, so
+  the file must travel structurally: `Fail` gains a `file` field (a
+  field added, nothing renamed: transduce's change, step 2's first
+  half), alchemy fills it from the span, and aless copies it into
+  `error.file`, with the message naming it too as the standard
+  library's does today (`at stdlib/table.alc:38:5`). A collision is `duplicate_def`, as within
   one file. The
   standard library stays what it is: process-wide, loaded once, and
   fatal if its own text fails to load. A format's parts are not loaded
@@ -237,17 +255,24 @@ this order (the dependencies are below the list):
    whole (`vector`), takes one apart only by a pattern of fixed length,
    and has no push, pop, top or count, so the same pull request adds
    four bounded value operators over a vector, `push`, `pop`, `top` and
-   `count`, and `quoted string -> String`, the double-quoted form of a
+   `count`; `quoted string -> String`, the double-quoted form of a
    string with `"`, `\`, U+0000 to U+001F and U+007F to U+009F
-   escaped, which JSON and YAML both read; a keyword literal in a
-   `match` pattern is the discrimination a marker needs. The stack is
+   escaped, which JSON and YAML both read; and `repeat count string ->
+   String`, the string that many times over, refused past
+   `max_scalar_bytes`, which is how a line's indentation (`count` of
+   the stack, two spaces each) is made; a keyword literal in a `match`
+   pattern is the discrimination a marker needs. A step answers several
+   items for one event (the indentation, the quoted key, the colon, the
+   value, the line's end), and `join ""` downstream writes them: no
+   operator joins strings into a string, and none is needed. The stack is
    then flat, one keyword per open container and the held line, its
    length the document's nesting, and it is what the stage retains,
    measured under `max_metadata_bytes` on every change; `explain`
    reports the stage as conditional, as it reports every `scan-emit`.
-2. **alchemy: `compile_sources`.** The linking above, with the
-   diagnostics test: an error in the second source names the second
-   file.
+2. **transduce, then alchemy: the file on a failure and
+   `compile_sources`.** The `file` field on `Fail`, then the linking
+   above, with the diagnostics test: an error in the second source
+   names the second file, in the message and in the field.
 3. **yaml: the render.** `yaml-render`, block style, in an always-quoted
    profile that parallels the CSV renderer's: strings and keys
    double-quoted through `quoted` (JSON's escapes, which YAML's
@@ -272,10 +297,15 @@ this order (the dependencies are below the list):
    spaces in. A number with no lexeme, which is every number from a
    walked value (CSV at the root is read a record at a time and walked,
    so CSV to YAML carries none), is written as the JSON renderer writes
-   it, and the crate's test pins that with a lexeme-less input. A repeated key in one mapping, which the incremental
-   source streams as it was read, is written as it was read: YAML 1.2
-   forbids it, tabnas-yaml reads it and keeps the last, and the loss
-   declaration says so. A container's opening line is held until its first
+   it, and the crate's test pins that with a lexeme-less input. A repeated key in one mapping, which an incremental
+   source streams as it was read (a walked value carries one), is
+   refused with `TARGET_VALUE_UNREPRESENTABLE` naming the key: YAML 1.2
+   forbids it, and a mapping written with it would be read by a
+   conforming reader as nothing, or as the last, not as the document.
+   To see it, each open mapping's frame keeps the keys written so far,
+   which is the one part of the state that grows with a document's
+   width rather than its nesting, measured under `max_metadata_bytes`
+   with the rest. A container's opening line is held until its first
    child or its end, so that an empty container writes as `{}` or `[]`
    on the key's line. The crate's test reads every YAML fixture, writes
    it through the render and reads it back: the value is the same,
@@ -290,11 +320,13 @@ this order (the dependencies are below the list):
    given as the keyword `:infer`, lowered to the transducer's
    `Schema::Infer` natively, and, for the interpreted twin the
    differential test needs, a value operator `keys record -> Vector`,
-   which the library's `table-step` uses on the first row, with the
-   export's row policy (a scalar row as a `value` column, an array row
-   refused) in the same text, so that the adapter and `--render csv`
-   are one definition. `keys` is a bounded operation over one record,
-   not a fold.
+   which the library's `table-step` uses on the first row. The row
+   policy (a scalar row as a `value` column, an array row refused) stays
+   the host's `Rows` sink in front of the program, as the adapter's
+   description says, so the native binding, which refuses a first row
+   that is not an object, and the interpreted twin see object rows
+   alone and agree. `keys` is a bounded operation over one record, not
+   a fold.
 5. **aless: the wiring.** The registry, `--render yaml`, the shape
    choice (CSV reads as a tree and YAML writes from one, so CSV to YAML
    composes no adapter and runs the render over the source's events as
@@ -304,9 +336,12 @@ this order (the dependencies are below the list):
    fixture whose root is an array of objects (the one aless has is a
    mapping, which both paths refuse; the step adds `records.yaml`)
    written as CSV equal to the native path's bytes, under the export's
-   policies above. The README's
-   "Scripts and agents" section, `--help` and the skill say what
-   `--render` now takes.
+   policies above. The source plan is the format's and the path's, not
+   the program's (a program runs at the root, and CSV at the root is
+   read a record at a time), so CSV to YAML streams; a retention test
+   pins it, ten times the rows leaving the retained high-water mark
+   flat, as transduce's own does. The README's "Scripts and agents"
+   section, `--help` and the skill say what `--render` now takes.
 
 A lift is not in the pilot. CSV's events carry its records already,
 one object per row keyed by the header, so a records target reaches
@@ -389,12 +424,12 @@ the differential test holds the two equal. The measurement comes first.
 - **The inferred schema is data-dependent.** A later row's extra
   members are dropped and its absent ones are missing; that is the
   transducer's documented `Infer` and the policy `--render csv` runs
-  today, and the loss declaration of every records target says it.
+  today, and the host says it whenever the adapter runs.
 - **Snippets and the ports.** TypeScript and Go do not run alchemy;
   the manifest carries the file names so that they can, and until they
   do a translation is the Rust host's. The parts are text, so the ports
   add nothing to the grammar repositories when they arrive.
-- **Sequencing across repositories.** Six pull requests in four
+- **Sequencing across repositories.** Seven pull requests in five
   repositories, in the order the pilot gives; within the fleet a
   grammar repository takes alchemy by sibling path (admin ADR-21), so a
   change to `events` or to the linking reaches a grammar's own test the
@@ -409,5 +444,6 @@ a loss declaration, as alchemy text named in `tabnas.plugin.json` and
 embedded in its crate. The host composes lift, adapter and render into
 one program; the two adapters are shared; a pair of formats is never
 written by hand. What a format cannot carry is declared, and
-the host refuses before it writes. The cost of N formats is one set of parts per format and two adapters,
+the host refuses where the shape is decided, before any output when it
+is decided before any. The cost of N formats is one set of parts per format and two adapters,
 never a program per pair.
