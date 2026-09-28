@@ -181,10 +181,15 @@ them:
   object carries a `file` field that names the program's file today, so
   the file must travel structurally: `Fail` gains a `file` field (a
   field added, nothing renamed: transduce's change, step 2's first
-  half), alchemy fills it from the span, and aless copies it into
-  `error.file`, with the message naming it too as the standard
-  library's does today (`at stdlib/table.alc:38:5`). A collision is `duplicate_def`, as within
-  one file. The
+  half), alchemy fills it from the span when the program has several
+  sources, `Display` writes it before the row and column
+  (`(render.alc:3:5)`), and `to_json` carries it as `file`, which
+  aless's error object takes over the program's file as it takes the
+  failure's other fields. The message is left as it is, so the file is
+  written once; only a failure in the standard library, which has no
+  row of the program's, names its file in the message
+  (`at stdlib/table.alc:38:5`). A collision is `duplicate_def`, as
+  within one file. The
   standard library stays what it is: process-wide, loaded once, and
   fatal if its own text fails to load. A format's parts are not loaded
   that way: they are compiled per translation, and a part that fails to
@@ -272,7 +277,7 @@ this order (the dependencies are below the list):
 2. **transduce, then alchemy: the file on a failure and
    `compile_sources`.** The `file` field on `Fail`, then the linking
    above, with the diagnostics test: an error in the second source
-   names the second file, in the message and in the field.
+   names the second file, in the failure's display and in the field.
 3. **yaml: the render.** `yaml-render`, block style, in an always-quoted
    profile that parallels the CSV renderer's: strings and keys
    double-quoted through `quoted` (JSON's escapes, which YAML's

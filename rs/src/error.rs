@@ -117,10 +117,16 @@ pub struct Fail {
     pub message: String,
     /// The input path the failure concerns, in jq syntax, when one applies.
     pub path: Option<String>,
-    pub limit: Option<Limit>,
+    /// Boxed, with the file below, so that a `Fail` stays small enough
+    /// to return by value on every failure path without a warning.
+    pub limit: Option<Box<Limit>>,
     /// 1-based source row and column, when the failure has a position.
     pub row: Option<u64>,
     pub column: Option<u64>,
+    /// The source file the position is in, when the program the failure
+    /// came from was compiled from several (a format's parts linked with
+    /// a program); absent, the position is the one source's.
+    pub file: Option<Box<str>>,
     pub committed_output: bool,
 }
 
@@ -133,8 +139,15 @@ impl Fail {
             limit: None,
             row: None,
             column: None,
+            file: None,
             committed_output: false,
         }
+    }
+
+    /// The failure with the source file its position is in.
+    pub fn in_file(mut self, file: impl Into<Box<str>>) -> Fail {
+        self.file = Some(file.into());
+        self
     }
 
     pub fn at_path(mut self, path: impl Into<String>) -> Fail {
@@ -156,7 +169,7 @@ impl Fail {
     /// A limit failure, named after the `Limits` field that was passed.
     pub fn limit(name: &'static str, value: u64, message: impl Into<String>) -> Fail {
         Fail {
-            limit: Some(Limit { name, value }),
+            limit: Some(Box::new(Limit { name, value })),
             ..Fail::new(Code::ResourceLimitExceeded, message)
         }
     }
@@ -213,6 +226,9 @@ impl Fail {
         if let Some(c) = self.column {
             m.insert("col".into(), c.into());
         }
+        if let Some(file) = &self.file {
+            m.insert("file".into(), file.to_string().into());
+        }
         m.insert(
             "output".into(),
             if self.committed_output {
@@ -232,8 +248,11 @@ impl fmt::Display for Fail {
         if let Some(p) = &self.path {
             write!(f, " at {p}")?;
         }
-        if let (Some(r), Some(c)) = (self.row, self.column) {
-            write!(f, " ({r}:{c})")?;
+        match (&self.file, self.row, self.column) {
+            (Some(file), Some(r), Some(c)) => write!(f, " ({file}:{r}:{c})")?,
+            (None, Some(r), Some(c)) => write!(f, " ({r}:{c})")?,
+            (Some(file), _, _) => write!(f, " (in {file})")?,
+            (None, _, _) => {}
         }
         if let Some(l) = &self.limit {
             write!(f, " [{} = {}]", l.name, l.value)?;
@@ -247,6 +266,29 @@ impl std::error::Error for Fail {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A position is written as it always was, and with its file when
+    /// the failure names one.
+    #[test]
+    fn a_position_names_its_file_when_it_has_one() {
+        let plain = Fail::new(Code::DslTypeError, "arity: one argument").at(2, 3);
+        assert_eq!(
+            plain.to_string(),
+            "DSL_TYPE_ERROR: arity: one argument (2:3)"
+        );
+        let filed = Fail::new(Code::DslTypeError, "arity: one argument")
+            .at(2, 3)
+            .in_file("render.alc");
+        assert_eq!(
+            filed.to_string(),
+            "DSL_TYPE_ERROR: arity: one argument (render.alc:2:3)"
+        );
+        let no_position = Fail::new(Code::DslParseError, "bad_def: a name").in_file("lift.alc");
+        assert_eq!(
+            no_position.to_string(),
+            "DSL_PARSE_ERROR: bad_def: a name (in lift.alc)"
+        );
+    }
 
     #[test]
     fn codes_are_stable_names() {
@@ -274,6 +316,18 @@ mod tests {
         assert_eq!(
             f.to_string(),
             "RESOURCE_LIMIT_EXCEEDED: a row of 65 bytes at .rows[3] [max_record_bytes = 64]"
+        );
+        // No file is written when there is none; the file beside the
+        // position when there is.
+        assert!(j.get("file").is_none(), "{j}");
+        let filed = Fail::new(Code::DslTypeError, "arity: one argument")
+            .at(2, 3)
+            .in_file("render.alc")
+            .to_json();
+        assert_eq!(filed["file"], "render.alc");
+        assert_eq!(
+            (filed["row"].clone(), filed["col"].clone()),
+            (2.into(), 3.into())
         );
     }
 }
