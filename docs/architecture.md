@@ -92,7 +92,7 @@ ci/rust/run.sh          the Rust gate (fmt, build, test, doc tests, clippy;
 docs/                   architecture.md (transduce carries the canonical one),
                         reference.md, and for alchemy language.md (the DSL)
 test/spec/*.tsv         alchemy only: shared fixtures (layout -> canonical)
-rs/Cargo.toml           path deps on siblings: tabnas = { path = "../../parser/rs" }
+rs/Cargo.toml           path deps on siblings: tabnas = { package = "tabnas-parser", path = "../../parser/rs" }
 rs/Cargo.lock
 rs/README.md
 rs/src, rs/tests, rs/benches
