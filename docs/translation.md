@@ -219,7 +219,10 @@ them:
   a `--render <format>` that composes the program from the registry and
   runs it through the same plumbing as `--alchemy`: the input read as
   the source's plan says, the parse pruned under the program's rows, the
-  host's limits and timeout on the run. Every host keeps a tree's
+  host's limits and timeout on the run. A lift reads a whole document,
+  so the host runs it at the root only: a value the host selects below
+  the root (aless's `--path`) is a tree, rows or a tree by its own
+  shape, whatever the document was. Every host keeps a tree's
   contract in front of a render that writes from one: a walked value
   keeps it by construction, and a host that streams a parse checks the
   stream natively, a lookup per key, refusing a repeated member
@@ -455,21 +458,64 @@ departs from the steps above, and what it measured:
   sequence replaces it (tabnas/yaml#88, which also fails
   `matrix:\n  - [1, 2]\n  - [3, 4]`). The render's output for each is
   valid YAML 1.2.
-- **`--alchemy` with `--render yaml` is refused.** Composing a program's
-  JSON events with a part's render needs a way to feed one program's
-  events into another program's sink, which alchemy does not have yet;
-  until it does, a program's output renders as CSV or JSON.
-- **A render that writes from records is read and not run.** aless's
-  registry lists the renders that write from a tree, which take the
-  source's events as they are. One that writes from records needs the
-  inferred table in front of it, behind the row check `--render csv`
-  has, which aless does not compose yet; no format ships one today.
+- **`--alchemy` with `--render yaml` was refused**, since composing a
+  program's JSON events with a part's render needed a way to feed one
+  program's events into another program's sink. alchemy has it now:
+  `Source::export_as` links a source's `export` under another name
+  (tabnas/alchemy#26), so the host links the user's program as
+  `program-export` and writes the `export` that calls it, in one plan
+  under one set of limits, and the program's output shape takes the
+  source's place in the composition as [the design](#the-design) says
+  (rjrodger/aless#32). Where the inferred table takes a program's
+  events, the row policy the host's check applies to a source's runs in
+  the plan, since no sink of the host's stands between two stages of
+  one: a library the host links beside the program, over the stream of
+  events a program can hand to `table-from-json` since tabnas/alchemy#27.
+- **A render that writes from records was read and not run.** The host
+  composes the inferred table in front of one now, behind the row check
+  `--render csv` has, and the first such render is Markdown's pipe table
+  (tabnas/markdown#77, which also ships the fleet's first lift, from a
+  table's tree to its rows); a lifted format reaches alchemy's `csv` the
+  same way, composed, where a tree reaches the native CSV export as
+  before (rjrodger/aless#32).
+- **The adapter's loss is printed with the render's.** The host's note
+  carries the adapter's sentences after the format's and names the
+  adapter (`adapter`: the inferred table, or `records`), as [the
+  design](#the-design) has it; the `{"error": …}` object carries the
+  same `loss`.
+- **A cell from several strings needed a native.** The Markdown lift
+  assembles a cell from the runs a cell holds, and the renders name the
+  key a typed failure concerns; `concat` answers a text and `fail` takes
+  a string, so alchemy gained `string-join` (tabnas/alchemy#26).
+- **The adapter refuses two more shapes it cannot follow** (tabnas/transduce#12):
+  a container the grammar opens inside a map before the member's key
+  (#7's case) and a container it streamed that the grammar never stored
+  (a jsonic pair inside a list, dropped when `list.pair` is off). Both
+  are `STREAMABILITY_UNKNOWN` after a protocol-valid prefix and before
+  `End`, and they differ in what that prefix holds. The first is
+  refused when the value opens, so nothing of the member has left. The
+  second is refused where the grammar's next step shows the container
+  was dropped (the frame around it ending, another entry landing,
+  another container opening), and by then the container's own events
+  have left: for `[a:{b:1}]`, whose value is `[]`, the stream holds the
+  whole `{b:1}` before the refusal. A writer that has committed those
+  events cannot take them back, so the host's one fallback covers
+  either case only while nothing has reached the output (aless's
+  writer holds output back before committing it, so a short document
+  falls back whole); past that, the failure is reported with
+  `output: "partial"`, and in the second case the committed part may
+  hold what the value does not. The tree contract moved into this
+  crate as `TreeContract` (#11).
 - **The loss declaration** reaches standard error on a write that
   succeeds, as a JSON object whose `warning` member holds `kind`
   (`"loss"`), `message`, `file`, `render` and `loss`, the render's
-  sentences; an error met while writing carries the sentences as
-  `loss`. It is YAML's alone: `--render json` and `--render csv` write
-  nothing new on standard error.
+  sentences, with the adapter's after them and `adapter` naming it
+  when one ran; an error met while writing carries the sentences as
+  `loss`. In the pilot it was YAML's alone. Now every render that
+  declares a loss writes its own: `--render csv` writes CSV's (every
+  value as text, one empty field for a null and a missing cell) and,
+  over a tree, the inferred table's after them; `--render json`
+  declares none and writes nothing on standard error.
 - **The cost, measured** on 200,000 generated records (33 MB of JSON)
   with a release build on a shared four-core container:
 
