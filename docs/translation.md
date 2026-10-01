@@ -219,7 +219,10 @@ them:
   a `--render <format>` that composes the program from the registry and
   runs it through the same plumbing as `--alchemy`: the input read as
   the source's plan says, the parse pruned under the program's rows, the
-  host's limits and timeout on the run. Every host keeps a tree's
+  host's limits and timeout on the run. A lift reads a whole document,
+  so the host runs it at the root only: a value the host selects below
+  the root (aless's `--path`) is a tree, rows or a tree by its own
+  shape, whatever the document was. Every host keeps a tree's
   contract in front of a render that writes from one: a walked value
   keeps it by construction, and a host that streams a parse checks the
   stream natively, a lookup per key, refusing a repeated member
