@@ -466,7 +466,11 @@ departs from the steps above, and what it measured:
   `program-export` and writes the `export` that calls it, in one plan
   under one set of limits, and the program's output shape takes the
   source's place in the composition as [the design](#the-design) says
-  (rjrodger/aless#32).
+  (rjrodger/aless#32). Where the inferred table takes a program's
+  events, the row policy the host's check applies to a source's runs in
+  the plan, since no sink of the host's stands between two stages of
+  one: a library the host links beside the program, over the stream of
+  events a program can hand to `table-from-json` since tabnas/alchemy#27.
 - **A render that writes from records was read and not run.** The host
   composes the inferred table in front of one now, behind the row check
   `--render csv` has, and the first such render is Markdown's pipe table
