@@ -47,10 +47,12 @@
 // The input is read a piece at a time, and a piece ends just past each of
 // the grammar's line endings: one of its line characters (a lone `\r` or a
 // configured separator as much as `\n`), a `\r\n`, or under `record.empty`
-// the whole line token the lexer reads. So a record never waits for a `\n`
-// to end, and a chunk can close after any record, however many of them one
-// `\n`-terminated line holds. Where the input so far ends inside what may be
-// one line ending, the piece waits for the next chunk of it.
+// the whole line token the lexer reads. A line character inside one of the
+// grammar's fixed tokens (a field separator such as `"\n~"`) is the token's
+// and ends no piece. So a record never waits for a `\n` to end, and a chunk
+// can close after any record, however many of them one `\n`-terminated line
+// holds. Where the input so far ends inside what may be one line ending,
+// the piece waits for the next chunk of it.
 //
 // Every count is in UTF-8 bytes of the input as it arrives. A single
 // record larger than `max_record_bytes` (a record with its line ending; for
@@ -285,7 +287,11 @@ function lexed(on: boolean, chars: Record<string, unknown> | undefined): string[
 // The input in pieces, each ending just past a line ending: one of the
 // grammar's line characters, a `\r\n`, or under `line.single`
 // (`record.empty`) the whole line token the lexer reads, every line
-// character up to a repeated one. A record therefore never ends inside a
+// character up to a repeated one. A line character inside one of the
+// grammar's fixed tokens (a field separator such as `"\n~"`) is the token's
+// and ends no piece, and where a fixed token holds one, a piece takes the
+// whole run of line characters the lexer reads as one token, so that no
+// piece starts inside a line token. A record therefore never ends inside a
 // piece, only at its end. Each piece carries the row the engine gives its
 // first character: one more than the row characters before it. Where the
 // input so far ends inside what may be a line ending, the piece waits for
@@ -306,6 +312,8 @@ class PieceSplitter {
   private readonly forms: Uint8Array[]
   private readonly ends = new Uint8Array(256)
   private readonly single: boolean
+  // The fixed tokens that hold a line character, as UTF-8.
+  private readonly spanning: Uint8Array[]
   private readonly rows: string[]
   // How many more bytes the piece being read may take, and the failure
   // when it takes more, given the row it starts on: the bound is the
@@ -313,11 +321,21 @@ class PieceSplitter {
   budget: () => number = () => Infinity
   over: (row: number) => Fail = (row) => Fail.input(`line ${row} is too long`).at(row, 1)
 
-  constructor(line: string[], rows: string[], single: boolean) {
-    this.line = line
-    this.forms = line.map((c) => ENCODER.encode(c))
+  constructor(line: string[], rows: string[], single: boolean, fixed: string[]) {
+    // The engine keeps a character outside the basic plane as its two
+    // UTF-16 halves, each a line character; the input holds it as one
+    // four-byte form, which ends a piece when both halves are line
+    // characters.
+    this.line = line.filter((c) => !isHigh(c) && !isLow(c))
+    for (const h of line.filter(isHigh)) {
+      for (const l of line.filter(isLow)) this.line.push(h + l)
+    }
+    this.forms = this.line.map((c) => ENCODER.encode(c))
     for (const form of this.forms) this.ends[form[form.length - 1]] = 1
     this.single = single
+    this.spanning = fixed
+      .filter((token) => Array.from({ length: token.length }, (_, i) => token[i]).some((c) => line.includes(c)))
+      .map((token) => ENCODER.encode(token))
     this.rows = rows
   }
 
@@ -343,8 +361,7 @@ class PieceSplitter {
 
   private drain(piece: PieceFn, atEnd: boolean): Flow {
     for (;;) {
-      if (this.tokenEnd < 0 && !this.findEnding()) {
-        this.scanned = this.pending.length
+      if (this.tokenEnd < 0 && !this.findEnding(atEnd)) {
         if (this.pending.length > this.budget()) throw this.over(this.row)
         return 'continue'
       }
@@ -359,20 +376,51 @@ class PieceSplitter {
   }
 
   // Finds the first line ending past `scanned`, checked against the line
-  // character's whole UTF-8 form, and starts its token.
-  private findEnding(): boolean {
+  // character's whole UTF-8 form, and starts its token. False while the
+  // input so far holds none, or cannot yet tell where one ends.
+  private findEnding(atEnd: boolean): boolean {
     const p = this.pending
     for (let i = this.scanned; i < p.length; i++) {
       if (!this.ends[p[i]]) continue
       const k = this.formEnding(i + 1)
-      if (0 <= k) {
-        this.tokenEnd = i + 1
-        this.token = [this.line[k]]
-        if (this.tokenEnd > this.budget()) throw this.over(this.row)
-        return true
+      if (k < 0) continue
+      const at = i + 1 - this.forms[k].length
+      const inside = this.inFixed(at, k, atEnd)
+      if (true === inside) continue
+      if (null === inside) {
+        this.scanned = at
+        return false
+      }
+      this.tokenEnd = i + 1
+      this.token = [this.line[k]]
+      if (this.tokenEnd > this.budget()) throw this.over(this.row)
+      return true
+    }
+    this.scanned = p.length
+    return false
+  }
+
+  // Whether the `k`th line character, at `at`, lies inside one of the fixed
+  // tokens that hold a line character; null while the input so far cannot
+  // tell.
+  private inFixed(at: number, k: number, atEnd: boolean): boolean | null {
+    const p = this.pending
+    const form = this.forms[k]
+    let unsure = false
+    for (const token of this.spanning) {
+      for (let j = 0; j + form.length <= token.length; j++) {
+        if (!sameBytes(token, j, form, 0, form.length)) continue
+        const start = at - j
+        if (start < 0 || !sameBytes(p, start, token, 0, j)) continue
+        const after = at + form.length
+        const rest = token.length - j - form.length
+        const have = Math.min(rest, p.length - after)
+        if (!sameBytes(p, after, token, j + form.length, have)) continue
+        if (have === rest) return true
+        if (!atEnd) unsure = true
       }
     }
-    return false
+    return unsure ? null : false
   }
 
   // The line character whose UTF-8 form `pending` holds just before `end`,
@@ -392,8 +440,10 @@ class PieceSplitter {
 
   // Takes the rest of the line token the piece ends with: under
   // `line.single`, every line character not yet in it, as the lexer reads
-  // one; otherwise a `\n` after a `\r`, so that `\r\n` is one line ending.
-  // False while the input so far cannot tell whether the token goes on.
+  // one; where a fixed token holds a line character, every line character,
+  // as the lexer reads a run; otherwise a `\n` after a `\r`, so that `\r\n`
+  // is one line ending and a record is held to its own line. False while
+  // the input so far cannot tell whether the token goes on.
   private followToken(atEnd: boolean): boolean {
     const p = this.pending
     for (;;) {
@@ -403,7 +453,7 @@ class PieceSplitter {
         const c = this.line[k]
         const goesOn = this.single
           ? !this.token.includes(c)
-          : 1 === this.token.length && '\r' === this.token[0] && '\n' === c
+          : 0 < this.spanning.length || (1 === this.token.length && '\r' === this.token[0] && '\n' === c)
         if (!goesOn) continue
         const form = this.forms[k]
         const have = p.length - this.tokenEnd
@@ -446,23 +496,51 @@ class PieceSplitter {
 }
 
 // The row, and the byte offset in it, just after `text`, which starts at
-// `row` and `offset`: a row character starts the next row.
+// `row` and `offset`: a row character starts the next row. The engine reads
+// a UTF-16 code unit at a time, so a row character outside the basic plane
+// is its two halves, and counts as both.
 function advance(rows: string[], row: number, offset: number, text: string): [number, number] {
-  for (const c of text) {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
     if (rows.includes(c)) {
       row++
       offset = 0
     } else {
-      offset += utf8Length(c)
+      // A character outside the basic plane is four bytes, counted at its
+      // first half.
+      const u = c.charCodeAt(0)
+      offset += u < 0x80 ? 1 : u < 0x800 ? 2 : isHigh(c) ? 4 : isLow(c) ? 0 : 3
     }
   }
   return [row, offset]
 }
 
-// The UTF-8 length of one character.
-function utf8Length(c: string): number {
-  const cp = c.codePointAt(0) ?? 0
-  return cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4
+// Whether one UTF-16 code unit is the first or the second half of a
+// character outside the basic plane.
+function isHigh(c: string): boolean {
+  const u = c.charCodeAt(0)
+  return 1 === c.length && 0xd800 <= u && u < 0xdc00
+}
+
+function isLow(c: string): boolean {
+  const u = c.charCodeAt(0)
+  return 1 === c.length && 0xdc00 <= u && u < 0xe000
+}
+
+// Whether `n` bytes of `a` from `ai` are those of `b` from `bi`.
+function sameBytes(a: Uint8Array, ai: number, b: Uint8Array, bi: number, n: number): boolean {
+  if (ai + n > a.length || bi + n > b.length) return false
+  for (let j = 0; j < n; j++) if (a[ai + j] !== b[bi + j]) return false
+  return true
+}
+
+// The sources of a parser's fixed tokens, while it lexes them.
+function fixedTokens(config: any): string[] {
+  return config.fixed.lex
+    ? Object.values(config.fixed.token as Record<string, number>)
+        .map((tin) => config.fixed.ref[tin])
+        .filter((src: unknown): src is string => 'string' === typeof src && 0 < src.length)
+    : []
 }
 
 const DECODER = new TextDecoder('utf-8', { ignoreBOM: true })
@@ -524,6 +602,7 @@ class JsonRecords {
   readonly line: string[]
   readonly rows: string[]
   readonly single: boolean
+  readonly fixed: string[]
   private readonly space: string[]
   private readonly quotes: string[]
   private readonly escape: string
@@ -542,6 +621,7 @@ class JsonRecords {
     this.line = lexed(config.line.lex, config.line.chars)
     this.rows = Object.keys(config.line.rowChars ?? {})
     this.single = !!config.line.single
+    this.fixed = fixedTokens(config)
     this.space = lexed(config.space.lex, config.space.chars)
     this.quotes = lexed(config.string.lex, config.string.quoteMap)
     this.escape = config.string.escChar ?? '\\'
@@ -550,7 +630,7 @@ class JsonRecords {
 
   // A splitter for this grammar's line endings, bounded by the record.
   splitter(): PieceSplitter {
-    const splitter = new PieceSplitter(this.line, this.rows, this.single)
+    const splitter = new PieceSplitter(this.line, this.rows, this.single, this.fixed)
     splitter.budget = () => this.maxBytes - this.bytes
     splitter.over = (row) => {
       const first = this.start || row
@@ -781,11 +861,7 @@ class Lexis {
     lexis.single = !!config.line.single
     lexis.rows = Object.keys(config.line.rowChars ?? {})
     lexis.space = lexed(config.space.lex, config.space.chars)
-    lexis.fixed = config.fixed.lex
-      ? Object.values(config.fixed.token as Record<string, number>)
-          .map((tin) => config.fixed.ref[tin])
-          .filter((src: unknown): src is string => 'string' === typeof src && 0 < src.length)
-      : []
+    lexis.fixed = fixedTokens(config)
     // The longest marker first, and a tie by name: the engine's order.
     lexis.comments = config.comment.lex
       ? Object.entries(config.comment.def as Record<string, any>)
@@ -1033,7 +1109,7 @@ class CsvWalk implements Driver {
     prepare(this.parser, () => !abort.isAborted())
     const lexis = Lexis.csv(this.parser)
     this.scanner = new Scanner(lexis)
-    const splitter = new PieceSplitter(lexis.line, lexis.rows, lexis.single)
+    const splitter = new PieceSplitter(lexis.line, lexis.rows, lexis.single, lexis.fixed)
     splitter.budget = () => this.maxRecordBytes - (this.open ? this.bytes - this.recordAt : 0)
     splitter.over = (row) => {
       const first = (this.open && this.recordRow) || row

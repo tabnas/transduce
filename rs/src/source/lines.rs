@@ -47,9 +47,11 @@
 //! The reader is taken a piece at a time, and a piece ends just past each
 //! of the grammar's line endings: one of its line characters (a lone `\r`
 //! or a configured separator as much as `\n`), a `\r\n`, or under
-//! `record.empty` the whole line token the lexer reads. So a record never
-//! waits for a `\n` to end, and a chunk can close after any record,
-//! however many of them one `\n`-terminated line holds.
+//! `record.empty` the whole line token the lexer reads. A line character
+//! inside one of the grammar's fixed tokens (a field separator such as
+//! `"\n~"`) is the token's and ends no piece. So a record never waits for
+//! a `\n` to end, and a chunk can close after any record, however many of
+//! them one `\n`-terminated line holds.
 //!
 //! Memory is bounded by one chunk, and a record is never split, so a
 //! single record larger than `max_record_bytes` (a record with its line
@@ -403,11 +405,19 @@ impl<R: BufRead> JsonRecords<R> {
     fn new(reader: R, parser: &Tabnas, max_bytes: usize) -> JsonRecords<R> {
         let lexis = JsonLexis::of(parser);
         let config = parser.config();
+        let fixed: Vec<String> = config
+            .fixed
+            .tokens
+            .values()
+            .filter(|token| config.fixed.lex && !token.source.is_empty())
+            .map(|token| token.source.clone())
+            .collect();
         let pieces = Pieces::new(
             reader,
             lexis.line.clone(),
             config.line.row_chars.chars().collect(),
             config.line.single,
+            &fixed,
         );
         JsonRecords {
             pieces,
@@ -489,23 +499,33 @@ fn lexed(on: bool, chars: &str) -> Vec<char> {
 /// The input from a reader in pieces, each ending just past a line
 /// ending: one of the grammar's line characters, a `\r\n`, or under
 /// `line.single` (`record.empty`) the whole line token the lexer reads,
-/// every line character up to a repeated one. A record therefore never
+/// every line character up to a repeated one. A line character inside one
+/// of the grammar's fixed tokens (a field separator such as `"\n~"`) is the
+/// token's and ends no piece, and where a fixed token holds one, a piece
+/// takes the whole run of line characters the lexer reads as one token,
+/// so that no piece starts inside a line token. A record therefore never
 /// ends inside a piece, only at its end. Each piece carries the row the
 /// engine gives its first character: one more than the row characters
-/// before it. One buffer is reused throughout.
+/// before it.
 struct Pieces<R: BufRead> {
     reader: R,
-    buf: Vec<u8>,
-    /// Bytes taken from the reader past the last piece, and the start of
-    /// the next: part of a character's UTF-8 form, read to see whether it
-    /// went on a line token, which it did not.
-    carry: Vec<u8>,
+    /// Bytes read and not yet handed out: the piece being read starts at
+    /// `start`, and holds no line ending before `scanned`.
+    pending: Vec<u8>,
+    start: usize,
+    scanned: usize,
+    eof: bool,
     /// The line characters, their UTF-8 forms, and the bytes that end a
     /// form.
     line: Vec<char>,
     forms: Vec<Vec<u8>>,
     ends: [bool; 256],
     single: bool,
+    /// The fixed tokens that hold a line character, as UTF-8.
+    spanning: Vec<Vec<u8>>,
+    /// The line token being followed when what was read ran out, to pick
+    /// up where it stopped: where it ends so far, and its characters.
+    following: Option<(usize, Vec<char>)>,
     rows: Vec<char>,
     /// Where the next piece starts: its row, and its byte offset in it.
     row: u64,
@@ -513,20 +533,35 @@ struct Pieces<R: BufRead> {
 }
 
 impl<R: BufRead> Pieces<R> {
-    fn new(reader: R, line: Vec<char>, rows: Vec<char>, single: bool) -> Pieces<R> {
+    fn new(
+        reader: R,
+        line: Vec<char>,
+        rows: Vec<char>,
+        single: bool,
+        fixed: &[String],
+    ) -> Pieces<R> {
         let forms: Vec<Vec<u8>> = line.iter().map(|c| c.to_string().into_bytes()).collect();
         let mut ends = [false; 256];
         for form in &forms {
             ends[usize::from(form[form.len() - 1])] = true;
         }
+        let spanning = fixed
+            .iter()
+            .filter(|token| token.chars().any(|c| line.contains(&c)))
+            .map(|token| token.as_bytes().to_vec())
+            .collect();
         Pieces {
             reader,
-            buf: Vec::new(),
-            carry: Vec::new(),
+            pending: Vec::new(),
+            start: 0,
+            scanned: 0,
+            eof: false,
             line,
             forms,
             ends,
             single,
+            spanning,
+            following: None,
             rows,
             row: 1,
             offset: 0,
@@ -543,58 +578,35 @@ impl<R: BufRead> Pieces<R> {
         budget: usize,
         over: impl Fn() -> Fail,
     ) -> Result<Option<(u64, &str)>, Fail> {
-        self.buf.clear();
-        self.buf.append(&mut self.carry);
-        let row = self.row;
-        let mut ended = None;
-        loop {
-            let available = match self.reader.fill_buf() {
-                Ok(available) => available,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(Fail::input(format!("reading line {row}: {e}"))),
-            };
-            if available.is_empty() {
-                break;
+        let end = loop {
+            if let Some(end) = self.ending() {
+                break end;
             }
-            // The first byte that ends a line character's form, checked
-            // against the whole form, which may begin in what was taken.
-            let mut wanted = available.len();
-            let mut from = 0;
-            while let Some(at) = available[from..]
-                .iter()
-                .position(|&b| self.ends[usize::from(b)])
-            {
-                let at = from + at;
-                if let Some(k) = form_ending(&self.forms, &self.buf, &available[..=at]) {
-                    ended = Some(k);
-                    wanted = at + 1;
-                    break;
-                }
-                from = at + 1;
-            }
-            let room = budget.saturating_add(1).saturating_sub(self.buf.len());
-            let take = wanted.min(room);
-            self.buf.extend_from_slice(&available[..take]);
-            self.reader.consume(take);
-            if self.buf.len() > budget {
+            if self.pending.len() - self.start > budget {
                 return Err(over());
             }
-            // Under the budget, all that was wanted was taken, so a line
-            // character seen is a line character kept.
-            if ended.is_some() {
-                break;
+            if !self.more()? {
+                // At the end of the input every question has its answer.
+                if let Some(end) = self.ending() {
+                    break end;
+                }
+                if self.pending.len() == self.start {
+                    return Ok(None);
+                }
+                break self.pending.len();
             }
+        };
+        if end - self.start > budget {
+            return Err(over());
         }
-        if let Some(k) = ended {
-            self.follow_token(k, budget, &over)?;
-        }
-        if self.buf.is_empty() {
-            return Ok(None);
-        }
-        let piece = match std::str::from_utf8(&self.buf) {
+        let (from, row) = (self.start, self.row);
+        self.start = end;
+        self.scanned = end;
+        let piece = match std::str::from_utf8(&self.pending[from..end]) {
             Ok(piece) => piece,
             Err(e) => {
-                let valid = std::str::from_utf8(&self.buf[..e.valid_up_to()]).unwrap_or_default();
+                let valid = std::str::from_utf8(&self.pending[from..from + e.valid_up_to()])
+                    .unwrap_or_default();
                 let (row, offset) = advance(&self.rows, self.row, self.offset, valid);
                 return Err(Fail::input(format!(
                     "line {row} is not UTF-8 from its byte {}",
@@ -607,88 +619,152 @@ impl<R: BufRead> Pieces<R> {
         Ok(Some((row, piece)))
     }
 
-    /// Takes the rest of the line token that the piece's last character,
-    /// the `k`th line character, began: under `line.single`, every line
-    /// character not yet in it, as the lexer reads one; otherwise a `\n`
-    /// after a `\r`, so that `\r\n` is one line ending.
-    fn follow_token(
-        &mut self,
-        k: usize,
-        budget: usize,
-        over: &impl Fn() -> Fail,
-    ) -> Result<(), Fail> {
-        let mut token = vec![self.line[k]];
+    /// Reads one more buffer of the input onto what is pending, letting go
+    /// of what was handed out; false at the end of the input.
+    fn more(&mut self) -> Result<bool, Fail> {
+        if self.eof {
+            return Ok(false);
+        }
+        if self.start > 0 {
+            self.pending.drain(..self.start);
+            self.scanned -= self.start;
+            if let Some((end, _)) = &mut self.following {
+                *end -= self.start;
+            }
+            self.start = 0;
+        }
         loop {
-            let goes_on = |c: char| {
-                if self.single {
-                    !token.contains(&c)
-                } else {
-                    token == ['\r'] && c == '\n'
+            match self.reader.fill_buf() {
+                Ok([]) => {
+                    self.eof = true;
+                    return Ok(false);
                 }
-            };
-            let wanted: Vec<usize> = (0..self.line.len())
-                .filter(|&i| goes_on(self.line[i]))
-                .collect();
-            if wanted.is_empty() {
-                return Ok(());
-            }
-            let available = loop {
-                match self.reader.fill_buf() {
-                    Ok(available) => break available,
-                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                    Err(e) => return Err(Fail::input(format!("reading line {}: {e}", self.row))),
-                }
-            };
-            // The next character, with any part of it already carried.
-            let mut next = None;
-            let mut partial = false;
-            for &i in &wanted {
-                let form = &self.forms[i];
-                let (head, tail) = form.split_at(self.carry.len().min(form.len()));
-                if self.carry.len() + available.len() >= form.len() {
-                    if self.carry == head && available.starts_with(tail) {
-                        next = Some(i);
-                        break;
-                    }
-                } else if self.carry == head && tail.starts_with(available) {
-                    partial = true;
-                }
-            }
-            match next {
-                Some(i) => {
-                    let rest = self.forms[i].len() - self.carry.len();
-                    if self.buf.len() + self.forms[i].len() > budget {
-                        return Err(over());
-                    }
-                    self.buf.append(&mut self.carry);
-                    self.buf.extend_from_slice(&available[..rest]);
-                    self.reader.consume(rest);
-                    token.push(self.line[i]);
-                }
-                // The buffer ends inside what may be a line character:
-                // carry it, and read on.
-                None if partial && !available.is_empty() => {
+                Ok(available) => {
                     let n = available.len();
-                    self.carry.extend_from_slice(available);
+                    self.pending.extend_from_slice(available);
                     self.reader.consume(n);
+                    return Ok(true);
                 }
-                None => return Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(Fail::input(format!("reading line {}: {e}", self.row))),
             }
         }
     }
-}
 
-/// The line character whose UTF-8 form `head` followed by `tail` ends with,
-/// by its index.
-fn form_ending(forms: &[Vec<u8>], head: &[u8], tail: &[u8]) -> Option<usize> {
-    forms.iter().position(|form| {
-        if tail.len() >= form.len() {
-            tail.ends_with(form)
-        } else {
-            let need = form.len() - tail.len();
-            head.len() >= need && head.ends_with(&form[..need]) && form[need..] == *tail
+    /// Where the piece being read ends: just past the first line ending
+    /// after `scanned`, or `None` while what is read holds none, or cannot
+    /// yet tell where one ends.
+    fn ending(&mut self) -> Option<usize> {
+        if let Some((end, token)) = self.following.take() {
+            return self.follow(end, token);
         }
-    })
+        let mut from = self.scanned.max(self.start);
+        while let Some(at) = self.pending[from..]
+            .iter()
+            .position(|&b| self.ends[usize::from(b)])
+        {
+            let end = from + at + 1;
+            let Some(k) = self
+                .forms
+                .iter()
+                .position(|form| self.pending[self.start..end].ends_with(form))
+            else {
+                from = end;
+                continue;
+            };
+            let at = end - self.forms[k].len();
+            match self.in_fixed(at, k) {
+                Some(true) => {
+                    from = end;
+                    continue;
+                }
+                Some(false) => {}
+                None => {
+                    self.scanned = at;
+                    return None;
+                }
+            }
+            return self.follow(end, vec![self.line[k]]);
+        }
+        self.scanned = self.pending.len();
+        None
+    }
+
+    /// Whether the `k`th line character, at `at`, lies inside one of the
+    /// fixed tokens that hold a line character; `None` while what is read
+    /// cannot yet tell.
+    fn in_fixed(&self, at: usize, k: usize) -> Option<bool> {
+        let form = &self.forms[k];
+        let mut unsure = false;
+        for token in &self.spanning {
+            for j in 0..token.len() {
+                if !token[j..].starts_with(form) {
+                    continue;
+                }
+                let Some(token_start) = at.checked_sub(j).filter(|&s| s >= self.start) else {
+                    continue;
+                };
+                if self.pending[token_start..at] != token[..j] {
+                    continue;
+                }
+                let rest = &token[j + form.len()..];
+                let after = at + form.len();
+                let have = &self.pending[after..(after + rest.len()).min(self.pending.len())];
+                if !rest.starts_with(have) {
+                    continue;
+                }
+                if have.len() == rest.len() {
+                    return Some(true);
+                }
+                unsure |= !self.eof;
+            }
+        }
+        if unsure {
+            None
+        } else {
+            Some(false)
+        }
+    }
+
+    /// Where the line token whose characters so far are `token`, ending at
+    /// `end`, ends: under `line.single` it takes every line character not
+    /// yet in it, as the lexer reads one; where a fixed token holds a line
+    /// character, every line character, as the lexer reads a run; otherwise
+    /// a `\n` after a `\r`, so that `\r\n` is one line ending and a record
+    /// is held to its own line. `None` while what is read cannot yet tell,
+    /// with the token kept to pick up from once more is read, so a long run
+    /// is followed once and not again from its start on every read.
+    fn follow(&mut self, mut end: usize, mut token: Vec<char>) -> Option<usize> {
+        'token: loop {
+            let mut unsure = false;
+            for (i, form) in self.forms.iter().enumerate() {
+                let c = self.line[i];
+                let goes_on = if self.single {
+                    !token.contains(&c)
+                } else {
+                    !self.spanning.is_empty() || (token == ['\r'] && c == '\n')
+                };
+                if !goes_on {
+                    continue;
+                }
+                let have = &self.pending[end..(end + form.len()).min(self.pending.len())];
+                if !form.starts_with(have) {
+                    continue;
+                }
+                if have.len() == form.len() {
+                    end += form.len();
+                    token.push(c);
+                    continue 'token;
+                }
+                unsure |= !self.eof;
+            }
+            if unsure {
+                self.following = Some((end, token));
+                return None;
+            }
+            return Some(end);
+        }
+    }
 }
 
 /// The row, and the byte offset in it, just after `text`, which starts at
@@ -767,6 +843,7 @@ impl<R: BufRead> Chunks<R> {
             lexis.line.clone(),
             config.line.row_chars.chars().collect(),
             config.line.single,
+            &lexis.fixed,
         );
         Chunks {
             pieces,
@@ -1824,6 +1901,49 @@ mod tests {
     }
 
     #[test]
+    fn a_line_character_inside_a_fixed_token_ends_no_piece() {
+        // The lexer reads a fixed token before a line, so a field separator
+        // that holds a line character owns it, and a piece does not end
+        // there. Where a fixed token holds one, a run of line characters is
+        // one token to the lexer, and a piece takes the run whole, so that
+        // no chunk starts inside it.
+        let starts = csv_options(|o| o.field.separation = Some("\n~".into()));
+        let inside = csv_options(|o| o.field.separation = Some("~\n~".into()));
+        for (text, options) in [
+            ("a\n~b\nx\n~y\n", &starts),
+            ("a\n~b\n\n~c\nx\n~y\n", &starts),
+            ("a\n~b\r\n~c\nx\n~y", &starts),
+            ("a~\n~b\nx~\n~y\n", &inside),
+        ] {
+            let _ = csv_streams_as_whole(text, options);
+        }
+    }
+
+    #[test]
+    fn a_long_line_token_is_followed_once() {
+        // Where a fixed token holds a line character, a piece takes a whole
+        // run of line characters, which it follows across reads from where
+        // it stopped: read a byte at a time, a run costs its length and not
+        // its square. Rows count every `\n`, the fixed token's included, as
+        // the engine counts them.
+        let run = 100_000;
+        let text = format!("a\n~b\nc\n~d{}x\n~y\n", "\n".repeat(run));
+        let mut pieces = Pieces::new(
+            trickle(&text, 1),
+            vec!['\r', '\n'],
+            vec!['\n'],
+            false,
+            &["\n~".to_string()],
+        );
+        let mut got = Vec::new();
+        while let Some((row, piece)) = pieces.next_piece(usize::MAX, || unreachable!()).unwrap() {
+            got.push((row, piece.len()));
+        }
+        let run = run as u64;
+        assert_eq!(got, [(1, 5), (3, 4 + run as usize), (4 + run, 5)]);
+    }
+
+    #[test]
     fn a_separator_of_several_bytes_is_found_across_reads() {
         // A configured separator outside ASCII is matched on its whole
         // UTF-8 form, read a byte at a time too; under `record.empty` a
@@ -1831,6 +1951,11 @@ mod tests {
         // that only starts like one is left to the next record.
         let one = csv_options(|o| o.record.separators = Some("␞".into()));
         csv_streams_as_whole("a,b␞1,é␞3,4␞", &one).unwrap();
+        // Outside the basic plane too, and a failure after one is placed
+        // as the grammar places it.
+        let astral = csv_options(|o| o.record.separators = Some("😀".into()));
+        csv_streams_as_whole("a,b😀1,é😀3,4😀", &astral).unwrap();
+        csv_streams_as_whole("a,b😀1,2😀3,\"x", &astral).unwrap_err();
         let two = csv_options(|o| {
             o.record.separators = Some("␞¶".into());
             o.record.empty = true;

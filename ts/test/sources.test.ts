@@ -766,6 +766,24 @@ describe('LinesSource: records end where the grammar ends them', () => {
     }
   })
 
+  it('a line character inside a fixed token ends no piece', () => {
+    // The lexer reads a fixed token before a line, so a field separator
+    // that holds a line character owns it, and a piece does not end there.
+    // Where a fixed token holds one, a run of line characters is one token
+    // to the lexer, and a piece takes the run whole, so that no chunk starts
+    // inside it.
+    const starts = { field: { separation: '\n~' } }
+    const inside = { field: { separation: '~\n~' } }
+    for (const [text, options] of [
+      ['a\n~b\nx\n~y\n', starts],
+      ['a\n~b\n\n~c\nx\n~y\n', starts],
+      ['a\n~b\r\n~c\nx\n~y', starts],
+      ['a~\n~b\nx~\n~y\n', inside],
+    ] as [string, Record<string, any>][]) {
+      csvStreamsAsWhole(text, options)
+    }
+  })
+
   it('a separator of several bytes is found across writes', () => {
     // A configured separator outside ASCII is matched on its whole UTF-8
     // form, written a byte at a time too; under `record.empty` a token of
@@ -773,5 +791,18 @@ describe('LinesSource: records end where the grammar ends them', () => {
     // starts like one is left to the next record.
     csvStreamsAsWhole('a,b␞1,é␞3,4␞', { record: { separators: '␞' } })
     csvStreamsAsWhole('a,b␞¶£,é␞£,2¶␞3,4', { record: { separators: '␞¶', empty: true }, header: false })
+    // Outside the basic plane too, which the engine keeps as two UTF-16
+    // halves, each a line and a row character: a failure after one is
+    // placed as the grammar places it.
+    const astral = { record: { separators: '😀' } }
+    assert.equal(objects(csvStreamsAsWhole('a,b😀1,é😀3,4😀', astral)), 2)
+    assert.ok('fail' in csvStreamsAsWhole('a,b😀1,2😀3,"x', astral))
+    // Each record is under the limit and the line far over it.
+    const text = `a,b😀${'1,2😀'.repeat(100)}`
+    const want = wholeReading(() => makeCsv(astral).parse(text))
+    const got = lineReading((rec) =>
+      lines(text, LineFormat.csv(true, astral), (s) => s.limits(Limits.with({ max_record_bytes: 8 })).chunkBytes(64)).run(rec),
+    )
+    assert.ok(sameReading(got, want), show(got).slice(0, 200))
   })
 })
