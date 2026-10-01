@@ -42,6 +42,9 @@ tabnas-xml = { path = "../../xml/rs" }
 tabnas-zon = { path = "../../zon/rs" }
 tabnas-markdown = { path = "../../markdown/rs" }
 tabnas-feed = { path = "../../feed/rs" }
+# The fleet's TSV fixture loader and runner, for the shared fixtures in
+# ../test/spec that every runtime of this crate runs (rs/tests/spec_*.rs).
+tabnas-support = { path = "../../support/rs", features = ["serde_json"] }
 criterion = { version = "0.7", default-features = false }
 
 [[bench]]

@@ -1,0 +1,26 @@
+script	stop_on	expected
+# scan-emit: a script of operations driven through ScanEmit with a
+# running-sum step. An integer item adds itself to the state and emits
+# "+<n>"; {"emit": [...]} emits those strings and leaves the state;
+# {"fail": CODE} fails the step with that code; "finish" calls finish,
+# which emits "=<sum>". The output sink answers stop for the output
+# `stop_on` names and continue otherwise. The expected value is
+# {"out": [every output delivered], "flows": [the flow each operation
+# returned]}, or ERROR:<CODE> for the first operation that failed.
+[1,2,"finish"]		{"out":["+1","+2","=3"],"flows":["continue","continue","continue"]}
+[]		{"out":[],"flows":[]}
+["finish"]		{"out":["=0"],"flows":["continue"]}
+[-3,"finish"]		{"out":["+-3","=-3"],"flows":["continue","continue"]}
+[1,{"emit":[]},{"emit":["a","b"]},2,"finish"]		{"out":["+1","a","b","+2","=3"],"flows":["continue","continue","continue","continue","continue"]}
+# finish is once, and nothing follows it.
+[1,2,"finish","finish"]		ERROR:PROTOCOL_ORDER_ERROR
+["finish",1]		ERROR:PROTOCOL_ORDER_ERROR
+# A stop is returned by the operation whose output stopped, and the rest
+# of that operation's outputs are not delivered; the operator itself
+# goes on, so the caller decides.
+[1,2,3,"finish"]	+2	{"out":["+1","+2","+3","=6"],"flows":["continue","stop","continue","continue"]}
+[{"emit":["a","b","c"]},1]	b	{"out":["a","b","+1"],"flows":["stop","continue"]}
+[1,"finish"]	=1	{"out":["+1","=1"],"flows":["continue","stop"]}
+# A step's failure is the operation's.
+[1,{"fail":"MISSING_VALUE"},2]		ERROR:MISSING_VALUE
+[{"fail":"ABORTED"}]		ERROR:ABORTED

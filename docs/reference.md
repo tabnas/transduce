@@ -264,3 +264,120 @@ source), `rows` (the table transducer), `captured_bytes` and
 `captured_bytes_high` (the router's one materialization at a time),
 `retained_bytes_high`, `output_bytes` (a renderer's). `to_json` reports
 them.
+
+## Shared fixtures
+
+`test/spec/*.tsv` is the behaviour every runtime of this crate must
+reproduce, row for row. The Rust runners are `rs/tests/spec_<file>.rs`
+over the harness in `rs/tests/common/mod.rs`, through `tabnas-support`'s
+`Runner`; a TypeScript or Go port runs the same files through its own
+half of `@tabnas/support`, with a harness that does what this section
+says. `spec_events.rs` also fails when a file appears without a runner.
+
+The format is the fleet's: a header row names the columns, a line that
+starts with `#` and holds no tab is a comment, the `input` (or `script`)
+column is escape-decoded (`\n`, `\r`, `\t`, `\\`; every other backslash
+sequence stays as written, so a JSON escape such as `é` reaches the
+grammar intact) and every other column is read raw. A trailing column a
+row leaves out is empty. The `expected` column is JSON, compared
+structurally (`-0` is not `0`), or `ERROR:<CODE>`, optionally
+`ERROR:<CODE>@<row>:<col>` to pin the 1-based position the failure
+reports.
+
+### Columns
+
+| Column | Meaning |
+|---|---|
+| `input` | the source text |
+| `grammar` | `json`, `jsonl`, `json5`, `jsonc`, `jsonic`, `yaml`, `zon`, `csv`, `toml` or `ini` |
+| `mode` | `materialize` and `incremental`: `ParserSource` over the grammar, named with `.grammar(name)`, in that `SourceMode`. `value`: the grammar's parse (an engine error is `Fail::from_tabnas`), then `ValueSource` over the value, which applies no limits. `lines`: `LinesSource` (`jsonl` or `csv`) on its walking path, `Source::run`. `lines-incremental`: `LinesSource::run_owned`, where JSON Lines goes through the rule-event adapter and keeps lexemes |
+| `prune` | incremental only: `"all"` for `Prune::AllArrays`, a selector for `Prune::Under`, empty for `Prune::Never` |
+| `options` | the line sources: a JSON object of `header` (default `true`), `object`, `number`, `value`, `trim` and `strict` for the CSV grammar, and `chunk_bytes` for the source |
+| `captures` | a JSON array of `{"tag", "select", "mode"}`, `select` a selector, `mode` `materialize` (the default) or `observe` |
+| `binding` | `{"schema": ..., "rows": selector}`, the schema `"infer"`, `{"metadata": selector}` (each descriptor read by `column_from_meta`) or `{"static": [{"label", "source": segments, "missing"}]}`, `missing` `missing` (the default), `null` or `error` |
+| `duplicates` | `reject` (the default), `last_wins` or `first_wins` |
+| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs |
+| `limits` | a JSON object of `Limits` fields over `Limits::default()` |
+| `path` | on an error row, the failure's `path`, in jq syntax |
+| `limit` | on an error row, the `Limits` field the failure names |
+| `prefix` | on an error row, the events the source emitted before it failed |
+
+A selector is a JSON array of steps: a string is `Property`, a
+non-negative integer `Index`, `{"each":"index"}` `EachIndex` and
+`{"each":"member"}` `EachMember`; `[]` is the root. A path of segments
+(a static column's `source`) has strings for keys and integers for
+indexes.
+
+### Encodings
+
+An **event** is an array whose first element names it:
+`["object_start"]`, `["object_end"]`, `["array_start"]`,
+`["array_end"]`, `["key", name]`, `["null"]`, `["bool", b]`,
+`["string", text]`, `["number", value, lexeme]` and `["end"]`. The
+`value` is the number as a JSON number; the `lexeme` is the source text
+the event carried, or `null`. Strings and keys are the decoded text.
+`events.tsv` and `lines.tsv` expect the whole stream; a `prefix` is the
+same encoding.
+
+A **value** (a `Datum`, what a capture materializes) is `null`, `true`,
+`false` or a string as itself, `["number", value, lexeme]`,
+`["array", value...]` or `["object", [key, value]...]`, so member order
+and lexemes are compared, not only the JSON they print as.
+
+`route.tsv` expects the **deliveries** in order: `[tag, path]` for an
+observed capture, `[tag, path, value]` for a materialized one, the path
+in jq syntax, and then the string `"end"` when the router called
+`RouteSink::end`.
+
+`table.tsv` expects `TableRows/1` in order: `["schema", [label...]]`,
+`["row", [cell...]]` per row and `["end"]`. A **cell** is `null`, a
+boolean, a string, `["number", value, lexeme]` or `["missing"]`; a
+container projected into a cell is the string of its compact JSON.
+
+`scan.tsv` drives `ScanEmit` with a running sum: an integer item adds
+itself and emits `"+<n>"`, `{"emit": [...]}` emits those strings,
+`{"fail": CODE}` fails the step with that code, and `"finish"` calls
+`finish`, which emits `"=<sum>"`. The output sink answers `Stop` for the
+output named in `stop_on`. The expected value is `{"out": [...],
+"flows": [...]}`, every output delivered and the `Flow` each operation
+returned (`"continue"` or `"stop"`).
+
+### The files
+
+| File | Rows | What it pins |
+|---|---|---|
+| `events.tsv` | 84 | `JsonEvents/1` from every mode and the verified grammars, lexemes, string decoding, repeated members, the refusals and their prefixes, the gate on unverified grammars, pruning |
+| `route.tsv` | 38 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
+| `table.tsv` | 30 | `TableFromJson`: metadata, static and inferred schemas, `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
+| `lines.tsv` | 25 | `LinesSource`: JSON Lines and CSV on both paths, chunk sizes, headers, grammar options, a failure's file line |
+| `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
+| `limits.tsv` | 61 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries |
+
+### What a port must reproduce exactly
+
+- **Sizes are UTF-8 bytes.** A key or string counts its encoded length
+  (`é` is 2, `日` 3, `😀` 4); a number its lexeme's length, which is 0
+  to `max_scalar_bytes` and 8 to a retained value when there is none; a
+  retained node adds `NODE_BYTES` (16). A port on UTF-16 strings that
+  counts code units fails the multibyte rows of `limits.tsv`.
+- **A line source's record counts its line ending**, `\n` or `\r\n`, so
+  the same record passes as a last line without one and fails with one at
+  the same limit (`limits.tsv` pins both).
+- **The lexeme rule**: the incremental source attaches a number's token
+  text only when it is an RFC 8259 number that reads as the node's value
+  (`1e2` keeps `"1e2"`; `0x1F`, `+1`, `.5`, `5.` and YAML's `012` have
+  none), and a value it walks (a YAML alias, a document stream with
+  nothing streamed early) has none.
+- **jq paths**: a key is written bare (`.a_1`) when it is an ASCII letter
+  or `_` followed by ASCII letters, digits and `_`, and otherwise as a
+  JSON string (`."odd key"`, `."é"`, `."1a"`, `.""`), escaped as RFC 8259
+  requires: `\"`, `\\`, the short forms `\b \f \n \r \t`, `\u00XX` with
+  lowercase hex for other control characters, and nothing else.
+- **Delivery order**: matches complete in source order; observed
+  captures that end at the same value are delivered innermost first, the
+  later-begun first when two select the same value.
+- **A container cell** is the compact JSON of the value, with each
+  number's lexeme when it has one. A number without one is written as the
+  runtime prints a double, which differs between runtimes outside
+  `1e-6 <= |x| < 1e21`; `DIVERGENCE.md` records it, and no fixture puts
+  such a number in a cell.

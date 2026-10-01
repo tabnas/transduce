@@ -1,0 +1,45 @@
+input	grammar	mode	options	expected	prefix
+# The line sources. `grammar` is jsonl or csv and `mode` is lines (the
+# walking path, LinesSource::run) or lines-incremental (the owned path,
+# run_owned: JSON Lines through the rule-event adapter, so numbers keep
+# their lexemes; CSV is walked on both). `options` is a JSON object:
+# header (default true), object, number, value, trim and strict for the
+# CSV grammar, and chunk_bytes for the source. The expected value is the
+# event stream (the array of the lines' values, or of the records), or
+# ERROR:<CODE>@<line>:<col>, the line being the file's; `prefix` pins
+# the events that left before a failure.
+#
+# JSON Lines: blank and whitespace-only lines are skipped, CRLF is a line
+# end, and each line's value is one element.
+{"a":1.50,"b":[true,null]}\r\n\n  \n{"a":2,"b":"x"}\n[3]\n"s"	jsonl	lines		[["array_start"],["object_start"],["key","a"],["number",1.5,null],["key","b"],["array_start"],["bool",true],["null"],["array_end"],["object_end"],["object_start"],["key","a"],["number",2,null],["key","b"],["string","x"],["object_end"],["array_start"],["number",3,null],["array_end"],["string","s"],["array_end"],["end"]]
+{"a":1.50,"b":[true,null]}\r\n\n  \n{"a":2,"b":"x"}\n[3]\n"s"	jsonl	lines-incremental		[["array_start"],["object_start"],["key","a"],["number",1.5,"1.50"],["key","b"],["array_start"],["bool",true],["null"],["array_end"],["object_end"],["object_start"],["key","a"],["number",2,"2"],["key","b"],["string","x"],["object_end"],["array_start"],["number",3,"3"],["array_end"],["string","s"],["array_end"],["end"]]
+	jsonl	lines		[["array_start"],["array_end"],["end"]]
+\n\n	jsonl	lines-incremental		[["array_start"],["array_end"],["end"]]
+1\n"two"\nnull\n[]\n{}	jsonl	lines-incremental		[["array_start"],["number",1,"1"],["string","two"],["null"],["array_start"],["array_end"],["object_start"],["object_end"],["array_end"],["end"]]
+{"é":"日本"}\r\n{"k":"a\\tb"}	jsonl	lines-incremental		[["array_start"],["object_start"],["key","é"],["string","日本"],["object_end"],["object_start"],["key","k"],["string","a\tb"],["object_end"],["array_end"],["end"]]
+# A repeated member streams every occurrence on the incremental path.
+{"a":1,"a":2}\n	jsonl	lines-incremental		[["array_start"],["object_start"],["key","a"],["number",1,"1"],["key","a"],["number",2,"2"],["object_end"],["array_end"],["end"]]
+{"a":1,"a":2}\n	jsonl	lines		[["array_start"],["object_start"],["key","a"],["number",2,null],["object_end"],["array_end"],["end"]]
+# A line that does not parse names its line, and the column in it.
+{"a":1}\n\n{"a": }\n{"a":2}\n	jsonl	lines		ERROR:INPUT_INVALID@3:7	[["array_start"],["object_start"],["key","a"],["number",1,null],["object_end"]]
+{"a":1}\n\n{"a": }\n{"a":2}\n	jsonl	lines-incremental		ERROR:INPUT_INVALID@3:7	[["array_start"],["object_start"],["key","a"],["number",1,"1"],["object_end"],["object_start"],["key","a"]]
+1 2\n	jsonl	lines-incremental		ERROR:INPUT_INVALID@1:3	[["array_start"],["number",1,"1"]]
+[1,\n2]\n	jsonl	lines		ERROR:INPUT_INVALID@1:4	[["array_start"]]
+# CSV: quoted fields may span lines and hold doubled quotes; the result
+# is the whole file's parse at any chunk size.
+id,note,n\r\n1,"multi\r\nline, with ""quotes""",2.50\r\n3,plain,4\r\n\r\n5,"a",6	csv	lines		[["array_start"],["object_start"],["key","id"],["string","1"],["key","note"],["string","multi\r\nline, with \"quotes\""],["key","n"],["string","2.50"],["object_end"],["object_start"],["key","id"],["string","3"],["key","note"],["string","plain"],["key","n"],["string","4"],["object_end"],["object_start"],["key","id"],["string","5"],["key","note"],["string","a"],["key","n"],["string","6"],["object_end"],["array_end"],["end"]]
+id,note,n\r\n1,"multi\r\nline, with ""quotes""",2.50\r\n3,plain,4\r\n\r\n5,"a",6	csv	lines	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","id"],["string","1"],["key","note"],["string","multi\r\nline, with \"quotes\""],["key","n"],["string","2.50"],["object_end"],["object_start"],["key","id"],["string","3"],["key","note"],["string","plain"],["key","n"],["string","4"],["object_end"],["object_start"],["key","id"],["string","5"],["key","note"],["string","a"],["key","n"],["string","6"],["object_end"],["array_end"],["end"]]
+id,note,n\r\n1,"multi\r\nline, with ""quotes""",2.50\r\n3,plain,4\r\n\r\n5,"a",6	csv	lines	{"chunk_bytes":7}	[["array_start"],["object_start"],["key","id"],["string","1"],["key","note"],["string","multi\r\nline, with \"quotes\""],["key","n"],["string","2.50"],["object_end"],["object_start"],["key","id"],["string","3"],["key","note"],["string","plain"],["key","n"],["string","4"],["object_end"],["object_start"],["key","id"],["string","5"],["key","note"],["string","a"],["key","n"],["string","6"],["object_end"],["array_end"],["end"]]
+id,note,n\r\n1,"multi\r\nline, with ""quotes""",2.50\r\n3,plain,4\r\n\r\n5,"a",6	csv	lines-incremental	{"chunk_bytes":1}	[["array_start"],["object_start"],["key","id"],["string","1"],["key","note"],["string","multi\r\nline, with \"quotes\""],["key","n"],["string","2.50"],["object_end"],["object_start"],["key","id"],["string","3"],["key","note"],["string","plain"],["key","n"],["string","4"],["object_end"],["object_start"],["key","id"],["string","5"],["key","note"],["string","a"],["key","n"],["string","6"],["object_end"],["array_end"],["end"]]
+	csv	lines		[["array_start"],["array_end"],["end"]]
+a,b\n	csv	lines		[["array_start"],["array_end"],["end"]]
+名前,x\né,"日本"\n	csv	lines		[["array_start"],["object_start"],["key","名前"],["string","é"],["key","x"],["string","日本"],["object_end"],["array_end"],["end"]]
+# Without a header line, as objects or as arrays of fields.
+1,2\n3,"4\n5"\n	csv	lines	{"header":false}	[["array_start"],["object_start"],["key","field~0"],["string","1"],["key","field~1"],["string","2"],["object_end"],["object_start"],["key","field~0"],["string","3"],["key","field~1"],["string","4\n5"],["object_end"],["array_end"],["end"]]
+1,2\n3,"4\n5"\n	csv	lines	{"header":false,"object":false,"chunk_bytes":0}	[["array_start"],["array_start"],["string","1"],["string","2"],["array_end"],["array_start"],["string","3"],["string","4\n5"],["array_end"],["array_end"],["end"]]
+# The grammar's options reach every chunk.
+a,b\n1.50,true\nx,null\n	csv	lines	{"number":true,"value":true,"chunk_bytes":0}	[["array_start"],["object_start"],["key","a"],["number",1.5,null],["key","b"],["bool",true],["object_end"],["object_start"],["key","a"],["string","x"],["key","b"],["null"],["object_end"],["array_end"],["end"]]
+a,b\n1.50,true\nx,null\n	csv	lines		[["array_start"],["object_start"],["key","a"],["string","1.50"],["key","b"],["string","true"],["object_end"],["object_start"],["key","a"],["string","x"],["key","b"],["string","null"],["object_end"],["array_end"],["end"]]
+# A record that does not parse names its file line, whatever the chunk.
+a,b\n1,2\n3,"x\n4,5\n	csv	lines	{"chunk_bytes":0}	ERROR:INPUT_INVALID@3:3	[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"]]
+a,b\n1,2\n3,"x\n4,5\n	csv	lines		ERROR:INPUT_INVALID@3:3	[["array_start"]]
