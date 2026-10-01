@@ -433,7 +433,10 @@ departs from the steps above, and what it measured:
   (tabnas/transduce#7); the rule-event adapter now refuses that shape
   itself, with `STREAMABILITY_UNKNOWN` when the value opens, and the
   host's check stands behind it for whatever else a grammar can
-  produce. Behind the host's check, the render fails a
+  produce. Since tabnas/yaml#107 the grammar names that member before
+  its value opens, so that document streams as the walk; the refusal
+  stays for any grammar that builds a member so. Behind the host's
+  check, the render fails a
   stream that breaks nesting, naming the break, with `INPUT_INVALID`:
   that is the one code alchemy's `fail` raises. `PROTOCOL_ORDER_ERROR`
   would name a broken event stream better, and waits on `fail` taking a
@@ -489,7 +492,8 @@ departs from the steps above, and what it measured:
   a string, so alchemy gained `string-join` (tabnas/alchemy#26).
 - **The adapter refuses two more shapes it cannot follow** (tabnas/transduce#12):
   a container the grammar opens inside a map before the member's key
-  (#7's case) and a container it streamed that the grammar never stored
+  (#7's case, gone from yaml since tabnas/yaml#107) and a container it
+  streamed that the grammar never stored
   (a jsonic pair inside a list, dropped when `list.pair` is off). Both
   are `STREAMABILITY_UNKNOWN` after a protocol-valid prefix and before
   `End`, and they differ in what that prefix holds. The first is

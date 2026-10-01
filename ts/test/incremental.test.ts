@@ -569,10 +569,16 @@ describe('incremental: documented shapes', () => {
     }
   })
 
-  // A YAML key that is itself a mapping: the value's mapping is built before
-  // the key is named, so the adapter refuses it when the value opens.
-  it('a yaml key that is a mapping is refused before its value streams', () => {
-    let text = '- sun: yellow\n- ? earth: blue\n  : moon: white\n'
+  // A YAML key that is itself a mapping (YAML Test Suite V9D5), in a mapping
+  // that starts in a sequence entry. The grammar named the first member of
+  // such a mapping in the pass that opened the mapping, so the value's
+  // mapping opened before the adapter had the key and the run was refused
+  // (tabnas/transduce#7). Since tabnas/yaml#107 the grammar names that
+  // member before its value's rule opens, and the document streams exactly
+  // as the walk; so do the same first member without the `?`, in a block or
+  // a flow sequence, and an explicit key whose value is a scalar.
+  it('a yaml key that is a mapping streams as the walk', () => {
+    const text = '- sun: yellow\n- ? earth: blue\n  : moon: white\n'
     const walked = materialized('yaml', text)
     assert.equal(walked.fail, undefined)
     assert.equal(
@@ -580,20 +586,52 @@ describe('incremental: documented shapes', () => {
       '[{"sun":"yellow"},{"earth: blue":{"moon":"white"}}]',
     )
     const inc = incremental('yaml', text)
-    assert.equal(code(inc.fail), 'STREAMABILITY_UNKNOWN', show(inc.fail))
-    assert.ok((inc.fail as Fail).message.includes("before announcing the member's key"))
-    assert.ok(wellFormed(inc.events))
-    assert.ok(!hasEnd(inc.events))
-    // An explicit key whose value is a scalar streams as the walk.
-    text = '? earth\n: moon\n'
-    const scalar = incremental('yaml', text)
-    assert.equal(scalar.flow, 'continue', show(scalar.fail))
-    assert.ok(sameEvents(withoutLexemes(scalar.events), materialized('yaml', text).events))
+    assert.equal(inc.flow, 'continue', show(inc.fail))
+    const k = (key: string): JsonEvent => ({ type: 'key', key })
+    const s = (value: string): JsonEvent => ({ type: 'string', value })
+    const os: JsonEvent = { type: 'object_start' }
+    const oe: JsonEvent = { type: 'object_end' }
+    assert.ok(
+      sameEvents(withoutLexemes(inc.events), [
+        { type: 'array_start' },
+        os,
+        k('sun'),
+        s('yellow'),
+        oe,
+        os,
+        k('earth: blue'),
+        os,
+        k('moon'),
+        s('white'),
+        oe,
+        oe,
+        { type: 'array_end' },
+        { type: 'end' },
+      ]),
+      "the member's key, then its value's map: " + inc.events.map(eventText).join(' '),
+    )
+    assert.ok(sameEvents(withoutLexemes(inc.events), walked.events))
+    for (const other of [
+      '- a:\n    b: 1\n',
+      '- a:\n  - x\n',
+      '[a: {b: 1}]\n',
+      '? earth\n: moon\n',
+    ]) {
+      const streamed = incremental('yaml', other)
+      assert.equal(streamed.flow, 'continue', `${JSON.stringify(other)}: ${show(streamed.fail)}`)
+      assert.ok(
+        sameEvents(withoutLexemes(streamed.events), materialized('yaml', other).events),
+        JSON.stringify(other),
+      )
+    }
   })
 
   // A grammar that builds a member's value in a rule of its own and names
   // the member only when the pair closes, never announcing the key: `[1]`
-  // parses to `{"k":[1]}`. Refused when the value opens.
+  // parses to `{"k":[1]}`. Refused when the value opens. No listed grammar
+  // builds a member so since tabnas/yaml#107, so this grammar is what keeps
+  // the net tested; toml, ini, xml and feed, which are not listed, trip it
+  // on their own samples.
   it('a container opened in a map before its key is refused', () => {
     const lateKey = () => {
       const tn: any = new Tabnas({ grammar$: false } as any)
