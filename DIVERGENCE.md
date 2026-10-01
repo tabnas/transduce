@@ -62,7 +62,22 @@ row cannot be written. Pinned on the Rust side by `cells_print_as_json`
 in `rs/src/table.rs` and `lexemes_survive` in `rs/src/datum.rs` for the
 numbers inside the range.
 
-## 3. Rust-only harness and tooling
+## 3. tabnas-csv reads a newline in a field differently under `record.separators`
+
+| input, CSV with `record: { separators: ';' }` | Rust | TypeScript |
+|---|---|---|
+| `a,b;1,x\ny;3,4\nz;5,6` | three records, the newlines field text | `INPUT_INVALID` (`unexpected`) at 2:3 |
+
+**A grammar's behaviour, not this crate's.** With the separator set, `\n`
+is no line character to either grammar; the Rust one reads it as field
+text and the TypeScript one refuses it. Each line source holds to the
+whole parse of its own runtime's grammar, and neither cuts a record at
+the newline, so this crate agrees with itself in both and the `csv`
+repository owns the difference. No row can carry it, since the `options`
+column has no separators. Pinned by `configured_record_separators_end_records`
+in `rs/src/source/lines.rs` and its twin in `ts/test/sources.test.ts`.
+
+## 4. Rust-only harness and tooling
 
 Not behaviour, listed so their absence elsewhere is not mistaken for a
 gap:

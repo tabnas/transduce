@@ -44,14 +44,21 @@
 //! An input that ends inside a quoted field fails with the grammar's
 //! `unterminated_string`, in the header as anywhere.
 //!
+//! The reader is taken a piece at a time, and a piece ends just past each
+//! of the grammar's line endings: one of its line characters (a lone `\r`
+//! or a configured separator as much as `\n`), a `\r\n`, or under
+//! `record.empty` the whole line token the lexer reads. So a record never
+//! waits for a `\n` to end, and a chunk can close after any record,
+//! however many of them one `\n`-terminated line holds.
+//!
 //! Memory is bounded by one chunk, and a record is never split, so a
-//! single record larger than `max_record_bytes` (a line, for JSON Lines;
-//! for the CSV header, everything up to its end) fails with that limit's
-//! name rather than growing a chunk without bound.
+//! single record larger than `max_record_bytes` (a record with its line
+//! ending; for the CSV header, everything up to its end) fails with that
+//! limit's name rather than growing a chunk without bound.
 //! The bound holds while the record is READ, not only once it is whole: a
-//! line is taken from the reader in pieces of at most its buffer and
-//! refused the moment it passes the limit, so an unterminated line of any
-//! length costs one buffer beyond the limit and no more. `max_depth`,
+//! record is taken from the reader a buffer at a time and refused the
+//! moment it passes the limit, so an unterminated record of any length
+//! costs one buffer beyond the limit and no more. `max_depth`,
 //! `max_key_bytes` and `max_scalar_bytes` apply to the events as
 //! everywhere. `max_record_bytes` counts the record's source bytes here,
 //! where a table transducer downstream would count its retained bytes; it
@@ -188,19 +195,16 @@ impl<R: BufRead> LinesSource<R> {
             LineFormat::Jsonl => {
                 let mut parser = tabnas_json::make();
                 install_guard(&mut parser, &abort);
-                let lexis = JsonLexis::of(&parser);
-                let mut lines = Lines::new(reader, limits.max_record_bytes);
+                let mut records = JsonRecords::new(reader, &parser, limits.max_record_bytes);
                 if guarded.event(JsonEvent::ArrayStart)? == Flow::Stop {
                     return Ok(Flow::Stop);
                 }
-                while let Some((number, line)) = lines.next_line()? {
-                    for record in lexis.records(line) {
-                        let value = parser
-                            .parse(record)
-                            .map_err(|e| line_failure(&e, number, &abort))?;
-                        if walk_value(&value, guarded)? == Flow::Stop {
-                            return Ok(Flow::Stop);
-                        }
+                while let Some((number, record)) = records.next_record()? {
+                    let value = parser
+                        .parse(record)
+                        .map_err(|e| line_failure(&e, number, &abort))?;
+                    if walk_value(&value, guarded)? == Flow::Stop {
+                        return Ok(Flow::Stop);
                     }
                 }
                 if guarded.event(JsonEvent::ArrayEnd)? == Flow::Stop {
@@ -214,10 +218,11 @@ impl<R: BufRead> LinesSource<R> {
                 let mut parser = tabnas_csv::make_with(options.clone());
                 install_guard(&mut parser, &abort);
                 let mut chunks = Chunks::new(
-                    Lines::new(reader, limits.max_record_bytes),
+                    reader,
                     &parser,
                     &options,
                     chunk_bytes,
+                    limits.max_record_bytes,
                 );
                 if guarded.event(JsonEvent::ArrayStart)? == Flow::Stop {
                     return Ok(Flow::Stop);
@@ -267,35 +272,32 @@ impl<R: BufRead> LinesSource<R> {
             abort.clone(),
             stop.clone(),
         );
-        let lexis = JsonLexis::of(&parser);
-        let mut lines = Lines::new(reader, limits.max_record_bytes);
+        let mut records = JsonRecords::new(reader, &parser, limits.max_record_bytes);
         let mut outcome = rule_events::lock(&shared).send(JsonEvent::ArrayStart);
         if outcome.as_ref().is_ok_and(|flow| *flow == Flow::Continue) {
-            outcome = 'lines: loop {
-                let (number, line) = match lines.next_line() {
+            outcome = loop {
+                let (number, record) = match records.next_record() {
                     Ok(Some(next)) => next,
                     Ok(None) => break Ok(Flow::Continue),
                     Err(fail) => break Err(fail),
                 };
-                for record in lexis.records(line) {
-                    let parsed = parser.parse(record);
-                    let mut adapter = rule_events::lock(&shared);
-                    match adapter.status() {
-                        Status::Running => {}
-                        Status::Stopped => break 'lines Ok(Flow::Stop),
-                        // Reported from the adapter's own status below.
-                        Status::Failed(_) => break 'lines Ok(Flow::Continue),
-                    }
-                    match parsed {
-                        Ok(_) if adapter.complete() => adapter.reset(),
-                        Ok(value) if adapter.idle() => match adapter.walk_whole(&value) {
-                            Ok(Flow::Continue) => adapter.reset(),
-                            Ok(Flow::Stop) => break 'lines Ok(Flow::Stop),
-                            Err(fail) => break 'lines Err(fail),
-                        },
-                        Ok(_) => break 'lines Err(rule_events::not_streamable()),
-                        Err(e) => break 'lines Err(line_failure(&e, number, &abort)),
-                    }
+                let parsed = parser.parse(record);
+                let mut adapter = rule_events::lock(&shared);
+                match adapter.status() {
+                    Status::Running => {}
+                    Status::Stopped => break Ok(Flow::Stop),
+                    // Reported from the adapter's own status below.
+                    Status::Failed(_) => break Ok(Flow::Continue),
+                }
+                match parsed {
+                    Ok(_) if adapter.complete() => adapter.reset(),
+                    Ok(value) if adapter.idle() => match adapter.walk_whole(&value) {
+                        Ok(Flow::Continue) => adapter.reset(),
+                        Ok(Flow::Stop) => break Ok(Flow::Stop),
+                        Err(fail) => break Err(fail),
+                    },
+                    Ok(_) => break Err(rule_events::not_streamable()),
+                    Err(e) => break Err(line_failure(&e, number, &abort)),
                 }
             };
         }
@@ -382,39 +384,96 @@ impl JsonLexis {
             escape: config.string.escape_char,
         }
     }
+}
 
-    /// The records in one line from the reader, its `\n` already gone,
-    /// less the blank ones.
-    fn records<'l>(&'l self, mut rest: &'l str) -> impl Iterator<Item = &'l str> + 'l {
-        std::iter::from_fn(move || loop {
-            if rest.is_empty() {
-                return None;
-            }
+/// JSON Lines records from the input's pieces. A record ends at a line
+/// character outside a string, as the grammar's lexer ends one: a line
+/// character inside a string is the string's, which the grammar refuses
+/// there, so the record goes on into the next piece and fails whole as the
+/// grammar fails it. A record of nothing but the grammar's spaces is blank
+/// and skipped.
+struct JsonRecords<R: BufRead> {
+    pieces: Pieces<R>,
+    lexis: JsonLexis,
+    record: String,
+    max_bytes: usize,
+}
+
+impl<R: BufRead> JsonRecords<R> {
+    fn new(reader: R, parser: &Tabnas, max_bytes: usize) -> JsonRecords<R> {
+        let lexis = JsonLexis::of(parser);
+        let config = parser.config();
+        let pieces = Pieces::new(
+            reader,
+            lexis.line.clone(),
+            config.line.row_chars.chars().collect(),
+            config.line.single,
+        );
+        JsonRecords {
+            pieces,
+            lexis,
+            record: String::new(),
+            max_bytes,
+        }
+    }
+
+    /// The next record that is not blank, without its line ending, and
+    /// the row it starts on; `None` at the end of the input. A record
+    /// with its line ending longer than `max_bytes` fails with that limit.
+    fn next_record(&mut self) -> Result<Option<(u64, &str)>, Fail> {
+        let (start, end) = loop {
+            self.record.clear();
+            let mut start = None;
             let mut quote = None;
             let mut escaped = false;
-            let (mut end, mut next) = (rest.len(), rest.len());
-            for (at, c) in rest.char_indices() {
-                if let Some(open) = quote {
-                    if escaped {
-                        escaped = false;
-                    } else if c == self.escape {
-                        escaped = true;
-                    } else if c == open {
-                        quote = None;
-                    }
-                } else if self.quotes.contains(&c) {
-                    quote = Some(c);
-                } else if self.line.contains(&c) {
-                    (end, next) = (at, at + c.len_utf8());
+            let mut end = None;
+            while end.is_none() {
+                let first = start.unwrap_or(self.pieces.row);
+                let max = self.max_bytes;
+                let over = || {
+                    Fail::limit(
+                        "max_record_bytes",
+                        max as u64,
+                        format!("line {first} is longer than {max} bytes"),
+                    )
+                    .at(first, 1)
+                };
+                let budget = max.saturating_sub(self.record.len());
+                let Some((row, piece)) = self.pieces.next_piece(budget, over)? else {
                     break;
+                };
+                start.get_or_insert(row);
+                let held = self.record.len();
+                for (at, c) in piece.char_indices() {
+                    if let Some(open) = quote {
+                        if escaped {
+                            escaped = false;
+                        } else if c == self.lexis.escape {
+                            escaped = true;
+                        } else if c == open {
+                            quote = None;
+                        }
+                    } else if self.lexis.quotes.contains(&c) {
+                        quote = Some(c);
+                    } else if self.lexis.line.contains(&c) {
+                        end = Some(held + at);
+                        break;
+                    }
                 }
+                self.record.push_str(piece);
             }
-            let record = &rest[..end];
-            rest = &rest[next..];
-            if !record.chars().all(|c| self.space.contains(&c)) {
-                return Some(record);
+            let Some(start) = start else {
+                return Ok(None);
+            };
+            let end = end.unwrap_or(self.record.len());
+            if !self.record[..end]
+                .chars()
+                .all(|c| self.lexis.space.contains(&c))
+            {
+                break (start, end);
             }
-        })
+        };
+        Ok(Some((start, &self.record[..end])))
     }
 }
 
@@ -427,83 +486,225 @@ fn lexed(on: bool, chars: &str) -> Vec<char> {
     }
 }
 
-/// Lines from a reader, numbered from 1, each including its newline, with
-/// one buffer reused throughout.
-struct Lines<R: BufRead> {
+/// The input from a reader in pieces, each ending just past a line
+/// ending: one of the grammar's line characters, a `\r\n`, or under
+/// `line.single` (`record.empty`) the whole line token the lexer reads,
+/// every line character up to a repeated one. A record therefore never
+/// ends inside a piece, only at its end. Each piece carries the row the
+/// engine gives its first character: one more than the row characters
+/// before it. One buffer is reused throughout.
+struct Pieces<R: BufRead> {
     reader: R,
     buf: Vec<u8>,
-    number: u64,
-    max_bytes: usize,
+    /// Bytes taken from the reader past the last piece, and the start of
+    /// the next: part of a character's UTF-8 form, read to see whether it
+    /// went on a line token, which it did not.
+    carry: Vec<u8>,
+    /// The line characters, their UTF-8 forms, and the bytes that end a
+    /// form.
+    line: Vec<char>,
+    forms: Vec<Vec<u8>>,
+    ends: [bool; 256],
+    single: bool,
+    rows: Vec<char>,
+    /// Where the next piece starts: its row, and its byte offset in it.
+    row: u64,
+    offset: u64,
 }
 
-impl<R: BufRead> Lines<R> {
-    fn new(reader: R, max_bytes: usize) -> Lines<R> {
-        Lines {
+impl<R: BufRead> Pieces<R> {
+    fn new(reader: R, line: Vec<char>, rows: Vec<char>, single: bool) -> Pieces<R> {
+        let forms: Vec<Vec<u8>> = line.iter().map(|c| c.to_string().into_bytes()).collect();
+        let mut ends = [false; 256];
+        for form in &forms {
+            ends[usize::from(form[form.len() - 1])] = true;
+        }
+        Pieces {
             reader,
             buf: Vec::new(),
-            number: 0,
-            max_bytes,
+            carry: Vec::new(),
+            line,
+            forms,
+            ends,
+            single,
+            rows,
+            row: 1,
+            offset: 0,
         }
     }
 
-    /// The next line without its line ending, or `None` at the end.
-    fn next_line(&mut self) -> Result<Option<(u64, &str)>, Fail> {
-        match self.next_raw()? {
-            None => Ok(None),
-            Some((number, raw)) => {
-                let end = raw.len()
-                    - usize::from(raw.ends_with(b"\n"))
-                    - usize::from(raw.ends_with(b"\r\n"));
-                let text = std::str::from_utf8(&raw[..end]).map_err(|e| {
-                    Fail::input(format!("line {number} is not UTF-8: {e}"))
-                        .at(number, e.valid_up_to() as u64 + 1)
-                })?;
-                Ok(Some((number, text)))
-            }
-        }
-    }
-
-    /// The next line with its line ending, as bytes, taken from the reader
-    /// in pieces so the buffer never holds more than `max_bytes + 1`: one
-    /// byte over is all the failure needs to know, and an unterminated
-    /// line is refused there instead of after it has been read whole.
-    fn next_raw(&mut self) -> Result<Option<(u64, &[u8])>, Fail> {
+    /// The next piece and the row it starts on, or `None` at the end of
+    /// the input. It is taken from the reader a buffer at a time and
+    /// refused with `over`'s failure the moment it passes `budget` bytes,
+    /// so a piece without an end costs one buffer past the budget and no
+    /// more.
+    fn next_piece(
+        &mut self,
+        budget: usize,
+        over: impl Fn() -> Fail,
+    ) -> Result<Option<(u64, &str)>, Fail> {
         self.buf.clear();
-        let number = self.number + 1;
+        self.buf.append(&mut self.carry);
+        let row = self.row;
+        let mut ended = None;
         loop {
             let available = match self.reader.fill_buf() {
                 Ok(available) => available,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(Fail::input(format!("reading line {number}: {e}"))),
+                Err(e) => return Err(Fail::input(format!("reading line {row}: {e}"))),
             };
             if available.is_empty() {
                 break;
             }
-            let newline = available.iter().position(|&b| b == b'\n');
-            let wanted = newline.map_or(available.len(), |i| i + 1);
-            let room = self.max_bytes.saturating_add(1) - self.buf.len();
+            // The first byte that ends a line character's form, checked
+            // against the whole form, which may begin in what was taken.
+            let mut wanted = available.len();
+            let mut from = 0;
+            while let Some(at) = available[from..]
+                .iter()
+                .position(|&b| self.ends[usize::from(b)])
+            {
+                let at = from + at;
+                if let Some(k) = form_ending(&self.forms, &self.buf, &available[..=at]) {
+                    ended = Some(k);
+                    wanted = at + 1;
+                    break;
+                }
+                from = at + 1;
+            }
+            let room = budget.saturating_add(1).saturating_sub(self.buf.len());
             let take = wanted.min(room);
             self.buf.extend_from_slice(&available[..take]);
             self.reader.consume(take);
-            if self.buf.len() > self.max_bytes {
-                return Err(Fail::limit(
-                    "max_record_bytes",
-                    self.max_bytes as u64,
-                    format!("line {number} is longer than {} bytes", self.max_bytes),
-                )
-                .at(number, 1));
+            if self.buf.len() > budget {
+                return Err(over());
             }
-            // Under the limit, the whole of what was wanted was taken, so a
-            // newline seen is a newline kept.
-            if newline.is_some() {
+            // Under the budget, all that was wanted was taken, so a line
+            // character seen is a line character kept.
+            if ended.is_some() {
                 break;
             }
+        }
+        if let Some(k) = ended {
+            self.follow_token(k, budget, &over)?;
         }
         if self.buf.is_empty() {
             return Ok(None);
         }
-        self.number = number;
-        Ok(Some((number, &self.buf)))
+        let piece = match std::str::from_utf8(&self.buf) {
+            Ok(piece) => piece,
+            Err(e) => {
+                let valid = std::str::from_utf8(&self.buf[..e.valid_up_to()]).unwrap_or_default();
+                let (row, offset) = advance(&self.rows, self.row, self.offset, valid);
+                return Err(Fail::input(format!(
+                    "line {row} is not UTF-8 from its byte {}",
+                    offset + 1
+                ))
+                .at(row, offset + 1));
+            }
+        };
+        (self.row, self.offset) = advance(&self.rows, self.row, self.offset, piece);
+        Ok(Some((row, piece)))
+    }
+
+    /// Takes the rest of the line token that the piece's last character,
+    /// the `k`th line character, began: under `line.single`, every line
+    /// character not yet in it, as the lexer reads one; otherwise a `\n`
+    /// after a `\r`, so that `\r\n` is one line ending.
+    fn follow_token(
+        &mut self,
+        k: usize,
+        budget: usize,
+        over: &impl Fn() -> Fail,
+    ) -> Result<(), Fail> {
+        let mut token = vec![self.line[k]];
+        loop {
+            let goes_on = |c: char| {
+                if self.single {
+                    !token.contains(&c)
+                } else {
+                    token == ['\r'] && c == '\n'
+                }
+            };
+            let wanted: Vec<usize> = (0..self.line.len())
+                .filter(|&i| goes_on(self.line[i]))
+                .collect();
+            if wanted.is_empty() {
+                return Ok(());
+            }
+            let available = loop {
+                match self.reader.fill_buf() {
+                    Ok(available) => break available,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(Fail::input(format!("reading line {}: {e}", self.row))),
+                }
+            };
+            // The next character, with any part of it already carried.
+            let mut next = None;
+            let mut partial = false;
+            for &i in &wanted {
+                let form = &self.forms[i];
+                let (head, tail) = form.split_at(self.carry.len().min(form.len()));
+                if self.carry.len() + available.len() >= form.len() {
+                    if self.carry == head && available.starts_with(tail) {
+                        next = Some(i);
+                        break;
+                    }
+                } else if self.carry == head && tail.starts_with(available) {
+                    partial = true;
+                }
+            }
+            match next {
+                Some(i) => {
+                    let rest = self.forms[i].len() - self.carry.len();
+                    if self.buf.len() + self.forms[i].len() > budget {
+                        return Err(over());
+                    }
+                    self.buf.append(&mut self.carry);
+                    self.buf.extend_from_slice(&available[..rest]);
+                    self.reader.consume(rest);
+                    token.push(self.line[i]);
+                }
+                // The buffer ends inside what may be a line character:
+                // carry it, and read on.
+                None if partial && !available.is_empty() => {
+                    let n = available.len();
+                    self.carry.extend_from_slice(available);
+                    self.reader.consume(n);
+                }
+                None => return Ok(()),
+            }
+        }
+    }
+}
+
+/// The line character whose UTF-8 form `head` followed by `tail` ends with,
+/// by its index.
+fn form_ending(forms: &[Vec<u8>], head: &[u8], tail: &[u8]) -> Option<usize> {
+    forms.iter().position(|form| {
+        if tail.len() >= form.len() {
+            tail.ends_with(form)
+        } else {
+            let need = form.len() - tail.len();
+            head.len() >= need && head.ends_with(&form[..need]) && form[need..] == *tail
+        }
+    })
+}
+
+/// The row, and the byte offset in it, just after `text`, which starts at
+/// `row` and `offset`: a row character starts the next row.
+fn advance(rows: &[char], row: u64, offset: u64, text: &str) -> (u64, u64) {
+    let mut count = 0;
+    let mut last = None;
+    for (at, c) in text.char_indices() {
+        if rows.contains(&c) {
+            count += 1;
+            last = Some(at + c.len_utf8());
+        }
+    }
+    match last {
+        Some(end) => (row + count, (text.len() - end) as u64),
+        None => (row, offset + text.len() as u64),
     }
 }
 
@@ -536,7 +737,7 @@ impl Chunk {
 /// Cuts a CSV reader into chunks of whole records, where the grammar ends
 /// them.
 struct Chunks<R: BufRead> {
-    lines: Lines<R>,
+    pieces: Pieces<R>,
     scanner: Scanner,
     /// Whether the first record names the fields, and whether a blank line
     /// is a record (`record.empty`): together, which record the header is.
@@ -553,15 +754,23 @@ struct Chunks<R: BufRead> {
 
 impl<R: BufRead> Chunks<R> {
     fn new(
-        lines: Lines<R>,
+        reader: R,
         parser: &Tabnas,
         options: &CsvOptions,
         chunk_bytes: usize,
+        max_record_bytes: usize,
     ) -> Chunks<R> {
-        let max_record_bytes = lines.max_bytes;
+        let lexis = Lexis::csv(parser, options);
+        let config = parser.config();
+        let pieces = Pieces::new(
+            reader,
+            lexis.line.clone(),
+            config.line.row_chars.chars().collect(),
+            config.line.single,
+        );
         Chunks {
-            lines,
-            scanner: Scanner::new(Lexis::csv(parser, options)),
+            pieces,
+            scanner: Scanner::new(lexis),
             want_header: options.header,
             record_empty: options.record.empty,
             header: None,
@@ -572,7 +781,7 @@ impl<R: BufRead> Chunks<R> {
         }
     }
 
-    /// The next chunk, or `None` once nothing is left to read. Every line
+    /// The next chunk, or `None` once nothing is left to read. Every piece
     /// read goes into a chunk, the first one's header included, so every
     /// byte of the input is parsed.
     fn next_chunk(&mut self) -> Result<Option<Chunk>, Fail> {
@@ -584,33 +793,40 @@ impl<R: BufRead> Chunks<R> {
             text.push_str(self.header.as_deref().unwrap_or_default());
         }
         self.started = true;
-        let prefix_lines = text.matches('\n').count() as u64;
+        let prefix_lines = advance(&self.pieces.rows, 0, 0, &text).0;
         // The chunk closes only past `body`: past the header in front of
         // it, or in the first chunk past the header record itself.
         let mut body = text.len();
         let mut first_line = None;
-        // The text a chunk cannot close inside, from its offset and line:
+        // The text a chunk cannot close inside, from its offset and row:
         // one record, or before the header everything up to its end.
         let mut open = (text.len(), None);
         // Where the last record ended, which is where the next one starts.
         let mut last_end = 0;
         loop {
-            let Some((number, raw)) = self.lines.next_raw()? else {
+            let first = open.1.unwrap_or(self.pieces.row);
+            let max = self.max_record_bytes;
+            let over = || {
+                Fail::limit(
+                    "max_record_bytes",
+                    max as u64,
+                    format!("the record starting at line {first} is longer than {max} bytes"),
+                )
+                .at(first, 1)
+            };
+            let budget = max.saturating_sub(text.len() - open.0);
+            let Some((number, piece)) = self.pieces.next_piece(budget, over)? else {
                 self.done = true;
                 break;
             };
             first_line.get_or_insert(number);
-            let start = *open.1.get_or_insert(number);
-            let line = std::str::from_utf8(raw).map_err(|e| {
-                Fail::input(format!("line {number} is not UTF-8: {e}"))
-                    .at(number, e.valid_up_to() as u64 + 1)
-            })?;
+            open.1.get_or_insert(number);
             let at = text.len();
-            text.push_str(line);
+            text.push_str(piece);
             let seeking = self.want_header && self.header.is_none();
             let record_empty = self.record_empty;
             let mut found = None;
-            let ended = self.scanner.line(line, |end, content| {
+            let ended = self.scanner.piece(piece, |end, content| {
                 if seeking && found.is_none() && (content || record_empty) {
                     found = Some((last_end, at + end));
                 }
@@ -620,19 +836,8 @@ impl<R: BufRead> Chunks<R> {
                 self.header = Some(text[from..to].to_string());
                 body = to;
             }
-            if text.len() - open.0 > self.max_record_bytes {
-                return Err(Fail::limit(
-                    "max_record_bytes",
-                    self.max_record_bytes as u64,
-                    format!(
-                        "the record starting at line {start} is longer than {} bytes",
-                        self.max_record_bytes
-                    ),
-                )
-                .at(start, 1));
-            }
-            // A chunk may close where a line ends a record, once the header
-            // is behind it.
+            // A chunk may close where a piece ends a record, once the
+            // header is behind it.
             if ended && !(self.want_header && self.header.is_none()) {
                 open = (text.len(), None);
                 if text.len() > body && text.len() >= self.chunk_bytes {
@@ -822,7 +1027,7 @@ enum At {
     Comment(usize),
 }
 
-/// Follows CSV text through the grammar's tokens, a line at a time, to
+/// Follows CSV text through the grammar's tokens, a piece at a time, to
 /// find where its records end.
 struct Scanner {
     lexis: Lexis,
@@ -841,12 +1046,13 @@ impl Scanner {
         }
     }
 
-    /// Scan one line from the reader, which ends in `\n` unless it is the
-    /// last, calling `end(offset, content)` where each record in it ends:
-    /// `offset` is just past the line token that ends it, and `content`
-    /// says whether it held anything the grammar does not ignore. Returns
-    /// whether the line ends a record, so that a chunk may close after it.
-    fn line(&mut self, line: &str, mut end: impl FnMut(usize, bool)) -> bool {
+    /// Scan one piece of the input, which ends just past a line ending
+    /// unless it is the last, calling `end(offset, content)` where each
+    /// record in it ends: `offset` is just past the line token that ends
+    /// it, and `content` says whether it held anything the grammar does not
+    /// ignore. Returns whether the piece ends a record, so that a chunk may
+    /// close after it.
+    fn piece(&mut self, line: &str, mut end: impl FnMut(usize, bool)) -> bool {
         let lexis = &self.lexis;
         let mut ended = false;
         let mut i = 0;
@@ -1505,5 +1711,131 @@ mod tests {
         // Inside a string it is the string's (refused there, as a control
         // character), not a record's end.
         jsonl_streams_as_whole("{\"a\":\"x\ry\"}\n").unwrap_err();
+    }
+
+    #[test]
+    fn records_one_line_holds_are_bounded_and_cut_one_by_one() {
+        // Many records and no `\n`: records ended by a lone `\r`, by a
+        // configured separator, and JSON Lines records ended by `\r`. Each
+        // record is under the limit and the line far over it, so the limit
+        // is the record's, and a chunk closes after a record rather than
+        // after the line.
+        let limits = Limits {
+            max_record_bytes: 8,
+            ..Limits::default()
+        };
+        let crs = format!("a,b\r{}", "1,2\r".repeat(200));
+        let semicolons = csv_options(|o| o.record.separators = Some(";".into()));
+        let separated = format!("a,b;{}", "1,x;".repeat(200));
+        for (text, options) in [(&crs, CsvOptions::default()), (&separated, semicolons)] {
+            let want = whole(tabnas_csv::make_with(options.clone()).parse(text));
+            assert_eq!(objects(want.as_ref().unwrap()), 200, "{text:?}");
+            let format = LineFormat::csv_with(options.header, options.clone());
+            for chunk_bytes in [0, 64, DEFAULT_CHUNK_BYTES] {
+                let mut rec: Vec<OwnedJsonEvent> = Vec::new();
+                let outcome = LinesSource::new(Cursor::new(text.as_str()), format.clone())
+                    .limits(limits.clone())
+                    .chunk_bytes(chunk_bytes)
+                    .run(&mut rec);
+                assert_eq!(reading(outcome, rec), want, "{text:?}, chunk {chunk_bytes}");
+            }
+            // A chunk holds at most its size and one record more.
+            let parser = tabnas_csv::make_with(options.clone());
+            let mut chunks = Chunks::new(
+                Cursor::new(text.as_bytes()),
+                &parser,
+                &options,
+                64,
+                limits.max_record_bytes,
+            );
+            let mut count = 0;
+            while let Some(chunk) = chunks.next_chunk().unwrap() {
+                assert!(chunk.text.len() <= 64 + 8, "{:?}", chunk.text);
+                count += 1;
+            }
+            assert!(count > 10, "{text:?}: {count} chunks");
+        }
+        let records = "{\"a\":1}\r".repeat(200);
+        let want = whole(tabnas_jsonl::parse(&records));
+        assert_eq!(objects(want.as_ref().unwrap()), 200);
+        let mut rec: Vec<OwnedJsonEvent> = Vec::new();
+        let outcome = LinesSource::new(Cursor::new(records.as_str()), LineFormat::Jsonl)
+            .limits(limits.clone())
+            .run(&mut rec);
+        assert_eq!(reading(outcome, rec), want);
+        let (outcome, rec) = LinesSource::new(Cursor::new(records.as_str()), LineFormat::Jsonl)
+            .limits(limits.clone())
+            .run_owned(Vec::<OwnedJsonEvent>::new());
+        assert_eq!(reading(outcome, without_lexemes(&rec)), want);
+        // A record over the limit still fails, at the row it starts on,
+        // which is counted as the engine counts rows: by `\n`, or by the
+        // configured separator.
+        let semicolons = csv_options(|o| o.record.separators = Some(";".into()));
+        for (text, options, row) in [
+            ("a,b\r1,2\r123456789,x\r", CsvOptions::default(), 1),
+            ("a,b;1,x;123456789,x;", semicolons, 3),
+        ] {
+            let err = LinesSource::new(
+                Cursor::new(text),
+                LineFormat::csv_with(options.header, options),
+            )
+            .limits(limits.clone())
+            .run(&mut Vec::<OwnedJsonEvent>::new())
+            .unwrap_err();
+            assert_eq!(err.limit.as_ref().unwrap().name, "max_record_bytes");
+            assert_eq!(err.row, Some(row), "{text:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_line_token_of_two_characters_is_never_cut() {
+        // Under `record.empty` a run of line characters ends at a repeated
+        // one, so `\r\n`, and `\n\r` as much, is one line token. A chunk
+        // cut between its two characters would start with a line token,
+        // a record of its own to a chunk without a header.
+        for header in [false, true] {
+            let options = csv_options(|o| {
+                o.record.empty = true;
+                o.header = header;
+            });
+            for text in [
+                "a,b\r\n1,2\r\n\r\n3,4\r\n",
+                "a,b\n\r1,2\n\r\n\r3,4",
+                "a\r\n\r\r\nb\r\n",
+            ] {
+                csv_streams_as_whole(text, &options).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn a_line_character_inside_a_jsonl_string_is_the_strings() {
+        // The grammar refuses a string at a raw line character, and the
+        // record is read whole up to the line character after it, so the
+        // failure is the grammar's: a `\n` in a string ends a record no
+        // more than a `\r` does.
+        for text in [
+            "{\"a\":\"x\ny\"}\n{\"b\":1}\n",
+            "[\"\\\n\"]\n",
+            "{\"a\":\"x\r\ny\"}\r\n",
+        ] {
+            jsonl_streams_as_whole(text).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn a_separator_of_several_bytes_is_found_across_reads() {
+        // A configured separator outside ASCII is matched on its whole
+        // UTF-8 form, read a byte at a time too; under `record.empty` a
+        // token of two of them is followed across reads, and a character
+        // that only starts like one is left to the next record.
+        let one = csv_options(|o| o.record.separators = Some("␞".into()));
+        csv_streams_as_whole("a,b␞1,é␞3,4␞", &one).unwrap();
+        let two = csv_options(|o| {
+            o.record.separators = Some("␞¶".into());
+            o.record.empty = true;
+            o.header = false;
+        });
+        csv_streams_as_whole("a,b␞¶£,é␞£,2¶␞3,4", &two).unwrap();
     }
 }

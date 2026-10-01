@@ -9,8 +9,8 @@ input	grammar	mode	options	expected	prefix
 # ERROR:<CODE>@<line>:<col>, the line being the file's; `prefix` pins
 # the events that left before a failure.
 #
-# JSON Lines: blank and whitespace-only lines are skipped, CRLF is a line
-# end, and each line's value is one element.
+# JSON Lines: blank lines and lines of nothing but spaces and tabs are
+# skipped, CRLF is a line end, and each line's value is one element.
 {"a":1.50,"b":[true,null]}\r\n\n  \n{"a":2,"b":"x"}\n[3]\n"s"	jsonl	lines		[["array_start"],["object_start"],["key","a"],["number",1.5,null],["key","b"],["array_start"],["bool",true],["null"],["array_end"],["object_end"],["object_start"],["key","a"],["number",2,null],["key","b"],["string","x"],["object_end"],["array_start"],["number",3,null],["array_end"],["string","s"],["array_end"],["end"]]
 {"a":1.50,"b":[true,null]}\r\n\n  \n{"a":2,"b":"x"}\n[3]\n"s"	jsonl	lines-incremental		[["array_start"],["object_start"],["key","a"],["number",1.5,"1.50"],["key","b"],["array_start"],["bool",true],["null"],["array_end"],["object_end"],["object_start"],["key","a"],["number",2,"2"],["key","b"],["string","x"],["object_end"],["array_start"],["number",3,"3"],["array_end"],["string","s"],["array_end"],["end"]]
 	jsonl	lines		[["array_start"],["array_end"],["end"]]
@@ -43,3 +43,45 @@ a,b\n1.50,true\nx,null\n	csv	lines		[["array_start"],["object_start"],["key","a"
 # A record that does not parse names its file line, whatever the chunk.
 a,b\n1,2\n3,"x\n4,5\n	csv	lines	{"chunk_bytes":0}	ERROR:INPUT_INVALID@3:3	[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"]]
 a,b\n1,2\n3,"x\n4,5\n	csv	lines		ERROR:INPUT_INVALID@3:3	[["array_start"]]
+# A record ends where the grammar ends one. A quote opens a quoted field
+# only where the lexer starts a token, so a quote inside a field is that
+# field's text (tabnas-csv's corpus file
+# papa-misplaced-quotes-in-data-twice-not-as-opening-quotes.csv).
+A,B",C\nD,E",F	csv	lines		[["array_start"],["object_start"],["key","A"],["string","D"],["key","B\""],["string","E\""],["key","C"],["string","F"],["object_end"],["array_end"],["end"]]
+A,B",C\nD,E",F	csv	lines-incremental	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","A"],["string","D"],["key","B\""],["string","E\""],["key","C"],["string","F"],["object_end"],["array_end"],["end"]]
+A,B",C\nD,E",F	csv	lines	{"header":false,"object":false}	[["array_start"],["array_start"],["string","A"],["string","B\""],["string","C"],["array_end"],["array_start"],["string","D"],["string","E\""],["string","F"],["array_end"],["array_end"],["end"]]
+A,B",C\nD,E",F\nG,H,I\nJ"K,L,"M\nN"\n	csv	lines	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","A"],["string","D"],["key","B\""],["string","E\""],["key","C"],["string","F"],["object_end"],["object_start"],["key","A"],["string","G"],["key","B\""],["string","H"],["key","C"],["string","I"],["object_end"],["object_start"],["key","A"],["string","J\"K"],["key","B\""],["string","L"],["key","C"],["string","M\nN"],["object_end"],["array_end"],["end"]]
+# A quote after a space opens one, and the engine's own strings span
+# lines where the grammar's do: a backtick, and an escaped newline in a
+# single-quoted one.
+a,b\nx, "p\nq"\n1,2\n	csv	lines	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","a"],["string","x"],["key","b"],["string"," \"p\nq\""],["object_end"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["array_end"],["end"]]
+a,b\n`x\ny`,z\n1,2\n	csv	lines	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","a"],["string","x\ny"],["key","b"],["string","z"],["object_end"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["array_end"],["end"]]
+a,b\n'x\\\ny',z\n1,2\n	csv	lines	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","a"],["string","x\ny"],["key","b"],["string","z"],["object_end"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["array_end"],["end"]]
+# An input that ends inside a quoted field fails, in the header as in a
+# record.
+a,"b	csv	lines		ERROR:INPUT_INVALID@1:3
+a,"b\nc,d\n	csv	lines-incremental	{"chunk_bytes":0}	ERROR:INPUT_INVALID@1:3
+a\n1\n"x	csv	lines	{"chunk_bytes":0}	ERROR:INPUT_INVALID@3:1
+# The header is the first record the grammar reads: a blank line before
+# it is none, and a line of spaces is one in strict mode and blank
+# otherwise.
+\n\na,b\n1,2\n3,4\n	csv	lines	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["object_start"],["key","a"],["string","3"],["key","b"],["string","4"],["object_end"],["array_end"],["end"]]
+\r\na,b\r\n1,2\r\n3,4\r\n	csv	lines-incremental	{"chunk_bytes":1}	[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["object_start"],["key","a"],["string","3"],["key","b"],["string","4"],["object_end"],["array_end"],["end"]]
+  \na,b\n1,2\n3,4\n	csv	lines	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","  "],["string","a"],["key","field~1"],["string","b"],["object_end"],["object_start"],["key","  "],["string","1"],["key","field~1"],["string","2"],["object_end"],["object_start"],["key","  "],["string","3"],["key","field~1"],["string","4"],["object_end"],["array_end"],["end"]]
+  \na,b\n1,2\n3,4\n	csv	lines	{"strict":false,"chunk_bytes":0}	[["array_start"],["object_start"],["key","a"],["number",1,null],["key","b"],["number",2,null],["object_end"],["object_start"],["key","a"],["number",3,null],["key","b"],["number",4,null],["object_end"],["array_end"],["end"]]
+# A lone CR ends a record as a newline does.
+a,b\r1,2\r3,4\r	csv	lines	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["object_start"],["key","a"],["string","3"],["key","b"],["string","4"],["object_end"],["array_end"],["end"]]
+a,b\r1,2\n3,4\n5,6\n	csv	lines-incremental	{"chunk_bytes":0}	[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["object_start"],["key","a"],["string","3"],["key","b"],["string","4"],["object_end"],["object_start"],["key","a"],["string","5"],["key","b"],["string","6"],["object_end"],["array_end"],["end"]]
+# JSON Lines: a line of anything but spaces and tabs is a record, so a
+# form feed or a no-break space is one the grammar refuses.
+{"a":1}\n\n{"b":2}\n	jsonl	lines		ERROR:INPUT_INVALID@2:1
+{"a":1}\n \n{"b":2}\n	jsonl	lines-incremental		ERROR:INPUT_INVALID@2:1
+{"a":1}\n \t\n\r\n{"b":2}\n   	jsonl	lines		[["array_start"],["object_start"],["key","a"],["number",1,null],["object_end"],["object_start"],["key","b"],["number",2,null],["object_end"],["array_end"],["end"]]
+# A lone CR ends a record, so a value it cuts is incomplete. A line
+# character inside a string is the string's, refused there.
+{"a":1}\r{"b":2}\r\r \r{"c":3}\n	jsonl	lines		[["array_start"],["object_start"],["key","a"],["number",1,null],["object_end"],["object_start"],["key","b"],["number",2,null],["object_end"],["object_start"],["key","c"],["number",3,null],["object_end"],["array_end"],["end"]]
+{"a":1}\r{"b":2}\r\r \r{"c":3}\n	jsonl	lines-incremental		[["array_start"],["object_start"],["key","a"],["number",1,"1"],["object_end"],["object_start"],["key","b"],["number",2,"2"],["object_end"],["object_start"],["key","c"],["number",3,"3"],["object_end"],["array_end"],["end"]]
+{"a":\r1}\n	jsonl	lines		ERROR:INPUT_INVALID@1:6
+{"a":1}\r{"b": }\n	jsonl	lines-incremental		ERROR:INPUT_INVALID@1:7
+{"a":"x\ny"}\n{"b":1}\n	jsonl	lines		ERROR:INPUT_INVALID@1:8
+{"a":"x\ry"}\n	jsonl	lines-incremental		ERROR:INPUT_INVALID@1:8

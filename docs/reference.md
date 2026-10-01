@@ -45,7 +45,7 @@ source metrics (`events`, `keys`, `scalars`).
 |---|---|---|---|
 | `ValueSource(&Value)` | a parsed engine value | walk | the value (the caller's) |
 | `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists, named with `.grammar("json")`; no name or an unlisted one is `STREAMABILITY_UNKNOWN` before the parse (`.unverified()` lifts the gate, for the differential suite) | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
-| `LinesSource::new(BufRead, LineFormat)` | JSON Lines or CSV | one record per line (`Jsonl`) or chunks of whole records (`Csv { header, options }`), each parsed with one reused grammar | one line, or one chunk (`DEFAULT_CHUNK_BYTES`, 256 KiB, never a fraction of a record) |
+| `LinesSource::new(BufRead, LineFormat)` | JSON Lines or CSV | one record per line (`Jsonl`) or chunks of whole records (`Csv { header, options }`), each parsed with one reused grammar; a record ends where the grammar ends one, at any of its line characters outside a token | one record, or one chunk (`DEFAULT_CHUNK_BYTES`, 256 KiB, never a fraction of a record) |
 
 `Source::run(self, &mut dyn Sink)` drives a borrowed sink and is always
 the walking path (`ParserSource` materializes whatever its mode, and the
@@ -253,9 +253,11 @@ or `"none"`).
 `max_record_bytes`, `max_capture_bytes`, `max_output_bytes`. Sizes are
 payload bytes plus `NODE_BYTES` per node. The line sources also apply
 `max_record_bytes` to a record's source bytes as the record is read, so a
-record never grows a chunk without bound: a line is taken from the reader
-in pieces of at most its buffer and refused the moment it passes the
-limit, whatever its length.
+record never grows a chunk without bound: the input is read in pieces
+that end at the grammar's line endings, a lone `\r` or a configured
+separator as much as `\n`, so the limit is each record's however many
+records one `\n`-terminated line holds, and a record is taken a buffer at
+a time and refused the moment it passes the limit, whatever its length.
 
 ## Metrics
 
@@ -349,9 +351,9 @@ returned (`"continue"` or `"stop"`).
 | `events.tsv` | 84 | `JsonEvents/1` from every mode and the verified grammars, lexemes, string decoding, repeated members, the refusals and their prefixes, the gate on unverified grammars, pruning |
 | `route.tsv` | 38 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
 | `table.tsv` | 30 | `TableFromJson`: metadata, static and inferred schemas, `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
-| `lines.tsv` | 25 | `LinesSource`: JSON Lines and CSV on both paths, chunk sizes, headers, grammar options, a failure's file line |
+| `lines.tsv` | 50 | `LinesSource`: JSON Lines and CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR, blank JSON Lines records, a line character inside a string) |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
-| `limits.tsv` | 61 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries |
+| `limits.tsv` | 66 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
 
 ### What a port must reproduce exactly
 
@@ -360,9 +362,11 @@ returned (`"continue"` or `"stop"`).
   to `max_scalar_bytes` and 8 to a retained value when there is none; a
   retained node adds `NODE_BYTES` (16). A port on UTF-16 strings that
   counts code units fails the multibyte rows of `limits.tsv`.
-- **A line source's record counts its line ending**, `\n` or `\r\n`, so
-  the same record passes as a last line without one and fails with one at
-  the same limit (`limits.tsv` pins both).
+- **A line source's record counts its line ending**: `\n`, `\r\n`, a lone
+  `\r` or a configured separator, and under `record.empty` the whole line
+  token the lexer reads. So the same record passes as a last line without
+  one and fails with one at the same limit (`limits.tsv` pins both), and a
+  line holding many records is held to the limit one record at a time.
 - **The lexeme rule**: the incremental source attaches a number's token
   text only when it is an RFC 8259 number that reads as the node's value
   (`1e2` keeps `"1e2"`; `0x1F`, `+1`, `.5`, `5.` and YAML's `012` have
