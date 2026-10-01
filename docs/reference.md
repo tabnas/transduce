@@ -17,6 +17,23 @@ the source stops the parse) or fails with a `Fail`. `Vec<OwnedJsonEvent>`
 records, `CountSink` counts, `FnSink` wraps a closure, `replay` feeds a
 recording back.
 
+`TreeContract` wraps a sink that takes the events as one tree (a render
+that writes a document from them) and holds the stream to a tree's
+contract: one root value, and in each object a key and then its value,
+each key once. A value walked from a parsed tree keeps it by
+construction; a parse streamed as it proceeds may not, since the
+incremental source streams a member its grammar reads twice (JSON's
+`{"a":1,"a":2}`) and refuses most shapes it cannot follow but not every
+one a grammar can produce. A repeated key in one object fails with
+`DUPLICATE_MEMBER`; a value where a key is due, a key outside an object,
+a close with nothing open, a second root value or `End` inside an open
+container fails with `STREAMABILITY_UNKNOWN`; both name the path of the
+object concerned, and the event is not passed on. What follows is the
+host's: aless falls back once to the parsed value when nothing has been
+written. Each open object keeps the keys it has had, dropped when it
+closes, so the cost is a lookup per key and the keys of the objects open
+at once.
+
 ## Sources
 
 Every source emits through `Guarded`, which enforces `max_depth`,
@@ -90,9 +107,17 @@ container that wraps a value already streamed as the root (a YAML stream
 of several documents, `a: 1` then `---` then `b: 2`; a jsonic top-level
 implicit list whose first element is a container, `{a:1}` on one line and
 `{b:2}` on the next), and a map the grammar rewrote after it was streamed
-(a YAML `<<` merge key, resolved when the mapping closes), both
-`STREAMABILITY_UNKNOWN` after the first value's events; and a repeated
-member whose containers the grammar merged, `DUPLICATE_MEMBER`, below. A
+(a YAML `<<` merge key, resolved when the mapping closes), and a
+container the grammar opens inside a map before the member's key (a
+YAML `?` key whose value is a mapping: the grammar stringifies the key
+and stores the member when the pair closes, after the value's mapping
+was built in a rule of its own, so its events would leave before the
+key), all `STREAMABILITY_UNKNOWN` after the first value's events; and a
+repeated member whose containers the grammar merged, `DUPLICATE_MEMBER`,
+below. The container-before-key refusal is a net, not a licence: the
+suite counts a fixture refused that way against the grammar, since a
+grammar that builds its members so does it for every document, and a
+listed grammar does it on no fixture. A
 YAML stream is refused whatever its documents' shapes: when a later
 document opens a container, at that container; when none does (`a: 1`
 then `---` then `2`, or a trailing `---` with nothing after it), when the
@@ -126,8 +151,9 @@ until the engine's next event, which a pass that failed never sends.
 walked at its insertion, so its events are the walk's. The other
 imperative grammars (`toml`, `ini`, `csv`, `xml`, `feed`) build their
 values in ways the rule events do not show (`csv` streams its header and
-raw rows as extra elements, a well-formed stream with the wrong shape) and
-are walked whole. `ParserSource` refuses to run an unlisted grammar
+raw rows as extra elements, a well-formed stream with the wrong shape;
+the others open a section's or an element's container before its key,
+which the adapter refuses on their own samples) and are walked whole. `ParserSource` refuses to run an unlisted grammar
 incrementally: the grammar's name cannot be read from the `Tabnas` (the
 json and jsonl parsers register no plugin), so `SourceMode::Incremental`
 needs `ParserSource::grammar(name)` and fails with `STREAMABILITY_UNKNOWN`

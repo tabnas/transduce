@@ -304,16 +304,30 @@ mod tests {
         assert!(events.is_empty(), "refused before the parse");
 
         // Materialize needs no name, and the unverified switch lifts the
-        // gate for the suite: csv then streams the wrong shape and says Ok.
+        // gate for the suite: csv then runs, and the adapter refuses it as
+        // it meets how the grammar builds its records (streamed, then not
+        // stored as the stream saw them), after a prefix and before End,
+        // where the gate had refused it before the parse.
         let (r, walked) = ParserSource::new(tabnas_csv::make(), "a,b\n1,2\n")
             .run_owned(Vec::<OwnedJsonEvent>::new());
         r.unwrap();
+        assert_eq!(walked.last(), Some(&OwnedJsonEvent::End));
         let (r, streamed) = ParserSource::new(tabnas_csv::make(), "a,b\n1,2\n")
             .unverified()
             .mode(incremental_mode())
             .run_owned(Vec::<OwnedJsonEvent>::new());
-        r.unwrap();
-        assert_ne!(streamed, walked);
+        let err = r.unwrap_err();
+        assert_eq!(err.code, Code::StreamabilityUnknown);
+        assert!(
+            err.message
+                .contains("the incremental source cannot follow a grammar that builds"),
+            "{err}"
+        );
+        assert!(
+            !streamed.is_empty(),
+            "refused during the parse, not before it"
+        );
+        assert!(!streamed.contains(&OwnedJsonEvent::End));
     }
 
     fn without_lexemes(events: &[OwnedJsonEvent]) -> Vec<OwnedJsonEvent> {
