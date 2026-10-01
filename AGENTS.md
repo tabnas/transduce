@@ -158,10 +158,13 @@ is exactly the grammar's.
 | `rs/src/source/capability.rs` | the verified list `capability::incremental` answers from |
 | `rs/tests/incremental_test.rs` | the differential suite that keeps that list honest, both ways |
 | `rs/tests/retention_test.rs` | ten times the rows leave the retained high-water flat |
+| `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
 | `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML), shared with the benches |
 | `rs/benches/` | criterion throughput benches: parse only, incremental events, walk, router and table |
 | `docs/` | `architecture.md` (the design), `reference.md`, `translation.md` (any format to any other: the parts a format ships and the host composes) |
+| `test/spec/*.tsv` | the shared fixtures every runtime runs: events, routes, tables, the line sources, scan-emit, limits (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
+| `DIVERGENCE.md` | what a runtime may do differently, and what the fixtures leave out on purpose |
 | `ci/rust/run.sh` | the gate `.github/workflows/rust.yml` runs |
 
 ## Verify your work
@@ -178,6 +181,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 `ci/rust/run.sh` runs exactly that, with the lock discipline the fleet's
 plugin gates use, and needs the sibling checkouts its header lists.
+
+The shared fixtures in `test/spec/` are the contract the TypeScript and
+Go ports will run too. A behaviour a row can express gets a row, and a
+row's expected value is checked against what the behaviour should be,
+not copied from what the code does: a fixture that pins a bug pins it
+for every runtime.
+
 `cargo bench` measures; a change to a hot path reports before and after
 numbers in its pull request.
 

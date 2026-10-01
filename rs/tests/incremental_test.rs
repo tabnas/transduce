@@ -490,14 +490,23 @@ grammar_tests! {
 
 /// The grammar crates `Cargo.toml` takes by path (`tabnas-<name>`), read
 /// from the manifest at test time so a grammar added there without a
-/// `GRAMMARS` row fails here.
+/// `GRAMMARS` row fails here. A grammar is a crate that depends on the
+/// engine, which its own manifest says: `tabnas-support`, the fixture
+/// runner, is a path crate too and is not one.
 fn manifest_grammars() -> Vec<String> {
     let mut names: Vec<String> = include_str!("../Cargo.toml")
         .lines()
         .filter_map(|line| {
             let (name, rest) = line.split_once('=')?;
             let name = name.trim().strip_prefix("tabnas-")?;
-            rest.contains("path").then(|| name.to_string())
+            let (_, path) = rest.split_once("path = \"")?;
+            let (path, _) = path.split_once('"')?;
+            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join(path)
+                .join("Cargo.toml");
+            let text = fs::read_to_string(&manifest)
+                .unwrap_or_else(|e| panic!("{}: {e}", manifest.display()));
+            text.contains("tabnas-parser").then(|| name.to_string())
         })
         .collect();
     names.sort();

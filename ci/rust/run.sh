@@ -15,8 +15,9 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 # Every sibling any crate in the graph takes by path: the ones this crate
 # names, and the ones those name in turn (jsonc and json5 take jsonic, ini
 # takes hoover, feed takes xml, and every grammar takes parser and most
-# take json or jsonic).
-SIBLINGS="parser json jsonl jsonic jsonc json5 yaml toml ini hoover csv xml zon markdown feed"
+# take json or jsonic), and support, whose fixture runner the shared
+# fixtures in test/spec run through.
+SIBLINGS="parser json jsonl jsonic jsonc json5 yaml toml ini hoover csv xml zon markdown feed support"
 
 for SIBLING in $SIBLINGS; do
   if [[ ! -f "$ROOT/../$SIBLING/rs/Cargo.toml" ]]; then

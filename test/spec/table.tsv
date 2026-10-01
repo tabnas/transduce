@@ -1,0 +1,58 @@
+input	grammar	mode	binding	duplicates	expected	path
+# Tables: the row's source through TableFromJson over its `binding`,
+# {"schema": ..., "rows": selector}. The schema is "infer",
+# {"metadata": selector} (each descriptor read by column_from_meta: a
+# string title and a path of segments) or {"static": [{label, source,
+# missing}]}, source a path of segments (a string is a key, an integer an
+# index) and missing one of missing (the default), null or error. The
+# expected value is TableRows/1 in order: ["schema", [label...]],
+# ["row", [cell...]] and ["end"]; a cell is null, a boolean, a string,
+# ["number", value, lexeme or null] or ["missing"].
+#
+# The spec's worked example: the schema from the metadata, rows projected
+# into schema order whatever their member order, lexemes kept.
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["Identifier","Full name","Balance"]],["row",[["number",123,"123"],"Alice",["number",50.25,"50.25"]]],["row",[["number",456,"456"],"Bob",["number",72,"72"]]],["end"]]
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["Identifier","Full name","Balance"]],["row",[["number",123,null],"Alice",["number",50.25,null]]],["row",[["number",456,null],"Bob",["number",72,null]]],["end"]]
+# A row that begins before the metadata completed is refused at its start;
+# metadata selected twice is the same violation.
+{"response":{"payload":{"deep":{"records":[{"id":1}]}},"metadata":{"fields":[{"title":"Id","path":["id"]}]}}}	json	incremental	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_ORDER_VIOLATION	.response.payload.deep.records[0]
+[{"response":{"metadata":{"fields":[]}}},{"response":{"metadata":{"fields":[]}}}]	json	incremental	{"schema":{"metadata":[{"each":"index"},"response","metadata","fields"]},"rows":["rows",{"each":"index"}]}		ERROR:INPUT_ORDER_VIOLATION	[1].response.metadata.fields
+# Metadata that never arrives, a descriptor without a title, a
+# descriptor list that is not an array, a negative index segment.
+{"other":1}	json	incremental	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields
+{"response":{"metadata":{"fields":[{"title":"Id","path":["id"]},{"path":["x"]}]},"payload":{"deep":{"records":[]}}}}	json	incremental	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields[1]
+{"response":{"metadata":{"fields":{"title":"Id"}},"payload":{"deep":{"records":[]}}}}	json	incremental	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields
+{"response":{"metadata":{"fields":[{"title":"x","path":["a",-1]}]},"payload":{"deep":{"records":[]}}}}	json	incremental	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields[0]
+{"response":{"metadata":{"fields":[{"title":"First","path":["tags",0]},{"title":"Second","path":["tags",1]}]},"payload":{"deep":{"records":[{"tags":["a","b"]},{"tags":["c"]}]}}}}	json	incremental	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["First","Second"]],["row",["a","b"]],["row",["c",["missing"]]],["end"]]
+# Metadata and rows that may overlap are refused when the table is built.
+{"a":[]}	json	incremental	{"schema":{"metadata":["a"]},"rows":["a",{"each":"index"}]}		ERROR:CAPTURE_OVERLAP_UNSUPPORTED
+# Missing and an explicit null are told apart by the column's policy.
+{"rows":[{"a":null},{}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["A"]],["row",[null]],["row",[["missing"]]],["end"]]
+{"rows":[{"a":null},{}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"],"missing":"null"}]},"rows":["rows",{"each":"index"}]}		[["schema",["A"]],["row",[null]],["row",[null]],["end"]]
+{"rows":[{"a":null},{}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"],"missing":"error"}]},"rows":["rows",{"each":"index"}]}		ERROR:MISSING_VALUE	.rows[1].a
+# Zero rows is an empty table with its schema.
+{"response":{"metadata":{"fields":[{"title":"Id","path":["id"]}]},"payload":{"deep":{"records":[]}}}}	json	incremental	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["Id"]],["end"]]
+[]	json	incremental	{"schema":{"static":[{"label":"x","source":["x"]}]},"rows":[{"each":"index"}]}		[["schema",["x"]],["end"]]
+[]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",[]],["end"]]
+{}	json	incremental	{"schema":"infer","rows":["rows",{"each":"index"}]}		[["schema",[]],["end"]]
+# Infer: the first row's member names in its order; a later row's extra
+# members are dropped and its absent ones are missing.
+[{"b":1,"a":"x"},{"a":"y","c":true},{"b":3}]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["b","a"]],["row",[["number",1,"1"],"x"]],["row",[["missing"],"y"]],["row",[["number",3,"3"],["missing"]]],["end"]]
+[1,2]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		ERROR:INPUT_INVALID	[0]
+# A static schema projects nested paths and indexes, in schema order.
+{"rows":[{"p":{"n":"a"},"id":1,"tags":["t0","t1"]},{"tags":["u0"],"id":2,"p":{"n":"b"}}]}	json	incremental	{"schema":{"static":[{"label":"Id","source":["id"]},{"label":"Name","source":["p","n"]},{"label":"First tag","source":["tags",0]},{"label":"Second tag","source":["tags",1]}]},"rows":["rows",{"each":"index"}]}		[["schema",["Id","Name","First tag","Second tag"]],["row",[["number",1,"1"],"a","t0","t1"]],["row",[["number",2,"2"],"b","u0",["missing"]]],["end"]]
+# A container cell is its compact JSON text, lexemes kept; a column whose
+# path is another's prefix still gets its value; the empty path is the
+# row itself.
+{"rows":[{"p":{"n":"a","v":1.50},"id":1},{"p":[true,null],"id":2}]}	json	incremental	{"schema":{"static":[{"label":"P","source":["p"]},{"label":"N","source":["p","n"]},{"label":"Id","source":["id"]},{"label":"Id again","source":["id"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["P","N","Id","Id again"]],["row",["{\"n\":\"a\",\"v\":1.50}","a",["number",1,"1"],["number",1,"1"]]],["row",["[true,null]",["missing"],["number",2,"2"],["number",2,"2"]]],["end"]]
+{"rows":[{"p":{"n":"a","v":1.50},"id":1},{"p":[true,null],"id":2}]}	json	materialize	{"schema":{"static":[{"label":"P","source":["p"]},{"label":"N","source":["p","n"]},{"label":"Id","source":["id"]},{"label":"Id again","source":["id"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["P","N","Id","Id again"]],["row",["{\"n\":\"a\",\"v\":1.5}","a",["number",1,null],["number",1,null]]],["row",["[true,null]",["missing"],["number",2,null],["number",2,null]]],["end"]]
+[1,"s",true,null,{"a":"q\"\\\\"}]	json	incremental	{"schema":{"static":[{"label":"Row","source":[]}]},"rows":[{"each":"index"}]}		[["schema",["Row"]],["row",[["number",1,"1"]]],["row",["s"]],["row",[true]],["row",[null]],["row",["{\"a\":\"q\\\"\\\\\"}"]],["end"]]
+# Repeated members inside a row follow the duplicates policy.
+{"rows":[{"a":1,"a":2}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	reject	ERROR:DUPLICATE_MEMBER	.rows[0]
+{"rows":[{"a":1,"a":2}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	last_wins	[["schema",["A"]],["row",[["number",2,"2"]]],["end"]]
+{"rows":[{"a":1,"a":2}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	first_wins	[["schema",["A"]],["row",[["number",1,"1"]]],["end"]]
+# Any source: the line sources, and yaml.
+{"a":1,"b":"x"}\n{"b":"y","a":2.50}\n	jsonl	lines-incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a","b"]],["row",[["number",1,"1"],"x"]],["row",[["number",2.5,"2.50"],"y"]],["end"]]
+{"a":1,"b":"x"}\n{"b":"y","a":2.50}\n	jsonl	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a","b"]],["row",[["number",1,null],"x"]],["row",[["number",2.5,null],"y"]],["end"]]
+id,name\n1,"a, b"\n2,c\n	csv	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["id","name"]],["row",["1","a, b"]],["row",["2","c"]],["end"]]
+rows:\n  - id: 1\n    n: x\n  - n: y\n	yaml	incremental	{"schema":{"static":[{"label":"Id","source":["id"]},{"label":"N","source":["n"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["Id","N"]],["row",[["number",1,"1"],"x"]],["row",[["missing"],"y"]],["end"]]

@@ -1,0 +1,118 @@
+input	grammar	mode	prune	expected	prefix
+# JsonEvents/1 from each source mode. A row is a text, the grammar that
+# reads it and the mode (materialize, incremental or value); the expected
+# value is the event stream in the encoding docs/reference.md gives
+# ("Shared fixtures"), or ERROR:<CODE>[@row:col].
+#
+# The walk (materialize, value) carries no number lexemes; the incremental
+# source carries the token's text when it is an RFC 8259 number that reads
+# as the node's value, and null otherwise.
+{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	materialize		[["object_start"],["key","a"],["array_start"],["number",1,null],["number",2.5,null],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,null],["key","f"],["bool",true],["object_end"],["end"]]
+{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	incremental		[["object_start"],["key","a"],["array_start"],["number",1,"1"],["number",2.5,"2.50"],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,"1e21"],["key","f"],["bool",true],["object_end"],["end"]]
+{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	value		[["object_start"],["key","a"],["array_start"],["number",1,null],["number",2.5,null],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,null],["key","f"],["bool",true],["object_end"],["end"]]
+# Root scalars: one event, then end.
+ 42 	json	incremental		[["number",42,"42"],["end"]]
+ 42 	json	materialize		[["number",42,null],["end"]]
+"s"	json	incremental		[["string","s"],["end"]]
+null	json	incremental		[["null"],["end"]]
+true	json	incremental		[["bool",true],["end"]]
+false	json	materialize		[["bool",false],["end"]]
+-0	json	incremental		[["number",-0,"-0"],["end"]]
+-0	json	materialize		[["number",-0,null],["end"]]
+1E+2	json	incremental		[["number",100,"1E+2"],["end"]]
+-1.5e-3	json	incremental		[["number",-0.0015,"-1.5e-3"],["end"]]
+0.1	json	incremental		[["number",0.1,"0.1"],["end"]]
+12345678901234567890	json	incremental		[["number",12345678901234567000,"12345678901234567890"],["end"]]
+12345678901234567890	json	materialize		[["number",12345678901234567000,null],["end"]]
+# Empty and nested containers.
+[]	json	incremental		[["array_start"],["array_end"],["end"]]
+{}	json	incremental		[["object_start"],["object_end"],["end"]]
+[[[]]]	json	incremental		[["array_start"],["array_start"],["array_start"],["array_end"],["array_end"],["array_end"],["end"]]
+{"a":{"b":{"c":[1,[2]]}},"d":[{},[]]}	json	incremental		[["object_start"],["key","a"],["object_start"],["key","b"],["object_start"],["key","c"],["array_start"],["number",1,"1"],["array_start"],["number",2,"2"],["array_end"],["array_end"],["object_end"],["object_end"],["key","d"],["array_start"],["object_start"],["object_end"],["array_start"],["array_end"],["array_end"],["object_end"],["end"]]
+{"a":{"b":{"c":[1,[2]]}},"d":[{},[]]}	json	materialize		[["object_start"],["key","a"],["object_start"],["key","b"],["object_start"],["key","c"],["array_start"],["number",1,null],["array_start"],["number",2,null],["array_end"],["array_end"],["object_end"],["object_end"],["key","d"],["array_start"],["object_start"],["object_end"],["array_start"],["array_end"],["array_end"],["object_end"],["end"]]
+# Strings and keys arrive decoded: escapes, a surrogate pair, a control
+# character, multibyte UTF-8.
+["a\"b\\\\c\/d\\n\\t\\r\\b\\fé😀\u0001"]	json	incremental		[["array_start"],["string","a\"b\\c/d\n\t\r\b\fé😀\u0001"],["array_end"],["end"]]
+["a\"b\\\\c\/d\\n\\t\\r\\b\\fé😀\u0001"]	json	materialize		[["array_start"],["string","a\"b\\c/d\n\t\r\b\fé😀\u0001"],["array_end"],["end"]]
+{"k\\ty":1,"é":"日本","":""}	json	incremental		[["object_start"],["key","k\ty"],["number",1,"1"],["key","é"],["string","日本"],["key",""],["string",""],["object_end"],["end"]]
+{"k\\ty":1,"é":"日本","":""}	json	value		[["object_start"],["key","k\ty"],["number",1,null],["key","é"],["string","日本"],["key",""],["string",""],["object_end"],["end"]]
+# A repeated member: the incremental source streams every occurrence, the
+# walk only the engine's survivor.
+{"a":1,"a":2,"b":3}	json	incremental		[["object_start"],["key","a"],["number",1,"1"],["key","a"],["number",2,"2"],["key","b"],["number",3,"3"],["object_end"],["end"]]
+{"a":1,"a":2,"b":3}	json	materialize		[["object_start"],["key","a"],["number",2,null],["key","b"],["number",3,null],["object_end"],["end"]]
+{"a":{"x":1},"a":[2]}	json	incremental		[["object_start"],["key","a"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","a"],["array_start"],["number",2,"2"],["array_end"],["object_end"],["end"]]
+{"a":{"x":1},"a":[2]}	json	materialize		[["object_start"],["key","a"],["array_start"],["number",2,null],["array_end"],["object_end"],["end"]]
+# A parse error is INPUT_INVALID at the engine's position, in every mode.
+{"a": 1,\n "b": }	json	materialize		ERROR:INPUT_INVALID@2:7	[]
+{"a": 1,\n "b": }	json	incremental		ERROR:INPUT_INVALID@2:7	[["object_start"],["key","a"],["number",1,"1"],["key","b"]]
+{"a": 1,\n "b": }	json	value		ERROR:INPUT_INVALID@2:7	[]
+[1,2	json	incremental		ERROR:INPUT_INVALID@1:5	[["array_start"],["number",1,"1"]]
+# Pruning empties the engine's arrays, never the events.
+{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	incremental	"all"	[["object_start"],["key","a"],["array_start"],["number",1,"1"],["number",2.5,"2.50"],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,"1e21"],["key","f"],["bool",true],["object_end"],["end"]]
+{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	incremental	["a",{"each":"index"}]	[["object_start"],["key","a"],["array_start"],["number",1,"1"],["number",2.5,"2.50"],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,"1e21"],["key","f"],["bool",true],["object_end"],["end"]]
+{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	incremental	["a"]	[["object_start"],["key","a"],["array_start"],["number",1,"1"],["number",2.5,"2.50"],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,"1e21"],["key","f"],["bool",true],["object_end"],["end"]]
+# JSON Lines through ParserSource is one array of the lines' values.
+{"a":1}\n\n{"b":[2.0]}\n	jsonl	incremental		[["array_start"],["object_start"],["key","a"],["number",1,"1"],["object_end"],["object_start"],["key","b"],["array_start"],["number",2,"2.0"],["array_end"],["object_end"],["array_end"],["end"]]
+{"a":1}\n\n{"b":[2.0]}\n	jsonl	materialize		[["array_start"],["object_start"],["key","a"],["number",1,null],["object_end"],["object_start"],["key","b"],["array_start"],["number",2,null],["array_end"],["object_end"],["array_end"],["end"]]
+# json5, jsonc and jsonic: a lexeme is kept only when it is an RFC 8259
+# number that reads as the value.
+{hex:0x1F,'s':'q',t:+1,u:.5,v:5.,w:1e2,}	json5	incremental		[["object_start"],["key","hex"],["number",31,null],["key","s"],["string","q"],["key","t"],["number",1,null],["key","u"],["number",0.5,null],["key","v"],["number",5,null],["key","w"],["number",100,"1e2"],["object_end"],["end"]]
+{hex:0x1F,'s':'q',t:+1,u:.5,v:5.,w:1e2,}	json5	materialize		[["object_start"],["key","hex"],["number",31,null],["key","s"],["string","q"],["key","t"],["number",1,null],["key","u"],["number",0.5,null],["key","v"],["number",5,null],["key","w"],["number",100,null],["object_end"],["end"]]
+{a:1,a:2,b:3}	json5	incremental		[["object_start"],["key","a"],["number",1,"1"],["key","a"],["number",2,"2"],["key","b"],["number",3,"3"],["object_end"],["end"]]
+{a:{x:1},a:{y:2}}	json5	incremental		ERROR:DUPLICATE_MEMBER	[["object_start"],["key","a"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","a"],["object_start"],["key","y"],["number",2,"2"],["object_end"]]
+{a:{x:1},a:{y:2}}	json5	materialize		[["object_start"],["key","a"],["object_start"],["key","x"],["number",1,null],["key","y"],["number",2,null],["object_end"],["object_end"],["end"]]
+{"a":1 /* c */, // x\n "b":[2]}	jsonc	incremental		[["object_start"],["key","a"],["number",1,"1"],["key","b"],["array_start"],["number",2,"2"],["array_end"],["object_end"],["end"]]
+{"a":1 /* c */, // x\n "b":[2]}	jsonc	materialize		[["object_start"],["key","a"],["number",1,null],["key","b"],["array_start"],["number",2,null],["array_end"],["object_end"],["end"]]
+a:1,b:[x,y],c:{d:true}	jsonic	incremental		[["object_start"],["key","a"],["number",1,"1"],["key","b"],["array_start"],["string","x"],["string","y"],["array_end"],["key","c"],["object_start"],["key","d"],["bool",true],["object_end"],["object_end"],["end"]]
+a:1,b:[x,y],c:{d:true}	jsonic	materialize		[["object_start"],["key","a"],["number",1,null],["key","b"],["array_start"],["string","x"],["string","y"],["array_end"],["key","c"],["object_start"],["key","d"],["bool",true],["object_end"],["object_end"],["end"]]
+a:{x:1},a:{y:2}	jsonic	incremental		ERROR:DUPLICATE_MEMBER	[["object_start"],["key","a"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","a"],["object_start"],["key","y"],["number",2,"2"],["object_end"]]
+# jsonic drops a pair inside a list; a container it streamed and never
+# stored is refused, a scalar pair streams as the walk.
+[a:{b:1}]	jsonic	incremental		ERROR:STREAMABILITY_UNKNOWN	[["array_start"],["object_start"],["key","b"],["number",1,"1"],["object_end"]]
+[a:{b:1}]	jsonic	materialize		[["array_start"],["array_end"],["end"]]
+[1,a:1,2]	jsonic	incremental		[["array_start"],["number",1,"1"],["number",2,"2"],["array_end"],["end"]]
+# A top-level implicit list whose first element is a container wraps a
+# root already streamed.
+{a:1}\n{b:2}	jsonic	incremental		ERROR:STREAMABILITY_UNKNOWN	[["object_start"],["key","a"],["number",1,"1"],["object_end"]]
+{a:1}\n{b:2}	jsonic	materialize		[["array_start"],["object_start"],["key","a"],["number",1,null],["object_end"],["object_start"],["key","b"],["number",2,null],["object_end"],["array_end"],["end"]]
+# yaml.
+a: 1\nb: [x, 2.5]\nc:\n  d: true\n  e: null\n	yaml	incremental		[["object_start"],["key","a"],["number",1,"1"],["key","b"],["array_start"],["string","x"],["number",2.5,"2.5"],["array_end"],["key","c"],["object_start"],["key","d"],["bool",true],["key","e"],["null"],["object_end"],["object_end"],["end"]]
+a: 1\nb: [x, 2.5]\nc:\n  d: true\n  e: null\n	yaml	materialize		[["object_start"],["key","a"],["number",1,null],["key","b"],["array_start"],["string","x"],["number",2.5,null],["array_end"],["key","c"],["object_start"],["key","d"],["bool",true],["key","e"],["null"],["object_end"],["object_end"],["end"]]
+- 0x10\n- 1_000\n- ~\n- 'q'\n	yaml	materialize		[["array_start"],["number",16,null],["number",1000,null],["null"],["string","q"],["array_end"],["end"]]
+- 0x10\n- 012\n- ~\n- 'q'\n	yaml	incremental		[["array_start"],["number",16,null],["number",12,null],["null"],["string","q"],["array_end"],["end"]]
+a: 1\na: 2\nb: 3\n	yaml	incremental		[["object_start"],["key","a"],["number",1,"1"],["key","a"],["number",2,"2"],["key","b"],["number",3,"3"],["object_end"],["end"]]
+a: {x: 1}\na: {y: 2}\n	yaml	incremental		ERROR:DUPLICATE_MEMBER	[["object_start"],["key","a"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","a"],["object_start"],["key","y"],["number",2,"2"],["object_end"]]
+a: {x: 1}\na: {y: 2}\n	yaml	materialize		[["object_start"],["key","a"],["object_start"],["key","x"],["number",1,null],["key","y"],["number",2,null],["object_end"],["object_end"],["end"]]
+base: &b\n  x: 1\nd:\n  <<: *b\n  y: 2\n	yaml	incremental		ERROR:STREAMABILITY_UNKNOWN	[["object_start"],["key","base"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","d"],["object_start"],["key","<<"],["object_start"],["key","x"],["number",1,null],["object_end"],["key","y"],["number",2,"2"]]
+base: &b\n  x: 1\nd:\n  <<: *b\n  y: 2\n	yaml	materialize		[["object_start"],["key","base"],["object_start"],["key","x"],["number",1,null],["object_end"],["key","d"],["object_start"],["key","y"],["number",2,null],["key","x"],["number",1,null],["object_end"],["object_end"],["end"]]
+a: &r {x: 1}\nb: *r\n	yaml	incremental		[["object_start"],["key","a"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","b"],["object_start"],["key","x"],["number",1,null],["object_end"],["object_end"],["end"]]
+# A document stream: refused once a root was streamed; walked whole when
+# nothing was.
+a: 1\n---\nb: 2\n	yaml	incremental		ERROR:STREAMABILITY_UNKNOWN	[["object_start"],["key","a"],["number",1,"1"],["object_end"]]
+a: 1\n---\nb: 2\n	yaml	materialize		[["array_start"],["object_start"],["key","a"],["number",1,null],["object_end"],["object_start"],["key","b"],["number",2,null],["object_end"],["array_end"],["end"]]
+1\n---\n2\n	yaml	incremental		[["array_start"],["number",1,null],["number",2,null],["array_end"],["end"]]
+	yaml	incremental		[["null"],["end"]]
+	yaml	materialize		[["null"],["end"]]
+# A mapping as a key opens its value before announcing the key.
+- sun: yellow\n- ? earth: blue\n  : moon: white\n	yaml	incremental		ERROR:STREAMABILITY_UNKNOWN	[["array_start"],["object_start"],["key","sun"],["string","yellow"],["object_end"],["object_start"]]
+- sun: yellow\n- ? earth: blue\n  : moon: white\n	yaml	materialize		[["array_start"],["object_start"],["key","sun"],["string","yellow"],["object_end"],["object_start"],["key","earth: blue"],["object_start"],["key","moon"],["string","white"],["object_end"],["object_end"],["array_end"],["end"]]
+? earth\n: moon\n	yaml	incremental		[["object_start"],["key","earth"],["string","moon"],["object_end"],["end"]]
+# zon refuses a repeated field itself, as INPUT_INVALID at the same
+# position in both modes.
+.{ .a = 1, .b = "x", .c = .{ 2, 3 } }	zon	incremental		[["object_start"],["key","a"],["number",1,"1"],["key","b"],["string","x"],["key","c"],["array_start"],["number",2,"2"],["number",3,"3"],["array_end"],["object_end"],["end"]]
+.{ .a = 1, .b = "x", .c = .{ 2, 3 } }	zon	materialize		[["object_start"],["key","a"],["number",1,null],["key","b"],["string","x"],["key","c"],["array_start"],["number",2,null],["number",3,null],["array_end"],["object_end"],["end"]]
+.{ .a = 1, .a = 2 }	zon	incremental		ERROR:INPUT_INVALID@1:12	[["object_start"],["key","a"],["number",1,"1"],["key","a"]]
+.{ .a = 1, .a = 2 }	zon	materialize		ERROR:INPUT_INVALID@1:12	[]
+# The member the grammar never stored is not streamed: the prefix ends
+# with the repeated key, or the second value's own container.
+.{ .a = 1, .b = 5, .a = .{ .y = 2 } }	zon	incremental		ERROR:INPUT_INVALID@1:20	[["object_start"],["key","a"],["number",1,"1"],["key","b"],["number",5,"5"],["key","a"],["object_start"],["key","y"],["number",2,"2"],["object_end"]]
+.{ .o = .{ .a = .{ .x = 1 }, .a = 3 } }	zon	incremental		ERROR:INPUT_INVALID@1:30	[["object_start"],["key","o"],["object_start"],["key","a"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","a"]]
+# The imperative grammars: walked whole, and refused incrementally before
+# the parse.
+a,b\n1,x\n	csv	materialize		[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","x"],["object_end"],["array_end"],["end"]]
+a,b\n1,x\n	csv	incremental		ERROR:STREAMABILITY_UNKNOWN	[]
+a = 1\n[t]\nb = [true, 2.5]\n	toml	materialize		[["object_start"],["key","a"],["number",1,null],["key","t"],["object_start"],["key","b"],["array_start"],["bool",true],["number",2.5,null],["array_end"],["object_end"],["object_end"],["end"]]
+a = 1\n[t]\nb = [true, 2.5]\n	toml	incremental		ERROR:STREAMABILITY_UNKNOWN	[]
+a = 1\n[s]\nb = x\n	ini	materialize		[["object_start"],["key","a"],["string","1"],["key","s"],["object_start"],["key","b"],["string","x"],["object_end"],["object_end"],["end"]]
+a = 1\n[s]\nb = x\n	ini	incremental		ERROR:STREAMABILITY_UNKNOWN	[]
+a = 1\n[s]\nb = x\n	ini	value		[["object_start"],["key","a"],["string","1"],["key","s"],["object_start"],["key","b"],["string","x"],["object_end"],["object_end"],["end"]]
