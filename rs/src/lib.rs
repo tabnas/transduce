@@ -50,7 +50,7 @@ pub use matcher::{CaptureId, Hit, HitKind, Matcher};
 pub use route::{Budget, CaptureMode, CaptureSpec, FnRoute, RouteSink, Router, Selected};
 pub use scan::{ScanEmit, Transition};
 pub use selector::{Path, Segment, Selector, Step};
-pub use sink::{replay, CountSink, Flow, FnSink, Sink};
+pub use sink::{replay, CountSink, Flow, FnSink, Sink, TreeContract};
 pub use source::{
     capability, walk_value, Guarded, ParserSource, Prune, Source, SourceMode, ValueSource,
 };

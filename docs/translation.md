@@ -228,9 +228,9 @@ them:
   render checks only what its state can see, which is nesting, not
   keys: keeping each mapping's keys made its time grow with the square
   of a mapping's width ([What the pilot found](#what-the-pilot-found)).
-  The check lives in aless (`export::UniqueMembers`) while aless is the
-  one host; a second host moves it into this crate as a shared sink
-  rather than writing its own. `--render json` and
+  The check is this crate's `TreeContract` sink (it began as aless's
+  `export::UniqueMembers`, and moved here with the lift side so that no
+  host writes its own); the fallback stays the host's. `--render json` and
   `--render csv` keep their native renderers; the registry's JSON entry
   names the `json` native, which is the render crate's renderer, and its
   CSV entry names the library's `csv`, which runs natively when its
@@ -425,9 +425,12 @@ departs from the steps above, and what it measured:
   stream) is `DUPLICATE_MEMBER`, and events no tree has are
   `STREAMABILITY_UNKNOWN`. Either falls back once to the parsed value,
   as `--json` reads it, when nothing had been written. The second case
-  is real: for a YAML key that is itself a mapping, the incremental
-  source streams the member's value before its key
-  (tabnas/transduce#7). Behind the host's check, the render fails a
+  was real: for a YAML key that is itself a mapping, the incremental
+  source streamed the member's value before its key
+  (tabnas/transduce#7); the rule-event adapter now refuses that shape
+  itself, with `STREAMABILITY_UNKNOWN` when the value opens, and the
+  host's check stands behind it for whatever else a grammar can
+  produce. Behind the host's check, the render fails a
   stream that breaks nesting, naming the break, with `INPUT_INVALID`:
   that is the one code alchemy's `fail` raises. `PROTOCOL_ORDER_ERROR`
   would name a broken event stream better, and waits on `fail` taking a

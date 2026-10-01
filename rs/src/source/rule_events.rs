@@ -456,7 +456,25 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                 self.fail(wrapped_root());
                 return;
             }
-            self.last_completed = None;
+            if self.last_completed.is_some() {
+                // The container that completed last was never stored in
+                // the one around it, and the grammar is opening another:
+                // what left cannot be taken back.
+                self.fail(unstored_container());
+                return;
+            }
+            if let Some(top) = self.open.checked_sub(1).map(|i| &self.frames[i]) {
+                if !top.array && !top.has_key {
+                    // A container opening in a map whose next member has
+                    // no key yet: the grammar builds the member's value in
+                    // a rule of its own and names it only when the pair
+                    // closes, or builds the key itself as a container. Its
+                    // events would leave before the key, which no tree's
+                    // events do, and the key cannot be streamed late.
+                    self.fail(value_before_key());
+                    return;
+                }
+            }
             self.lexeme_ready = false;
             if !self.emit(if array {
                 JsonEvent::ArrayStart
@@ -593,6 +611,14 @@ impl<S: Sink + Send + 'static> Adapter<S> {
                         return;
                     }
                 }
+                if self.last_completed.is_some() {
+                    // A container built inside this one was streamed and
+                    // never stored (jsonic drops a pair's value inside a
+                    // list when `list.pair` is off): the frame cannot end
+                    // as the walk's would.
+                    self.fail(unstored_container());
+                    return;
+                }
                 if !array {
                     let node = rule.node.borrow();
                     let names = member_names(&node)
@@ -654,16 +680,18 @@ impl<S: Sink + Send + 'static> Adapter<S> {
     /// scalar as itself, the container that completed last as nothing (it
     /// has been streamed), any other container whole, late.
     fn entry(&mut self, value: &Value) -> bool {
+        if let Some(last) = &self.last_completed {
+            if is_container(value) && same_container(value, last) {
+                self.last_completed = None;
+                return true;
+            }
+            // Something else landed: the container streamed last was
+            // never stored, and its events cannot be taken back.
+            self.fail(unstored_container());
+            return false;
+        }
         if !is_container(value) {
             return self.scalar(value);
-        }
-        if self
-            .last_completed
-            .as_ref()
-            .is_some_and(|last| same_container(value, last))
-        {
-            self.last_completed = None;
-            return true;
         }
         self.walk(value)
     }
@@ -863,6 +891,40 @@ fn member_names(v: &Value) -> impl Iterator<Item = &str> {
         _ => Box::new(std::iter::empty()),
     };
     names
+}
+
+/// The failure for a container the adapter streamed as the grammar built
+/// it and the grammar then never stored in the container around it: jsonic
+/// parses a pair inside a list and drops it when `list.pair` is off, so
+/// `[a:{b:1}]` reads as `[]` where the stream already carried `{b:1}`.
+/// The events cannot be taken back, so the run is refused where the
+/// grammar's next step shows the container was dropped: another entry
+/// lands, another container opens, or the frame around it ends.
+pub(crate) fn unstored_container() -> Fail {
+    Fail::new(
+        Code::StreamabilityUnknown,
+        "the grammar built a container the incremental source streamed and then never stored it \
+         in the container around it (jsonic drops a pair inside a list when list.pair is off), \
+         so the stream would not be the document's; the incremental source cannot follow a \
+         grammar that builds a container so: run it with SourceMode::Materialize",
+    )
+}
+
+/// The failure for a container the grammar opens inside a map before the
+/// member it belongs to has a key: a value built in a pushed rule and
+/// stored under its key only when the pair closes, or a key the grammar
+/// builds as a container (a YAML `?` key that is a mapping, before the
+/// grammar announced it). The value's events would leave before the key,
+/// and a stream no tree's events match cannot be repaired after the fact.
+pub(crate) fn value_before_key() -> Fail {
+    Fail::new(
+        Code::StreamabilityUnknown,
+        "the grammar opened a container inside a map before announcing the member's key (it \
+         builds the value, or a key that is itself a container, in a rule of its own and \
+         names the member only when the pair closes); its events would leave before the key, \
+         so the stream would not be the document's; the incremental source cannot follow a \
+         grammar that builds a member so: run it with SourceMode::Materialize",
+    )
 }
 
 /// The failure for a map whose members the grammar rewrote after the

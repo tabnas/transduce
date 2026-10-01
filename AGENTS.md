@@ -78,9 +78,13 @@ the two agree (a grammar that merges the two values fails the run with
 `DUPLICATE_MEMBER` instead); and a shape the rule events cannot follow (a
 list wrapped around a root already streamed, as in a YAML stream of
 several documents, whatever their shapes, or a jsonic top-level implicit
-list; a map rewritten after streaming, as a YAML `<<` merge key does) is
-refused with `STREAMABILITY_UNKNOWN` before `End`. A listed grammar that mismatches
-fails the test; an unlisted grammar that never mismatches fails too. The
+list; a map rewritten after streaming, as a YAML `<<` merge key does; a
+container opened inside a map before the member's key, as a YAML `?` key
+whose value is a mapping is built) is refused with `STREAMABILITY_UNKNOWN`
+before `End`. The last is a net, and counts against a grammar: one that
+opens a container before its key on a fixture builds every member so, and
+is not verified. A listed grammar that mismatches, or trips the net,
+fails the test; an unlisted grammar that never does fails too. The
 list today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`,
 `yaml`, `zon` (`docs/reference.md` has the detail); the imperative
 grammars `toml`, `ini`, `csv`, `xml` and `feed` build values the rule
@@ -136,7 +140,7 @@ is exactly the grammar's.
 | Path | What it is |
 |---|---|
 | `rs/src/event.rs` | `JsonEvents/1`: borrowed events, owned recording form |
-| `rs/src/sink.rs` | `Sink`, `Flow`, recorders and adapters |
+| `rs/src/sink.rs` | `Sink`, `Flow`, recorders and adapters; `TreeContract`, which holds a stream to a tree's events in front of a sink that takes them as one |
 | `rs/src/error.rs` | `Code` (the stable failure codes), `Fail` |
 | `rs/src/limits.rs` | `Limits`, `Metrics`, `AbortFlag` |
 | `rs/src/datum.rs` | the retained value, its builder, the JSON writer |
@@ -186,11 +190,11 @@ The code is the contract; the message is informative. Every code is in
 |---|---|
 | `DSL_PARSE_ERROR`, `DSL_TYPE_ERROR` | reserved for alchemy, which shares this enum |
 | `STREAM_REUSED` | a one-shot stream was consumed twice |
-| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; an incremental run of an unnamed or unverified grammar (refused before the parse), or one the adapter refuses mid-way: a list wrapped around a root already streamed (at the wrapping container, or when the root rule closes over a value that is not the streamed root), a map rewritten after streaming, a member announced and never stored |
+| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; an incremental run of an unnamed or unverified grammar (refused before the parse), or one the adapter refuses mid-way: a list wrapped around a root already streamed (at the wrapping container, or when the root rule closes over a value that is not the streamed root), a map rewritten after streaming, a container opened inside a map before the member's key, a member announced and never stored; a stream `TreeContract` finds is no tree's (a value where a key is due, a close with nothing open, a second root, `End` out of place) |
 | `INPUT_ORDER_VIOLATION` | a row began before its metadata completed |
 | `CAPTURE_OVERLAP_UNSUPPORTED` | two captures select overlapping scopes |
 | `MISSING_VALUE` | a required value is absent and the policy is `Error` |
-| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy; an incremental run whose grammar merged a repeated member's containers after the first was streamed |
+| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy; an incremental run whose grammar merged a repeated member's containers after the first was streamed; a key repeated in one object of a stream `TreeContract` holds to a tree's events |
 | `INVALID_NUMBER` | a number lexeme the target cannot take |
 | `PROTOCOL_ORDER_ERROR` | a protocol event out of sequence |
 | `TARGET_VALUE_UNREPRESENTABLE` | the target format cannot carry the value |

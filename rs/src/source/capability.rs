@@ -21,9 +21,19 @@
 //! container when it has one and otherwise when the root rule closes over
 //! the wrapping list; a jsonic top-level implicit list whose first element
 //! is a container), a map the grammar rewrote after it was streamed (a
-//! YAML merge key), both `STREAMABILITY_UNKNOWN`; and a repeated member
-//! whose containers the grammar merged (jsonic's `map.extend`, on for
-//! yaml, json5 and jsonic), `DUPLICATE_MEMBER`. A document the grammar
+//! YAML merge key), and a container the grammar opens inside a map before
+//! the member's key (a YAML `?` key whose value is a mapping: the key is
+//! stored when the pair closes, after the value was built), all
+//! `STREAMABILITY_UNKNOWN`; and a repeated member whose containers the
+//! grammar merged (jsonic's `map.extend`, on for yaml, json5 and jsonic),
+//! `DUPLICATE_MEMBER`; and a container the adapter streamed as it was
+//! built that the grammar then never stored in the one around it (jsonic
+//! drops a pair inside a list when `list.pair` is off), refused where the
+//! next entry lands, the next container opens or the frame around it
+//! ends, `STREAMABILITY_UNKNOWN`. Those last two are nets, not licences: a
+//! listed grammar trips neither on a fixture, since a grammar that builds
+//! its values so does it for every document, and the suite counts them
+//! against the grammar rather than for it. A document the grammar
 //! itself refuses fails the incremental run with the grammar's
 //! `INPUT_INVALID`, at the same position, after a protocol-valid prefix
 //! (zon's repeated fields: the member the grammar never stored is not
@@ -34,10 +44,12 @@
 //! node is inserted whole and walked at its insertion, so the events are
 //! the walk's, only later than a container-by-container stream. The other
 //! imperative grammars (toml, ini, csv, xml, feed) build their values in
-//! ways the rule events do not show: the adapter emits well-formed streams
-//! with the wrong shape (csv's header and raw rows as extra elements) or
-//! malformed ones, and a completed wrong stream is exactly what the list
-//! exists to prevent, so they are not listed.
+//! ways the rule events do not show: csv builds a record per row that it
+//! does not store as the stream saw it, and the others open a section's or
+//! an element's container before its key; the adapter refuses each on its
+//! own samples. A completed wrong stream is exactly what the list exists
+//! to prevent, and a grammar refused on its own documents would be
+//! attempted and refused on every one, so they are not listed.
 
 /// The grammars whose incremental events never contradict the whole-value
 /// walk on any fixture, by the name their crate uses (`tabnas-<name>`).
