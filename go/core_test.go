@@ -174,6 +174,60 @@ func TestLexemesSurvive(t *testing.T) {
 	}
 }
 
+// HasLexeme, not the text, says whether a number has a lexeme: the empty
+// lexeme (Rust's Some("")) stays distinct from none (None) through every
+// type that carries one, so a renderer can refuse it as INVALID_NUMBER
+// rather than write the value.
+func TestAnEmptyLexemeStaysDistinctFromNone(t *testing.T) {
+	empty, none := EvNumberLexeme(0, ""), EvNumber(0)
+	if !empty.HasLexeme || none.HasLexeme || empty == none || empty.WithoutLexeme() != none {
+		t.Fatalf("empty %#v, none %#v", empty, none)
+	}
+	if empty.String() != "" || none.String() != "0" {
+		t.Fatalf("%q %q", empty.String(), none.String())
+	}
+	for _, c := range []struct {
+		ev   Event
+		size int    // what the empty lexeme measures; none is a value's 8 bytes
+		json string // the lexeme as it stands; none is the value's text
+		enc  string // the fixture encoding
+	}{
+		{empty, NodeBytes, ``, `["number",0,""]`},
+		{none, NodeBytes + 8, `0`, `["number",0,null]`},
+	} {
+		// The builder keeps it, charging the lexeme's bytes.
+		b := NewDatumBuilder(1<<30, "max_capture_bytes", Reject)
+		if f := b.Event(c.ev); f != nil || b.Bytes() != c.size {
+			t.Fatalf("%#v: built with %v, charged %d", c.ev, f, b.Bytes())
+		}
+		d, _ := b.Take()
+		if d.HasLexeme != c.ev.HasLexeme || d.ByteSize() != c.size || d.String() != c.json {
+			t.Fatalf("%#v: the datum %#v measures %d", c.ev, d, d.ByteSize())
+		}
+		// The walk hands it back as it came.
+		if back := walked(d); len(back) != 1 || back[0] != c.ev {
+			t.Fatalf("%#v: walked back as %#v", c.ev, back)
+		}
+		// A cell keeps it.
+		cell := CellFromDatum(&d)
+		if cell.HasLexeme != c.ev.HasLexeme || cell.ByteSize() != c.size || cell.String() != c.json {
+			t.Fatalf("%#v: the cell %#v", c.ev, cell)
+		}
+		// The harness encodes it as the fixtures spell it: "", never null.
+		for _, v := range []any{eventValue(c.ev), datumValue(&d), cellValue(cell)} {
+			if enc, _ := json.Marshal(v); string(enc) != c.enc {
+				t.Fatalf("%#v: encoded as %s", c.ev, enc)
+			}
+		}
+	}
+	if NumberDatumLexeme(0, "").Equal(NumberDatum(0)) || NumberDatum(0).Equal(NumberDatumLexeme(0, "")) {
+		t.Fatal("a datum with the empty lexeme equals one without")
+	}
+	if a, b := (Cell{Kind: CellNumber, HasLexeme: true}), (Cell{Kind: CellNumber}); a.Equal(b) || b.Equal(a) {
+		t.Fatal("a cell with the empty lexeme equals one without")
+	}
+}
+
 func TestStringsEscapeAsRFC8259(t *testing.T) {
 	d := StringDatum("a\"b\\c\n\u0001\u007fé")
 	if d.String() != "\"a\\\"b\\\\c\\n\\u0001\u007fé\"" {

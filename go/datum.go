@@ -36,19 +36,21 @@ type Member struct {
 // against limits, and is owned by the transducer rather than shared with
 // a parse.
 //
-// Bool is a DatumBool's value; Value and Lexeme a DatumNumber's ("" for
-// no lexeme, as on Event); Text a DatumString's; Items a DatumArray's;
-// Members a DatumObject's, in source order. A repeated member replaces
-// the earlier one in its place (last value wins) unless the builder's
-// policy rejected it first.
+// Bool is a DatumBool's value; Value, and Lexeme when HasLexeme is set, a
+// DatumNumber's (as on Event: HasLexeme false is no lexeme, and an empty
+// Lexeme with it set is the empty one); Text a DatumString's; Items a
+// DatumArray's; Members a DatumObject's, in source order. A repeated
+// member replaces the earlier one in its place (last value wins) unless
+// the builder's policy rejected it first.
 type Datum struct {
-	Kind    DatumKind
-	Bool    bool
-	Value   float64
-	Lexeme  string
-	Text    string
-	Items   []Datum
-	Members []Member
+	Kind      DatumKind
+	Bool      bool
+	HasLexeme bool
+	Value     float64
+	Lexeme    string
+	Text      string
+	Items     []Datum
+	Members   []Member
 }
 
 // Datum constructors.
@@ -58,9 +60,10 @@ func BoolDatum(b bool) Datum      { return Datum{Kind: DatumBool, Bool: b} }
 func NumberDatum(v float64) Datum { return Datum{Kind: DatumNumber, Value: v} }
 func StringDatum(s string) Datum  { return Datum{Kind: DatumString, Text: s} }
 
-// NumberDatumLexeme is a number with the source text it was read from.
+// NumberDatumLexeme is a number with the source text it was read from;
+// the empty text is a lexeme too. NumberDatum is a number without one.
 func NumberDatumLexeme(v float64, lexeme string) Datum {
-	return Datum{Kind: DatumNumber, Value: v, Lexeme: lexeme}
+	return Datum{Kind: DatumNumber, HasLexeme: true, Value: v, Lexeme: lexeme}
 }
 
 // ArrayDatum is an array of items.
@@ -74,7 +77,7 @@ func ObjectDatum(members ...Member) Datum { return Datum{Kind: DatumObject, Memb
 func (d *Datum) ByteSize() int {
 	switch d.Kind {
 	case DatumNumber:
-		if d.Lexeme == "" {
+		if !d.HasLexeme {
 			return NodeBytes + 8
 		}
 		return NodeBytes + len(d.Lexeme)
@@ -160,7 +163,8 @@ func (d Datum) Equal(o Datum) bool {
 	case DatumBool:
 		return d.Bool == o.Bool
 	case DatumNumber:
-		return math.Float64bits(d.Value) == math.Float64bits(o.Value) && d.Lexeme == o.Lexeme
+		return math.Float64bits(d.Value) == math.Float64bits(o.Value) &&
+			d.HasLexeme == o.HasLexeme && d.Lexeme == o.Lexeme
 	case DatumString:
 		return d.Text == o.Text
 	case DatumArray:
@@ -329,14 +333,14 @@ func writeJSONString(s string, out *strings.Builder) {
 // WriteJSONString appends s as an RFC 8259 JSON string literal.
 func WriteJSONString(s string, out *strings.Builder) { writeJSONString(s, out) }
 
-// WriteJSONNumber appends a number: its lexeme when known, else the
-// shortest text that reads back as the same float64, written without an
-// exponent as Rust's f64 Display writes it. A non-finite value has no
-// JSON form and is written as null; renderers reject it before it gets
-// here.
-func WriteJSONNumber(value float64, lexeme string, out *strings.Builder) {
+// WriteJSONNumber appends a number: its lexeme as it stands when it has
+// one (hasLexeme), else the shortest text that reads back as the same
+// float64, written without an exponent as Rust's f64 Display writes it. A
+// non-finite value has no JSON form and is written as null; renderers
+// reject it before it gets here.
+func WriteJSONNumber(value float64, lexeme string, hasLexeme bool, out *strings.Builder) {
 	switch {
-	case lexeme != "":
+	case hasLexeme:
 		out.WriteString(lexeme)
 	case math.IsInf(value, 0) || math.IsNaN(value):
 		out.WriteString("null")
@@ -357,7 +361,7 @@ func WriteJSON(d *Datum, out *strings.Builder) {
 			out.WriteString("false")
 		}
 	case DatumNumber:
-		WriteJSONNumber(d.Value, d.Lexeme, out)
+		WriteJSONNumber(d.Value, d.Lexeme, d.HasLexeme, out)
 	case DatumString:
 		writeJSONString(d.Text, out)
 	case DatumArray:
@@ -398,7 +402,7 @@ func WalkDatum(d *Datum, sink Sink) (Flow, *Fail) {
 	case DatumBool:
 		ok, f = send(EvBool(d.Bool))
 	case DatumNumber:
-		ok, f = send(EvNumberLexeme(d.Value, d.Lexeme))
+		ok, f = send(Event{Kind: Number, HasLexeme: d.HasLexeme, Value: d.Value, Lexeme: d.Lexeme})
 	case DatumString:
 		ok, f = send(EvString(d.Text))
 	case DatumArray:
@@ -659,13 +663,13 @@ func (b *DatumBuilder) Event(ev Event) *Fail {
 		return b.place(BoolDatum(ev.Bool))
 	case Number:
 		n := 8
-		if ev.Lexeme != "" {
+		if ev.HasLexeme {
 			n = len(ev.Lexeme)
 		}
 		if f := b.charge(NodeBytes + n); f != nil {
 			return f
 		}
-		return b.place(NumberDatumLexeme(ev.Value, ev.Lexeme))
+		return b.place(Datum{Kind: DatumNumber, HasLexeme: ev.HasLexeme, Value: ev.Value, Lexeme: ev.Lexeme})
 	case String:
 		if f := b.charge(NodeBytes + len(ev.Text)); f != nil {
 			return f

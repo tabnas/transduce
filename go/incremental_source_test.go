@@ -28,7 +28,7 @@ func TestIncrementalEventsEqualTheWalkAndCarryLexemes(t *testing.T) {
 		t.Fatal(lexemes)
 	}
 	for _, ev := range mat {
-		if ev.Kind == Number && ev.Lexeme != "" {
+		if ev.Kind == Number && ev.HasLexeme {
 			t.Fatal("the walk has no lexemes")
 		}
 	}

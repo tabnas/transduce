@@ -316,9 +316,11 @@ func drive(t testing.TB, row *support.Row, input string, sink Sink) (Flow, *Fail
 
 // The encodings.
 
-func numberValue(value float64, lexeme string) any {
+// numberValue is ["number", value, lexeme or null]: the empty lexeme is
+// "", never null.
+func numberValue(value float64, lexeme string, hasLexeme bool) any {
 	var l any
-	if lexeme != "" {
+	if hasLexeme {
 		l = lexeme
 	}
 	return []any{"number", value, l}
@@ -332,7 +334,7 @@ func eventValue(ev Event) any {
 	case Bool:
 		return []any{"bool", ev.Bool}
 	case Number:
-		return numberValue(ev.Value, ev.Lexeme)
+		return numberValue(ev.Value, ev.Lexeme, ev.HasLexeme)
 	case String:
 		return []any{"string", ev.Text}
 	}
@@ -355,7 +357,7 @@ func datumValue(d *Datum) any {
 	case DatumBool:
 		return d.Bool
 	case DatumNumber:
-		return numberValue(d.Value, d.Lexeme)
+		return numberValue(d.Value, d.Lexeme, d.HasLexeme)
 	case DatumString:
 		return d.Text
 	case DatumArray:
@@ -378,7 +380,7 @@ func cellValue(c Cell) any {
 	case CellBool:
 		return c.Bool
 	case CellNumber:
-		return numberValue(c.Value, c.Lexeme)
+		return numberValue(c.Value, c.Lexeme, c.HasLexeme)
 	case CellString:
 		return c.Text
 	case CellMissing:

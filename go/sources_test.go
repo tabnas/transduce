@@ -242,7 +242,7 @@ func TestJSONLMatchesTheWholeFileParseAtEveryReaderBoundary(t *testing.T) {
 		var stripped []Event
 		lexeme := false
 		for _, ev := range rec.Events {
-			lexeme = lexeme || (ev.Kind == Number && ev.Lexeme == "1.50")
+			lexeme = lexeme || (ev.Kind == Number && ev.HasLexeme && ev.Lexeme == "1.50")
 			stripped = append(stripped, ev.WithoutLexeme())
 		}
 		if f != nil || !eventsEqualCore(stripped, want) || !lexeme {

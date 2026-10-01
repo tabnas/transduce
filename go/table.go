@@ -24,13 +24,16 @@ const (
 )
 
 // Cell is one projected value of TableRows/1: Bool for CellBool, Value
-// and Lexeme ("" for none) for CellNumber, Text for CellString.
+// and, when HasLexeme is set, Lexeme for CellNumber (as on Event:
+// HasLexeme false is no lexeme, and an empty Lexeme with it set is the
+// empty one), Text for CellString.
 type Cell struct {
-	Kind   CellKind
-	Bool   bool
-	Value  float64
-	Lexeme string
-	Text   string
+	Kind      CellKind
+	Bool      bool
+	HasLexeme bool
+	Value     float64
+	Lexeme    string
+	Text      string
 }
 
 // CellFromDatum is the cell for a retained value. A container is not a
@@ -41,7 +44,7 @@ func CellFromDatum(d *Datum) Cell {
 	case DatumBool:
 		return Cell{Kind: CellBool, Bool: d.Bool}
 	case DatumNumber:
-		return Cell{Kind: CellNumber, Value: d.Value, Lexeme: d.Lexeme}
+		return Cell{Kind: CellNumber, HasLexeme: d.HasLexeme, Value: d.Value, Lexeme: d.Lexeme}
 	case DatumString:
 		return Cell{Kind: CellString, Text: d.Text}
 	case DatumArray, DatumObject:
@@ -58,7 +61,7 @@ func (c Cell) IsMissing() bool { return c.Kind == CellMissing }
 func (c Cell) ByteSize() int {
 	switch c.Kind {
 	case CellNumber:
-		if c.Lexeme == "" {
+		if !c.HasLexeme {
 			return NodeBytes + 8
 		}
 		return NodeBytes + len(c.Lexeme)
@@ -77,7 +80,8 @@ func (c Cell) Equal(o Cell) bool {
 	case CellBool:
 		return c.Bool == o.Bool
 	case CellNumber:
-		return math.Float64bits(c.Value) == math.Float64bits(o.Value) && c.Lexeme == o.Lexeme
+		return math.Float64bits(c.Value) == math.Float64bits(o.Value) &&
+			c.HasLexeme == o.HasLexeme && c.Lexeme == o.Lexeme
 	case CellString:
 		return c.Text == o.Text
 	}
@@ -91,7 +95,7 @@ func (c Cell) String() string {
 		return strconv.FormatBool(c.Bool)
 	case CellNumber:
 		var b strings.Builder
-		WriteJSONNumber(c.Value, c.Lexeme, &b)
+		WriteJSONNumber(c.Value, c.Lexeme, c.HasLexeme, &b)
 		return b.String()
 	case CellString:
 		var b strings.Builder

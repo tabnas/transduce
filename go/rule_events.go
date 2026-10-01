@@ -223,7 +223,7 @@ func (a *adapter) scalar(value any) bool {
 	if ev.Kind == Number {
 		if a.lexemeReady && a.lexemeValue == ev.Value {
 			a.lexemeReady = false
-			ev.Lexeme = a.lexeme
+			ev.Lexeme, ev.HasLexeme = a.lexeme, true
 		}
 	}
 	return a.emit(ev)

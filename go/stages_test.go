@@ -401,7 +401,7 @@ func TestTheWorkedExampleYieldsTheSpecTable(t *testing.T) {
 	if f != nil || labels(tbl) != "[Identifier Full name Balance]" || rows(tbl) != `123 "Alice" 50.25 | 456 "Bob" 72` || !tbl.Ended {
 		t.Fatal(f, labels(tbl), rows(tbl))
 	}
-	if !tbl.Rows[0][2].Equal(Cell{Kind: CellNumber, Value: 50.25, Lexeme: "50.25"}) ||
+	if !tbl.Rows[0][2].Equal(Cell{Kind: CellNumber, HasLexeme: true, Value: 50.25, Lexeme: "50.25"}) ||
 		!tbl.Rows[1][2].Equal(Cell{Kind: CellNumber, Value: 72}) {
 		t.Fatal(tbl.Rows)
 	}

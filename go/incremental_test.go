@@ -226,7 +226,7 @@ func compareModes(g diffGrammar, text string) outcome {
 	}
 	lexemes := 0
 	for _, ev := range incremental {
-		if ev.Kind == Number && ev.Lexeme != "" {
+		if ev.Kind == Number && ev.HasLexeme {
 			lexemes++
 			if v, err := strconv.ParseFloat(ev.Lexeme, 64); err != nil || v != ev.Value {
 				return outcome{kind: outMismatch, why: fmt.Sprintf("lexeme %q does not spell the value %v", ev.Lexeme, ev.Value)}

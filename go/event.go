@@ -41,22 +41,25 @@ func (k EventKind) String() string {
 
 // Event is one event of JsonEvents/1.
 //
-// Text is a Key's name or a String's text. Value is a Number's value and
-// Lexeme its source text when the source could hand it over (the
-// rule-event adapter reads it off the token), else "": a JSON number is
-// never empty, so the empty string means "no lexeme" and a renderer falls
-// back to the shortest round-trip form of Value. Keeping both is how
-// `50.25` stays `50.25` and a number beyond float64's exact range keeps
-// its digits.
+// Text is a Key's name or a String's text. Value is a Number's value and,
+// with HasLexeme set, Lexeme its source text, when the source could hand
+// it over (the rule-event adapter reads it off the token); without one,
+// HasLexeme is false (Rust's None) and a renderer falls back to the
+// shortest round-trip form of Value. Keeping both is how `50.25` stays
+// `50.25` and a number beyond float64's exact range keeps its digits.
+// HasLexeme, never the text, says whether there is a lexeme: an empty
+// Lexeme with HasLexeme set is the empty lexeme (Rust's Some("")), which
+// spells no JSON number and which a renderer refuses as INVALID_NUMBER.
 //
 // Go strings are immutable, so one type serves as both the event a
 // source hands a sink and the recording a recorder keeps.
 type Event struct {
-	Kind   EventKind
-	Text   string
-	Bool   bool
-	Value  float64
-	Lexeme string
+	Kind      EventKind
+	Text      string
+	Bool      bool
+	HasLexeme bool
+	Value     float64
+	Lexeme    string
 }
 
 // Constructors, for sources, recorders and tests.
@@ -72,9 +75,10 @@ func EvNumber(v float64) Event { return Event{Kind: Number, Value: v} }
 func EvString(s string) Event  { return Event{Kind: String, Text: s} }
 func EvEnd() Event             { return Event{Kind: End} }
 
-// EvNumberLexeme is a number with the source text it was read from.
+// EvNumberLexeme is a number with the source text it was read from; the
+// empty text is a lexeme too. EvNumber is a number without one.
 func EvNumberLexeme(v float64, lexeme string) Event {
-	return Event{Kind: Number, Value: v, Lexeme: lexeme}
+	return Event{Kind: Number, HasLexeme: true, Value: v, Lexeme: lexeme}
 }
 
 // IsStart reports whether the event opens a container.
@@ -94,7 +98,7 @@ func (e Event) IsScalar() bool {
 
 // WithoutLexeme is the event with any number lexeme dropped.
 func (e Event) WithoutLexeme() Event {
-	e.Lexeme = ""
+	e.Lexeme, e.HasLexeme = "", false
 	return e
 }
 
@@ -116,7 +120,7 @@ func (e Event) String() string {
 	case Bool:
 		return strconv.FormatBool(e.Bool)
 	case Number:
-		if e.Lexeme != "" {
+		if e.HasLexeme {
 			return e.Lexeme
 		}
 		return formatFloat(e.Value)
