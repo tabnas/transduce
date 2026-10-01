@@ -56,7 +56,10 @@ What the table says:
 ## What follows for this crate
 
 - Bounded-memory streaming of one large document needs the engine to
-  bound its rule history; until then the incremental source bounds what
+  bound its rule history. It can since engine 0.12.6
+  (`options.rule.history`, tabnas/parser#252), which a host sets on the
+  parser it hands to `ParserSource`; aless sets 3 (rjrodger/aless#33, and
+  "Through aless" below). Without it the incremental source bounds what
   the transducer retains, and the engine's own retention stands.
 - JSON Lines and CSV are parsed a record (or a chunk of records) at a
   time by `LinesSource`, so their memory is bounded whatever the file
@@ -119,22 +122,33 @@ What the table says, in the terms of the engine table above:
 
 ## Through aless
 
-`aless --render` (release build, this container, 2026-09-27, two other
-cargo builds running at the time) on generated record documents, peak
-resident set of the aless process:
+`aless --render` and `aless --paths` (release builds of aless `main` and
+of rjrodger/aless#33, this container, 2026-10-01) on generated record
+documents: the median of three interleaved runs each, and the peak
+resident set of the aless process from `wait4`, which was the same in
+every round. #33 sets the engine's `options.rule.history` to 3 on every
+parser aless makes; `main` keeps the whole history. Both wrote the same
+output every time.
 
-| Input | Export | Throughput | Peak RSS |
+| Input | Run | `main` | history 3 |
 |---|---|---|---|
-| JSON Lines, 24.6 MB | CSV via `LinesSource` | 1.4 MB/s | 10 MB |
-| JSON Lines, 49.3 MB (the same file twice) | CSV via `LinesSource` | 1.4 MB/s | 10 MB |
-| CSV, 30.9 MB | CSV via `LinesSource` | 1.3 MB/s | 39 MB |
-| CSV, 61.8 MB (twice) | CSV via `LinesSource` | 1.3 MB/s | 39 MB |
-| JSON, 24.6 MB, `--path` to the records | CSV, incremental and pruned | 1.24 MB/s | 1634 MB |
-| JSON, 24.6 MB | JSON, incremental | 1.09 MB/s | 1642 MB |
-| YAML, 17.4 MB, `--path` to the records | CSV, incremental, unpruned | 0.93 MB/s | 1311 MB |
+| JSON Lines, 22.2 MB | `--render csv`, `LinesSource` | 21.0 s, 11 MiB | 20.9 s, 11 MiB |
+| JSON Lines, 44.4 MB (the same file twice) | `--render csv`, `LinesSource` | 41.4 s, 11 MiB | 41.9 s, 11 MiB |
+| CSV, 27.5 MB | `--render csv`, `LinesSource` | 30.9 s, 46 MiB | 31.4 s, 46 MiB |
+| CSV, 55.0 MB (twice) | `--render csv`, `LinesSource` | 64.1 s, 46 MiB | 62.8 s, 46 MiB |
+| JSON, 22.6 MB, `--path` to the records | `--render csv`, incremental and pruned | 22.8 s, 1580 MiB | 20.3 s, 311 MiB |
+| JSON, 22.6 MB | `--render json`, incremental | 23.1 s, 1588 MiB | 21.6 s, 617 MiB |
+| YAML, 19.6 MB, `--path` to the records | `--render csv`, incremental, unpruned | 23.7 s, 1286 MiB | 22.2 s, 439 MiB |
+| JSON, 60.5 MB of records | `--paths`, the whole document parsed | 67.2 s, 4675 MiB | 44.6 s, 2103 MiB |
+| JSON, a flat array of 1.5M numbers, 11.8 MB | `--paths` | 14.6 s, 2858 MiB | 10.0 s, 327 MiB |
 
-The line sources hold memory flat whatever the file size. A single JSON
-or YAML document costs what the bare engine parse of it costs (the first
-table: 1640 MB and 1309 MB), because the engine's rule history is what is
-retained; the transducer's own retention is one record. Throughput is the
-engine's parse rate throughout.
+The line sources hold memory flat whatever the file size, and the bound
+does not apply to them: they parse a record at a time. A single JSON or
+YAML document cost what the bare engine parse of it costs, about 1.6 GB
+for 23 MB of records (the first table), because the engine's rule
+history was what was retained. With three steps of it kept, the same
+document takes a fifth of the memory (pruned, to CSV) to two fifths (to
+JSON), and 6 to 11 per cent less time; a whole-document parse of 60 MB
+takes a third less. What remains is the parse's own working set and the
+transducer's one record. Throughput is the engine's parse rate
+throughout.
