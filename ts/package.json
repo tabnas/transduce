@@ -1,0 +1,65 @@
+{
+  "name": "@tabnas/transduce",
+  "version": "0.1.0",
+  "main": "dist/transduce.js",
+  "type": "commonjs",
+  "types": "dist/transduce.d.ts",
+  "description": "Streaming transducers over any tabnas parser: source events, selectors, bounded captures and the table protocol.",
+  "homepage": "https://github.com/tabnas/transduce",
+  "keywords": [
+    "parser",
+    "streaming",
+    "transducer",
+    "json",
+    "csv"
+  ],
+  "author": "Richard Rodger (http://richardrodger.com)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc --build src && tsc --build test",
+    "watch": "tsc --build src test -w",
+    "clean": "rm -rf node_modules dist dist-test package-lock.json",
+    "reset": "npm run clean && npm i && npm run build && npm test",
+    "test": "npm run build && node --enable-source-maps --test \"dist-test/*.test.js\""
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./dist/transduce.js"
+  },
+  "peerDependencies": {
+    "@tabnas/csv": ">=0",
+    "@tabnas/json": ">=0",
+    "@tabnas/jsonic": ">=0",
+    "@tabnas/parser": ">=0"
+  },
+  "devDependencies": {
+    "@tabnas/csv": "*",
+    "@tabnas/feed": "*",
+    "@tabnas/ini": "*",
+    "@tabnas/json": "*",
+    "@tabnas/json5": "*",
+    "@tabnas/jsonc": "*",
+    "@tabnas/jsonic": "*",
+    "@tabnas/jsonl": "*",
+    "@tabnas/markdown": "*",
+    "@tabnas/parser": "*",
+    "@tabnas/support": "*",
+    "@tabnas/toml": "*",
+    "@tabnas/xml": "*",
+    "@tabnas/yaml": "*",
+    "@tabnas/zon": "*",
+    "@types/node": "26.x",
+    "typescript": "7.x"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/tabnas/transduce.git",
+    "directory": "ts"
+  }
+}

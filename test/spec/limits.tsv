@@ -1,0 +1,95 @@
+input	grammar	mode	stage	captures	binding	duplicates	limits	expected	limit	path
+# Limits: each Limits field, set by the `limits` column (a JSON object over
+# Limits::default()), passed and not passed. `stage` is events (the source
+# alone), route (a Router over `captures`) or table (TableFromJson over
+# `binding`), as in route.tsv and table.tsv. A failure is
+# RESOURCE_LIMIT_EXCEEDED and the `limit` column pins the field it names.
+#
+# Every size is UTF-8 bytes: a key or string's encoded length, a number's
+# lexeme (none on the walk, so 0 to the source limit and 8 to a capture),
+# plus NODE_BYTES (16) per retained node. The multibyte rows sit on the
+# boundary, where counting UTF-16 code units or characters gives the
+# other answer.
+#
+# max_depth: the source's containers, in every mode but value, which has
+# no source limits; there the router's own check names it, with a path.
+[[1]]	json	materialize	events				{"max_depth":2}	[["array_start"],["array_start"],["number",1,null],["array_end"],["array_end"],["end"]]
+[[[1]]]	json	materialize	events				{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
+[[[1]]]	json	incremental	events				{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
+{"a":{"b":{}}}	yaml	incremental	events				{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
+[[[1]]]\n	jsonl	lines	events				{"max_depth":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
+[[[1]]]\n	jsonl	lines-incremental	events				{"max_depth":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
+[[[1]]]	json	value	route	[]			{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth	[0][0]
+[[1]]	json	value	route	[]			{"max_depth":2}	["end"]
+# max_key_bytes: é is 2 bytes, 日 3, 😀 4 (two UTF-16 units).
+{"ab":1}	json	incremental	events				{"max_key_bytes":2}	[["object_start"],["key","ab"],["number",1,"1"],["object_end"],["end"]]
+{"abc":1}	json	materialize	events				{"max_key_bytes":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
+{"é":1}	json	incremental	events				{"max_key_bytes":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
+{"é":1}	json	incremental	events				{"max_key_bytes":2}	[["object_start"],["key","é"],["number",1,"1"],["object_end"],["end"]]
+{"日":1}	json	materialize	events				{"max_key_bytes":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
+{"😀":1}	json	incremental	events				{"max_key_bytes":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
+{"😀":1}	json	incremental	events				{"max_key_bytes":4}	[["object_start"],["key","😀"],["number",1,"1"],["object_end"],["end"]]
+{"😀":1}	json	materialize	events				{"max_key_bytes":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
+{"é":1}\n	jsonl	lines	events				{"max_key_bytes":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
+é\n1\n	csv	lines	events				{"max_key_bytes":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
+# max_scalar_bytes: a string's bytes, a number's lexeme; null and
+# booleans are 0.
+["日本"]	json	incremental	events				{"max_scalar_bytes":5}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes
+["日本"]	json	incremental	events				{"max_scalar_bytes":6}	[["array_start"],["string","日本"],["array_end"],["end"]]
+["é"]	json	value	events				{"max_scalar_bytes":1}	[["array_start"],["string","é"],["array_end"],["end"]]
+["é"]	json	materialize	events				{"max_scalar_bytes":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes
+["é"]	json	materialize	events				{"max_scalar_bytes":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes
+["😀"]	json	incremental	events				{"max_scalar_bytes":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes
+[1.500]	json	incremental	events				{"max_scalar_bytes":4}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes
+[1.500]	json	materialize	events				{"max_scalar_bytes":4}	[["array_start"],["number",1.5,null],["array_end"],["end"]]
+[true,null,false]	json	incremental	events				{"max_scalar_bytes":0}	[["array_start"],["bool",true],["null"],["bool",false],["array_end"],["end"]]
+[""]	json	incremental	events				{"max_scalar_bytes":0}	[["array_start"],["string",""],["array_end"],["end"]]
+a\nxé\n	csv	lines	events				{"max_scalar_bytes":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes
+# max_capture_bytes: one materialized capture. {"a":"é"} is 16 + 1 +
+# 16 + 2 = 35 bytes; [1.50] is 16 + 16 + 4 = 36 with its lexeme, 16 + 16
+# + 8 = 40 walked.
+{"a":"é"}	json	incremental	route	[{"tag":"root","select":[]}]			{"max_capture_bytes":34}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_capture_bytes	.
+{"a":"é"}	json	incremental	route	[{"tag":"root","select":[]}]			{"max_capture_bytes":35}	[["root",".",["object",["a","é"]]],"end"]
+[1.50]	json	incremental	route	[{"tag":"root","select":[]}]			{"max_capture_bytes":36}	[["root",".",["array",["number",1.5,"1.50"]]],"end"]
+[1.50]	json	materialize	route	[{"tag":"root","select":[]}]			{"max_capture_bytes":36}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_capture_bytes	.
+[1.50]	json	materialize	route	[{"tag":"root","select":[]}]			{"max_capture_bytes":40}	[["root",".",["array",["number",1.5,null]]],"end"]
+{"rows":[{"a":"x"},{"a":"xyz"}]}	json	incremental	route	[{"tag":"row","select":["rows",{"each":"index"}]}]			{"max_capture_bytes":35}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_capture_bytes	.rows[1]
+# A repeated member gives back the bytes of the value it replaces, but
+# both are held for a moment: 16 + 1 + 16 + 3 + 1 + 16 + 3 = 56.
+{"a":"xyz","a":"xyz"}	json	incremental	route	[{"tag":"root","select":[]}]		last_wins	{"max_capture_bytes":55}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_capture_bytes	.
+{"a":"xyz","a":"xyz"}	json	incremental	route	[{"tag":"root","select":[]}]		last_wins	{"max_capture_bytes":56}	[["root",".",["object",["a","xyz"]]],"end"]
+{"a":"xyz","a":"xyz","a":"xyz"}	json	incremental	route	[{"tag":"root","select":[]}]		last_wins	{"max_capture_bytes":56}	[["root",".",["object",["a","xyz"]]],"end"]
+# max_metadata_bytes: the metadata capture, and an inferred schema's names
+# measured as the array of their strings: 16 + (16 + 1) * 2 = 50 for a
+# and b, 16 + 16 + 2 = 34 for é.
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	table		{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		{"max_metadata_bytes":64}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_metadata_bytes	.response.metadata.fields
+[{"a":1,"b":2}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":49}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_metadata_bytes	[0]
+[{"a":1,"b":2}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":50}	[["schema",["a","b"]],["row",[["number",1,"1"],["number",2,"2"]]],["end"]]
+[{"é":1}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":33}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_metadata_bytes	[0]
+[{"é":1}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":34}	[["schema",["é"]],["row",[["number",1,"1"]]],["end"]]
+# max_columns: from metadata, a static schema (refused when the table is
+# built), an inferred one.
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	table		{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		{"max_columns":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_columns	.response.metadata.fields
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	table		{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		{"max_columns":3}	[["schema",["Identifier","Full name","Balance"]],["row",[["number",123,"123"],"Alice",["number",50.25,"50.25"]]],["row",[["number",456,"456"],"Bob",["number",72,"72"]]],["end"]]
+[]	json	incremental	table		{"schema":{"static":[{"label":"a","source":["a"]},{"label":"b","source":["b"]}]},"rows":[{"each":"index"}]}		{"max_columns":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_columns
+[{"a":1,"b":2}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_columns":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_columns
+# max_record_bytes: a table's row as it is retained, and a line source's
+# record as it is read. The line source counts the record's line ending
+# too, so the same record passes as the last line without one and fails
+# with one (pinned as it stands; reported, not changed).
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	table		{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		{"max_record_bytes":48}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_record_bytes	.response.payload.deep.records[0]
+[{"a":"é"}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_record_bytes":34}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_record_bytes	[0]
+[{"a":"é"}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_record_bytes":35}	[["schema",["a"]],["row",["é"]],["end"]]
+{"a":1}\n{"a":123456}\n	jsonl	lines	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
+{"a":1}\n{"a":123456}\n	jsonl	lines-incremental	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
+{"a":"é"}\n	jsonl	lines	events				{"max_record_bytes":10}	ERROR:RESOURCE_LIMIT_EXCEEDED@1:1	max_record_bytes
+{"a":"é"}\n	jsonl	lines	events				{"max_record_bytes":11}	[["array_start"],["object_start"],["key","a"],["string","é"],["object_end"],["array_end"],["end"]]
+{"a":"é"}	jsonl	lines	events				{"max_record_bytes":10}	[["array_start"],["object_start"],["key","a"],["string","é"],["object_end"],["array_end"],["end"]]
+{"a":"é"}\r\n	jsonl	lines	events				{"max_record_bytes":11}	ERROR:RESOURCE_LIMIT_EXCEEDED@1:1	max_record_bytes
+a\n"long\nquoted\nfield"\n	csv	lines	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
+a\nxé\n	csv	lines	events				{"max_record_bytes":3}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
+a\nxé\n	csv	lines	events				{"max_record_bytes":4}	[["array_start"],["object_start"],["key","a"],["string","xé"],["object_end"],["array_end"],["end"]]
+# max_output_bytes is a renderer's limit: no stage here writes output,
+# so none trips it.
+["output"]	json	incremental	events				{"max_output_bytes":1}	[["array_start"],["string","output"],["array_end"],["end"]]
+["output"]	json	incremental	route	[{"tag":"root","select":[]}]			{"max_output_bytes":1}	[["root",".",["array","output"]],"end"]

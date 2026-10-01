@@ -1,0 +1,66 @@
+input	grammar	mode	captures	duplicates	expected	path
+# Routes: the row's source through a Router over its captures. `captures`
+# is an array of {tag, select, mode}: select is a selector's steps (a
+# string is a property, an integer an index, {"each":"index"} every
+# element, {"each":"member"} every member value); mode is materialize
+# (the default) or observe. `duplicates` is reject (the default),
+# last_wins or first_wins. The expected value lists the deliveries in
+# order, [tag, path] for an observed capture and [tag, path, value] for a
+# materialized one, then "end" when the router called end.
+#
+# The spec's worked example: metadata first, then each record in order.
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	[{"tag":"meta","select":["response","metadata","fields"]},{"tag":"row","select":["response","payload","deep","records",{"each":"index"}]}]		[["meta",".response.metadata.fields",["array",["object",["title","Identifier"],["path",["array","id"]]],["object",["title","Full name"],["path",["array","person","name"]]],["object",["title","Balance"],["path",["array","account","balance"]]]]],["row",".response.payload.deep.records[0]",["object",["id",["number",123,"123"]],["person",["object",["name","Alice"]]],["account",["object",["balance",["number",50.25,"50.25"]]]]]],["row",".response.payload.deep.records[1]",["object",["account",["object",["balance",["number",72,"72"]]]],["id",["number",456,"456"]],["person",["object",["name","Bob"]]]]],"end"]
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	materialize	[{"tag":"meta","select":["response","metadata","fields"]},{"tag":"row","select":["response","payload","deep","records",{"each":"index"}]}]		[["meta",".response.metadata.fields",["array",["object",["title","Identifier"],["path",["array","id"]]],["object",["title","Full name"],["path",["array","person","name"]]],["object",["title","Balance"],["path",["array","account","balance"]]]]],["row",".response.payload.deep.records[0]",["object",["id",["number",123,null]],["person",["object",["name","Alice"]]],["account",["object",["balance",["number",50.25,null]]]]]],["row",".response.payload.deep.records[1]",["object",["account",["object",["balance",["number",72,null]]]],["id",["number",456,null]],["person",["object",["name","Bob"]]]]],"end"]
+# Observed captures may nest; each is delivered at its value's end.
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	[{"tag":"row","select":["response","payload","deep","records",{"each":"index"}],"mode":"observe"},{"tag":"records","select":["response","payload","deep","records"],"mode":"observe"},{"tag":"title","select":["response","metadata","fields",{"each":"index"},"title"],"mode":"observe"}]		[["title",".response.metadata.fields[0].title"],["title",".response.metadata.fields[1].title"],["title",".response.metadata.fields[2].title"],["row",".response.payload.deep.records[0]"],["row",".response.payload.deep.records[1]"],["records",".response.payload.deep.records"],"end"]
+# A route with no captures delivers only end; a selector that matches
+# nothing is silent.
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	[]		["end"]
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	[{"tag":"x","select":["response","nothing"]}]		["end"]
+# Overlapping materializations are refused when the router is built,
+# whichever comes first; two observations may overlap.
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	[{"tag":"rows","select":["response","payload","deep","records",{"each":"index"}]},{"tag":"inner","select":["response","payload","deep","records",2,"x"]}]		ERROR:CAPTURE_OVERLAP_UNSUPPORTED
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	[{"tag":"inner","select":["response","payload","deep","records",2,"x"]},{"tag":"rows","select":["response","payload","deep","records",{"each":"index"}]}]		ERROR:CAPTURE_OVERLAP_UNSUPPORTED
+{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	[{"tag":"rows","select":["response","payload","deep","records",{"each":"index"}],"mode":"observe"},{"tag":"all","select":[]}]		ERROR:CAPTURE_OVERLAP_UNSUPPORTED
+[{"a":1}]	json	incremental	[{"tag":"rows","select":[{"each":"index"}],"mode":"observe"},{"tag":"all","select":[],"mode":"observe"}]		[["rows","[0]"],["all","."],"end"]
+{"a":[1],"b":[2]}	json	incremental	[{"tag":"a","select":["a",{"each":"index"}]},{"tag":"b","select":["b",{"each":"index"}]}]		[["a",".a[0]",["number",1,"1"]],["b",".b[0]",["number",2,"2"]],"end"]
+{"a":{"x":1},"b":{"x":2}}	json	incremental	[{"tag":"each","select":[{"each":"member"}]},{"tag":"ax","select":["a","x"]}]		ERROR:CAPTURE_OVERLAP_UNSUPPORTED
+# Two observations of the same value.
+{"a":[1]}	json	incremental	[{"tag":"one","select":["a"],"mode":"observe"},{"tag":"two","select":["a"],"mode":"observe"}]		[["two",".a"],["one",".a"],"end"]
+# Each step kind.
+{"a":{"x":1},"b":[2],"c":"s"}	json	incremental	[{"tag":"v","select":[{"each":"member"}]}]		[["v",".a",["object",["x",["number",1,"1"]]]],["v",".b",["array",["number",2,"2"]]],["v",".c","s"],"end"]
+[10,20,30]	json	incremental	[{"tag":"v","select":[1]}]		[["v","[1]",["number",20,"20"]],"end"]
+[[1,2],[3],[]]	json	incremental	[{"tag":"v","select":[{"each":"index"},{"each":"index"}]}]		[["v","[0][0]",["number",1,"1"]],["v","[0][1]",["number",2,"2"]],["v","[1][0]",["number",3,"3"]],"end"]
+{"0":1,"1":[5]}	json	incremental	[{"tag":"index","select":[0]},{"tag":"key","select":["1",0]}]		[["key",".\"1\"[0]",["number",5,"5"]],"end"]
+[5,{"0":6}]	json	incremental	[{"tag":"v","select":["0"]}]		["end"]
+42	json	incremental	[{"tag":"root","select":[]}]		[["root",".",["number",42,"42"]],"end"]
+{"v":1.50}	json	incremental	[{"tag":"v","select":["v"]}]		[["v",".v",["number",1.5,"1.50"]],"end"]
+{"v":1.50}	json	materialize	[{"tag":"v","select":["v"]}]		[["v",".v",["number",1.5,null]],"end"]
+{"a":[1,{"b":[true,null,"s"]}]}	json	incremental	[{"tag":"root","select":[]}]		[["root",".",["object",["a",["array",["number",1,"1"],["object",["b",["array",true,null,"s"]]]]]]],"end"]
+# Paths print in jq syntax: a key that is not an identifier is quoted.
+{"odd key":{"é":1,"a_1":2,"1a":3,"":4,"q\"":5,"_":6,"t\\tb":7}}	json	incremental	[{"tag":"v","select":["odd key",{"each":"member"}],"mode":"observe"}]		[["v",".\"odd key\".\"é\""],["v",".\"odd key\".a_1"],["v",".\"odd key\".\"1a\""],["v",".\"odd key\".\"\""],["v",".\"odd key\".\"q\\\"\""],["v",".\"odd key\"._"],["v",".\"odd key\".\"t\\tb\""],"end"]
+# Repeated members inside a capture follow the policy. The incremental
+# source streams every occurrence; the walk has the engine's survivor.
+{"a":1,"a":2}	json	incremental	[{"tag":"root","select":[]}]	reject	ERROR:DUPLICATE_MEMBER	.
+{"a":1,"a":2}	json	incremental	[{"tag":"root","select":[]}]	last_wins	[["root",".",["object",["a",["number",2,"2"]]]],"end"]
+{"a":1,"a":2}	json	incremental	[{"tag":"root","select":[]}]	first_wins	[["root",".",["object",["a",["number",1,"1"]]]],"end"]
+{"a":1,"a":2}	json	materialize	[{"tag":"root","select":[]}]	reject	[["root",".",["object",["a",["number",2,null]]]],"end"]
+{"rows":[{"a":1},{"b":{"c":1,"c":2}}]}	json	incremental	[{"tag":"row","select":["rows",{"each":"index"}]}]	reject	ERROR:DUPLICATE_MEMBER	.rows[1]
+{"x":1,"x":2,"rows":[1]}	json	incremental	[{"tag":"row","select":["rows",{"each":"index"}]}]	reject	[["row",".rows[0]",["number",1,"1"]],"end"]
+# The policy governs members INSIDE a captured value. A repeated member
+# whose value is itself the capture is delivered once per occurrence the
+# source streams, whatever the policy: the incremental source streams
+# both, the walk only the survivor. Pinned as it stands; reported, not
+# changed.
+{"a":{"x":1},"a":{"x":2}}	json	incremental	[{"tag":"a","select":["a"]}]	reject	[["a",".a",["object",["x",["number",1,"1"]]]],["a",".a",["object",["x",["number",2,"2"]]]],"end"]
+{"a":{"x":1},"a":{"x":2}}	json	incremental	[{"tag":"a","select":["a"]}]	last_wins	[["a",".a",["object",["x",["number",1,"1"]]]],["a",".a",["object",["x",["number",2,"2"]]]],"end"]
+{"a":{"x":1},"a":{"x":2}}	json	incremental	[{"tag":"a","select":["a"]}]	first_wins	[["a",".a",["object",["x",["number",1,"1"]]]],["a",".a",["object",["x",["number",2,"2"]]]],"end"]
+{"a":{"x":1},"a":{"x":2}}	json	materialize	[{"tag":"a","select":["a"]}]	reject	[["a",".a",["object",["x",["number",2,null]]]],"end"]
+a: 1\na: 2\nb: [3]\n	yaml	incremental	[{"tag":"root","select":[]}]	last_wins	[["root",".",["object",["a",["number",2,"2"]],["b",["array",["number",3,"3"]]]]],"end"]
+# Any source: yaml, and JSON Lines a line at a time.
+a:\n  - x: 1\n  - x: 2.0\n	yaml	incremental	[{"tag":"row","select":["a",{"each":"index"}]}]		[["row",".a[0]",["object",["x",["number",1,"1"]]]],["row",".a[1]",["object",["x",["number",2,"2.0"]]]],"end"]
+{"a":1}\n{"a":2.5}\n	jsonl	lines-incremental	[{"tag":"row","select":[{"each":"index"}]}]		[["row","[0]",["object",["a",["number",1,"1"]]]],["row","[1]",["object",["a",["number",2.5,"2.5"]]]],"end"]
+{"a":1}\n{"a":2.5}\n	jsonl	lines	[{"tag":"row","select":[{"each":"index"}]}]		[["row","[0]",["object",["a",["number",1,null]]]],["row","[1]",["object",["a",["number",2.5,null]]]],"end"]
+id,n\n1,x\n	csv	lines	[{"tag":"row","select":[{"each":"index"}]}]		[["row","[0]",["object",["id","1"],["n","x"]]],"end"]
+# A source failure reaches the route unchanged.
+{"rows":[{"a":1},\n{"a": }]}	json	incremental	[{"tag":"row","select":["rows",{"each":"index"}]}]		ERROR:INPUT_INVALID@2:7

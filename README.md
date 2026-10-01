@@ -41,6 +41,8 @@ later.
 | [`docs/architecture.md`](docs/architecture.md) | the design, and what was measured before it |
 | [`docs/reference.md`](docs/reference.md) | the protocols, types and codes |
 | [`docs/translation.md`](docs/translation.md) | any format to any other: per-format parts a host composes, and the pilot |
+| [`test/spec/`](test/spec/) | the shared fixtures every runtime runs ([`docs/reference.md`](docs/reference.md#shared-fixtures)) |
+| [`DIVERGENCE.md`](DIVERGENCE.md) | what a runtime may do differently |
 | [`ci/rust/run.sh`](ci/rust/run.sh) | the gate CI runs |
 
 ## Build and test
