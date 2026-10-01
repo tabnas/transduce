@@ -483,16 +483,32 @@ departs from the steps above, and what it measured:
 - **The adapter refuses two more shapes it cannot follow** (tabnas/transduce#12):
   a container the grammar opens inside a map before the member's key
   (#7's case) and a container it streamed that the grammar never stored
-  (a jsonic pair inside a list, dropped when `list.pair` is off), both
-  `STREAMABILITY_UNKNOWN` before anything wrong leaves, so the host's
-  one fallback covers them; the tree contract moved into this crate as
-  `TreeContract` (#11).
+  (a jsonic pair inside a list, dropped when `list.pair` is off). Both
+  are `STREAMABILITY_UNKNOWN` after a protocol-valid prefix and before
+  `End`, and they differ in what that prefix holds. The first is
+  refused when the value opens, so nothing of the member has left. The
+  second is refused where the grammar's next step shows the container
+  was dropped (the frame around it ending, another entry landing,
+  another container opening), and by then the container's own events
+  have left: for `[a:{b:1}]`, whose value is `[]`, the stream holds the
+  whole `{b:1}` before the refusal. A writer that has committed those
+  events cannot take them back, so the host's one fallback covers
+  either case only while nothing has reached the output (aless's
+  writer holds output back before committing it, so a short document
+  falls back whole); past that, the failure is reported with
+  `output: "partial"`, and in the second case the committed part may
+  hold what the value does not. The tree contract moved into this
+  crate as `TreeContract` (#11).
 - **The loss declaration** reaches standard error on a write that
   succeeds, as a JSON object whose `warning` member holds `kind`
   (`"loss"`), `message`, `file`, `render` and `loss`, the render's
-  sentences; an error met while writing carries the sentences as
-  `loss`. It is YAML's alone: `--render json` and `--render csv` write
-  nothing new on standard error.
+  sentences, with the adapter's after them and `adapter` naming it
+  when one ran; an error met while writing carries the sentences as
+  `loss`. In the pilot it was YAML's alone. Now every render that
+  declares a loss writes its own: `--render csv` writes CSV's (every
+  value as text, one empty field for a null and a missing cell) and,
+  over a tree, the inferred table's after them; `--render json`
+  declares none and writes nothing on standard error.
 - **The cost, measured** on 200,000 generated records (33 MB of JSON)
   with a release build on a shared four-core container:
 
