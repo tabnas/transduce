@@ -79,11 +79,13 @@ the two agree (a grammar that merges the two values fails the run with
 list wrapped around a root already streamed, as in a YAML stream of
 several documents, whatever their shapes, or a jsonic top-level implicit
 list; a map rewritten after streaming, as a YAML `<<` merge key does; a
-container opened inside a map before the member's key, as a YAML `?` key
-whose value is a mapping is built) is refused with `STREAMABILITY_UNKNOWN`
-before `End`. The last is a net, and counts against a grammar: one that
-opens a container before its key on a fixture builds every member so, and
-is not verified. A listed grammar that mismatches, or trips the net,
+container opened inside a map before the member's key, as toml, ini, xml
+and feed open a section's or an element's container, and as yaml opened
+the value of the first member of a mapping in a sequence entry until
+tabnas/yaml#107) is refused with `STREAMABILITY_UNKNOWN` before `End`.
+The last is a net, and counts against a grammar: one that opens a
+container before its key on a fixture builds every member so, and is not
+verified. A listed grammar that mismatches, or trips the net,
 fails the test; an unlisted grammar that never does fails too. The
 list today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`,
 `yaml`, `zon` (`docs/reference.md` has the detail); the imperative
