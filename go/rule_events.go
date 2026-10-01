@@ -59,7 +59,6 @@ import (
 	"hash/maphash"
 	"reflect"
 	"strconv"
-	"strings"
 	"unsafe"
 
 	tabnasjson "github.com/tabnas/json/go"
@@ -646,12 +645,14 @@ func jsonlIncremental(l *LinesSource, sink Sink) (Flow, *Fail) {
 	a := newAdapter(sink, l.limits, l.abort, l.metrics, Prune{}, stop)
 	parser := tabnasjson.Make()
 	a.install(parser, l.abort)
-	lines := newLines(l.reader, l.limits.MaxRecordBytes)
+	records := newJSONRecords(l.reader, parser, l.limits.MaxRecordBytes)
+	// The record being read, which an abort the adapter raised names.
+	var reading uint64
 	flow, f := a.send(EvArrayStart())
 	if f == nil && flow == Continue {
 	loop:
 		for {
-			number, line, ok, lf := lines.nextLine()
+			number, record, ok, lf := records.next()
 			if lf != nil {
 				f = lf
 				break
@@ -659,10 +660,8 @@ func jsonlIncremental(l *LinesSource, sink Sink) (Flow, *Fail) {
 			if !ok {
 				break
 			}
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			value, err := parser.Parse(line)
+			reading = number
+			value, err := parser.Parse(record)
 			switch a.status {
 			case statusStopped:
 				flow = Stop
@@ -676,7 +675,7 @@ func jsonlIncremental(l *LinesSource, sink Sink) (Flow, *Fail) {
 			case err == nil && a.idle():
 				fl, wf := a.walkWhole(value)
 				if wf != nil {
-					f = wf
+					f = atRecord(wf, number)
 					break loop
 				}
 				if fl == Stop {
@@ -688,7 +687,7 @@ func jsonlIncremental(l *LinesSource, sink Sink) (Flow, *Fail) {
 				f = notStreamable()
 				break loop
 			default:
-				f = lineFailure(err, number, l.abort)
+				f = lineFailure(err, number, number, l.abort)
 				break loop
 			}
 		}
@@ -702,7 +701,7 @@ func jsonlIncremental(l *LinesSource, sink Sink) (Flow, *Fail) {
 	a.sink.Flush()
 	switch a.status {
 	case statusFailed:
-		return Continue, a.failure
+		return Continue, atRecord(a.failure, reading)
 	case statusStopped:
 		return Stop, nil
 	}
