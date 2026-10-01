@@ -60,7 +60,9 @@ pruning left and for nothing else.
 
 Failure mapping: a sink's `Fail` comes back as it was; a sink that stopped
 is `Ok(Flow::Stop)`; a parse the caller's `AbortFlag` cancelled is
-`ABORTED`; any other engine error is `INPUT_INVALID` with the engine's
+`ABORTED` (from a line source, with the row the record or chunk it was
+reading starts on and no column, since an abort lands between two of the
+engine's steps, where it has no position of its own); any other engine error is `INPUT_INVALID` with the engine's
 code in the message and its row and column (for a line source, the line's
 number and the column within it), in both modes alike: an incremental run
 of a document the grammar refuses fails with the same code and position

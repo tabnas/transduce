@@ -204,8 +204,10 @@ impl<R: BufRead> LinesSource<R> {
                 while let Some((number, record)) = records.next_record()? {
                     let value = parser
                         .parse(record)
-                        .map_err(|e| line_failure(&e, number, &abort))?;
-                    if walk_value(&value, guarded)? == Flow::Stop {
+                        .map_err(|e| line_failure(&e, number, number, &abort))?;
+                    if walk_value(&value, guarded).map_err(|fail| at_record(fail, number))?
+                        == Flow::Stop
+                    {
                         return Ok(Flow::Stop);
                     }
                 }
@@ -234,7 +236,10 @@ impl<R: BufRead> LinesSource<R> {
                         .parse(&chunk.text)
                         .map_err(|e| chunk.failure(&e, &abort))?;
                     for record in records_of(&value) {
-                        if walk_value(record, guarded)? == Flow::Stop {
+                        if walk_value(record, guarded)
+                            .map_err(|fail| at_record(fail, chunk.first_line))?
+                            == Flow::Stop
+                        {
                             return Ok(Flow::Stop);
                         }
                     }
@@ -275,6 +280,8 @@ impl<R: BufRead> LinesSource<R> {
             stop.clone(),
         );
         let mut records = JsonRecords::new(reader, &parser, limits.max_record_bytes);
+        // The record being read, which an abort the adapter raised names.
+        let mut reading = None;
         let mut outcome = rule_events::lock(&shared).send(JsonEvent::ArrayStart);
         if outcome.as_ref().is_ok_and(|flow| *flow == Flow::Continue) {
             outcome = loop {
@@ -283,6 +290,7 @@ impl<R: BufRead> LinesSource<R> {
                     Ok(None) => break Ok(Flow::Continue),
                     Err(fail) => break Err(fail),
                 };
+                reading = Some(number);
                 let parsed = parser.parse(record);
                 let mut adapter = rule_events::lock(&shared);
                 match adapter.status() {
@@ -296,10 +304,10 @@ impl<R: BufRead> LinesSource<R> {
                     Ok(value) if adapter.idle() => match adapter.walk_whole(&value) {
                         Ok(Flow::Continue) => adapter.reset(),
                         Ok(Flow::Stop) => break Ok(Flow::Stop),
-                        Err(fail) => break Err(fail),
+                        Err(fail) => break Err(at_record(fail, number)),
                     },
                     Ok(_) => break Err(rule_events::not_streamable()),
-                    Err(e) => break Err(line_failure(&e, number, &abort)),
+                    Err(e) => break Err(line_failure(&e, number, number, &abort)),
                 }
             };
         }
@@ -315,7 +323,10 @@ impl<R: BufRead> LinesSource<R> {
         }
         let (status, sink) = adapter.finish();
         let outcome = match status {
-            Status::Failed(fail) => Err(fail),
+            Status::Failed(fail) => Err(match reading {
+                Some(number) => at_record(fail, number),
+                None => fail,
+            }),
             Status::Stopped => Ok(Flow::Stop),
             Status::Running => outcome,
         };
@@ -340,12 +351,27 @@ fn install_guard(parser: &mut Tabnas, abort: &AbortFlag) {
     parser.parse_guard(GUARD, move |_ctx| !flag.is_aborted());
 }
 
-/// An engine error on one line: the line's number is the row.
-fn line_failure(error: &tabnas::TabnasError, line: u64, abort: &AbortFlag) -> Fail {
+/// An engine error in the record or chunk that starts on row `start`, at
+/// row `line` of the input. An abort names `start` and no column: it lands
+/// between two of the engine's steps, where the engine often holds no
+/// token to place it at and falls back to 1:1 of the text it was parsing,
+/// so its own position says nothing.
+fn line_failure(error: &tabnas::TabnasError, line: u64, start: u64, abort: &AbortFlag) -> Fail {
     let mut fail = engine_failure(error, abort);
-    if fail.code != Code::Aborted {
+    if fail.code == Code::Aborted {
+        fail.row = Some(start);
+    } else {
         fail.row = Some(line);
         fail.column = Some(error.col as u64);
+    }
+    fail
+}
+
+/// A failure while the record or chunk that starts on row `start` was
+/// read: an abort that names no row names that one.
+fn at_record(mut fail: Fail, start: u64) -> Fail {
+    if fail.code == Code::Aborted && fail.row.is_none() {
+        fail.row = Some(start);
     }
     fail
 }
@@ -806,7 +832,7 @@ impl Chunk {
             // The error is in the prepended header itself.
             1
         };
-        line_failure(error, line, abort)
+        line_failure(error, line, self.first_line, abort)
     }
 }
 
@@ -1539,6 +1565,73 @@ mod tests {
             .abort(abort)
             .run_owned(Vec::<OwnedJsonEvent>::new());
         assert_eq!(r.unwrap_err().code, Code::Aborted);
+    }
+
+    #[test]
+    fn an_abort_names_the_row_the_record_or_chunk_it_was_reading_starts_on() {
+        // An abort lands between two of the engine's steps, where it has no
+        // position of its own, so the run names the row the record (JSON
+        // Lines) or chunk (CSV) it was reading starts on, and no column.
+        let aborter = |abort: AbortFlag, after: usize| {
+            let mut n = 0;
+            FnSink(move |_ev: JsonEvent<'_>| {
+                n += 1;
+                if n == after {
+                    abort.abort();
+                }
+                Ok(Flow::Continue)
+            })
+        };
+        let raised = |already: bool| {
+            let abort = AbortFlag::new();
+            if already {
+                abort.abort();
+            }
+            abort
+        };
+        // Raised with the second record's first event, which the owned
+        // path emits during that record's parse and the borrowed one while
+        // it walks the value: the run stops in that record, which starts on
+        // row 3. Already raised: the run's first event fails, before any
+        // record is read, and names no row.
+        let text = "{\"a\":1}\n\n{\"a\":2}\n{\"a\":3}\n";
+        for (after, row) in [(6, Some(3)), (0, None)] {
+            let abort = raised(after == 0);
+            let err = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
+                .abort(abort.clone())
+                .run(&mut aborter(abort, after))
+                .unwrap_err();
+            assert_eq!(
+                (err.code, err.row, err.column),
+                (Code::Aborted, row, None),
+                "{err}"
+            );
+            let abort = raised(after == 0);
+            let (r, _) = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
+                .abort(abort.clone())
+                .run_owned(aborter(abort, after));
+            let err = r.unwrap_err();
+            assert_eq!(
+                (err.code, err.row, err.column),
+                (Code::Aborted, row, None),
+                "{err}"
+            );
+        }
+        // CSV: the first row of the chunk, with a chunk for each record, and
+        // with one chunk for the whole text.
+        for (chunk_bytes, row) in [(0, 3), (DEFAULT_CHUNK_BYTES, 1)] {
+            let abort = AbortFlag::new();
+            let err = LinesSource::new(Cursor::new("a\n1\n2\n3\n"), LineFormat::csv())
+                .abort(abort.clone())
+                .chunk_bytes(chunk_bytes)
+                .run(&mut aborter(abort, 5))
+                .unwrap_err();
+            assert_eq!(
+                (err.code, err.row, err.column),
+                (Code::Aborted, Some(row), None),
+                "chunk {chunk_bytes}: {err}"
+            );
+        }
     }
 
     #[test]

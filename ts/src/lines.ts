@@ -582,14 +582,29 @@ function utf8Invalid(b: Uint8Array): number {
   return -1
 }
 
-// An engine error on one line: the line's number is the row.
-function lineFailure(error: unknown, line: number, abort: AbortFlag): Fail {
+// An engine error in the record or chunk that starts on row `start`, at
+// row `line` of the input. An abort names `start` and no column: it lands
+// between two of the engine's steps, where the engine often holds no token
+// to place it at and falls back to 1:1 of the text it was parsing, so its
+// own position says nothing.
+function lineFailure(error: unknown, line: number, start: number, abort: AbortFlag): Fail {
   const fail = engineFailure(error, abort)
-  if ('ABORTED' !== fail.code) {
+  if ('ABORTED' === fail.code) {
+    fail.row = start
+  } else {
     fail.row = line
     fail.col = enginePosition(error)?.col ?? 0
   }
   return fail
+}
+
+// A failure while the record or chunk that starts on row `start` was read:
+// an abort that names no row names that one.
+function atRecord(error: unknown, start: number): unknown {
+  if (error instanceof Fail && 'ABORTED' === error.code && undefined === error.row) {
+    error.row = start
+  }
+  return error
 }
 
 // JSON Lines records from the input's pieces. A record ends at a line
@@ -722,9 +737,13 @@ class JsonlWalk implements Driver {
     try {
       value = this.parser.parse(text)
     } catch (err) {
-      throw lineFailure(err, number, this.abort)
+      throw lineFailure(err, number, number, this.abort)
     }
-    return walkValue(value, this.guarded)
+    try {
+      return walkValue(value, this.guarded)
+    } catch (err) {
+      throw atRecord(err, number)
+    }
   }
 
   finish(): Flow {
@@ -747,6 +766,8 @@ class JsonlIncremental implements Driver {
   private adapter: Adapter<Sink>
   private parser: any
   private abort: AbortFlag
+  // The record being read, which an abort the adapter raised names.
+  private reading = 0
 
   constructor(sink: Sink, options: DriverOptions) {
     const stop = new AbortFlag()
@@ -768,7 +789,9 @@ class JsonlIncremental implements Driver {
   // The adapter's own outcome, when it stopped or failed inside a parse.
   private status(): Flow | null {
     const status = this.adapter.status
-    if ('failed' === status.type) throw status.error
+    if ('failed' === status.type) {
+      throw 0 < this.reading ? atRecord(status.error, this.reading) : status.error
+    }
     if ('stopped' === status.type) return 'stop'
     return null
   }
@@ -782,6 +805,7 @@ class JsonlIncremental implements Driver {
   }
 
   private record(number: number, text: string): Flow {
+    this.reading = number
     let parsed: { ok: true; value: unknown } | { ok: false; error: unknown }
     try {
       parsed = { ok: true, value: this.parser.parse(text) }
@@ -791,13 +815,19 @@ class JsonlIncremental implements Driver {
     const status = this.status()
     if (null !== status) return status
     const adapter = this.adapter
-    if (!parsed.ok) throw lineFailure(parsed.error, number, this.abort)
+    if (!parsed.ok) throw lineFailure(parsed.error, number, number, this.abort)
     if (adapter.complete()) {
       adapter.reset()
       return 'continue'
     }
     if (adapter.idle()) {
-      if ('stop' === adapter.walkWhole(parsed.value)) return 'stop'
+      let flow: Flow
+      try {
+        flow = adapter.walkWhole(parsed.value)
+      } catch (err) {
+        throw atRecord(err, number)
+      }
+      if ('stop' === flow) return 'stop'
       adapter.reset()
       return 'continue'
     }
@@ -1191,12 +1221,16 @@ class CsvWalk implements Driver {
       const rowInChunk = Math.max(pos?.row ?? 0, 1)
       // An error in the prepended header itself is the file's first line.
       const line = rowInChunk > prefixLines ? firstLine + rowInChunk - prefixLines - 1 : 1
-      throw lineFailure(err, line, this.abort)
+      throw lineFailure(err, line, firstLine, this.abort)
     }
     // The grammar returns an array of records; anything else has none.
     const records = Array.isArray(value) ? value : []
-    for (const record of records) {
-      if ('stop' === walkValue(record, this.guarded)) return 'stop'
+    try {
+      for (const record of records) {
+        if ('stop' === walkValue(record, this.guarded)) return 'stop'
+      }
+    } catch (err) {
+      throw atRecord(err, firstLine)
     }
     return 'continue'
   }

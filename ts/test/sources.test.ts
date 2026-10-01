@@ -470,6 +470,42 @@ describe('LinesSource', () => {
     assert.equal(w.end(), 'stop')
   })
 
+  it('an abort names the row the record or chunk it was reading starts on', () => {
+    // An abort lands between two of the engine's steps, where it has no
+    // position of its own, so the run names the row the record (JSON Lines)
+    // or chunk (CSV) it was reading starts on, and no column.
+    const aborter = (abort: AbortFlag, after: number) => {
+      let n = 0
+      return new FnSink(() => {
+        if (++n === after) abort.abort()
+        return 'continue'
+      })
+    }
+    // Raised with the second record's first event, which the incremental
+    // path emits during that record's parse and the walk while it walks the
+    // value: the run stops in that record, which starts on row 3. Already
+    // raised: the run's first event fails, before any record is read, and
+    // names no row.
+    const text = '{"a":1}\n\n{"a":2}\n{"a":3}\n'
+    for (const [after, row] of [[6, 3], [0, undefined]] as [number, number | undefined][]) {
+      for (const path of ['run', 'runIncremental'] as const) {
+        const abort = new AbortFlag()
+        if (0 === after) abort.abort()
+        const f = failOf(() => lines(text, LineFormat.jsonl(), (s) => s.abort(abort))[path](aborter(abort, after)))
+        assert.deepEqual([f.code, f.row, f.col], ['ABORTED', row, undefined], `${path}, after ${after}: ${f}`)
+      }
+    }
+    // CSV: the first row of the chunk, with a chunk for each record, and
+    // with one chunk for the whole text.
+    for (const [chunk, row] of [[0, 3], [256 * 1024, 1]]) {
+      const abort = new AbortFlag()
+      const f = failOf(() =>
+        lines('a\n1\n2\n3\n', LineFormat.csv(), (s) => s.abort(abort).chunkBytes(chunk)).run(aborter(abort, 5)),
+      )
+      assert.deepEqual([f.code, f.row, f.col], ['ABORTED', row, undefined], `chunk ${chunk}: ${f}`)
+    }
+  })
+
   it('input that is not UTF-8 is invalid input at its line and column', () => {
     const bytes = Buffer.concat([Buffer.from('{"a":1}\n{"a":"'), Buffer.from([0xff]), Buffer.from('"}\n')])
     for (const path of ['run', 'runIncremental'] as const) {
