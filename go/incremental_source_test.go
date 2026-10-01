@@ -1,7 +1,5 @@
 // Copyright (c) 2026 tabnas, MIT License
 
-//go:build tabnas_nodecell
-
 package tabnastransduce
 
 // The incremental source's own tests, ported from rs/src/source/parser.rs

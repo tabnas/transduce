@@ -8,7 +8,7 @@ package tabnastransduce
 // capture at a time, so the bytes retained at their peak depend on the
 // largest row, never on how many rows there are. Ten times the rows of
 // the same size must leave captured_bytes_high (and so
-// retained_bytes_high) exactly where it was. With the adapter, the test
+// retained_bytes_high) exactly where it was. In ModeIncremental the test
 // also looks where pruning acts: the engine's tree after the run must
 // hold no row for 200 rows and none for 2000, while the same run without
 // pruning holds every row.
@@ -61,10 +61,7 @@ func retentionRun(t *testing.T, rows int, mode SourceMode) left {
 }
 
 func TestTenTimesTheRowsLeaveTheRetainedHighWaterFlat(t *testing.T) {
-	modes := []SourceMode{MaterializeMode()}
-	if AdapterBuilt() {
-		modes = append(modes, IncrementalMode(PruneUnderSelector(recordsSelector())))
-	}
+	modes := []SourceMode{MaterializeMode(), IncrementalMode(PruneUnderSelector(recordsSelector()))}
 	for _, mode := range modes {
 		one := retentionRun(t, 200, mode)
 		ten := retentionRun(t, 2000, mode)
@@ -90,10 +87,7 @@ func TestTenTimesTheRowsLeaveTheRetainedHighWaterFlat(t *testing.T) {
 // The control: without pruning the engine's tree holds every row, so the
 // assertion above can fail if pruning stops.
 func TestWithoutPruningTheEnginesTreeHoldsEveryRow(t *testing.T) {
-	mode := MaterializeMode()
-	if AdapterBuilt() {
-		mode = IncrementalMode(Prune{})
-	}
+	mode := IncrementalMode(Prune{})
 	one := retentionRun(t, 200, mode)
 	ten := retentionRun(t, 2000, mode)
 	if one.treeRows != 200 || ten.treeRows != 2000 || ten.treeBytes <= 9*one.treeBytes || ten.capturedHigh != one.capturedHigh {

@@ -4,10 +4,9 @@ package tabnastransduce
 
 // The shared fixtures in ../test/spec, run through tabnas-support's
 // Runner as every tabnas repository runs its fixtures; the harness is
-// harness_test.go. Every row runs, except, in a build without the
-// rule-event adapter, the rows that need it (needsAdapter), which are
-// skipped by name; and the rows specDivergences lists, each a measured
-// difference between this runtime and Rust that DIVERGENCE.md records.
+// harness_test.go. Every row runs, except the rows specDivergences lists,
+// each a measured difference between this runtime and Rust that
+// DIVERGENCE.md records.
 
 import (
 	"fmt"
@@ -20,21 +19,12 @@ import (
 
 // specDivergences is the rows this runtime does not reproduce, by file
 // and then by grammar, mode and input (the input column as written in
-// the fixture, tab-separated), and why. Each is a difference in a Go
-// grammar module, measured against Rust, that DIVERGENCE.md records; none
-// is this package's.
-var specDivergences = map[string]map[string]string{
-	"events.tsv": {
-		"yaml\tmaterialize\tbase: &b\\n  x: 1\\nd:\\n  <<: *b\\n  y: 2\\n": "tabnas-yaml's Go grammar " +
-			"resolves a `<<` merge key with the merged members FIRST ({x:1, y:2}); Rust's puts them " +
-			"after the mapping's own ({y:2, x:1})",
-	},
-	"lines.tsv": {
-		"csv\tlines\ta,b\\n1,2\\n3,\"x\\n4,5\\n": "tabnas-csv's Go grammar reports an " +
-			"unterminated quoted field at the row where the source ENDS and the field's column " +
-			"(5:3 for the whole file); Rust reports the field's own row and column (3:3)",
-	},
-}
+// the fixture, tab-separated), and why. Each must be a difference
+// DIVERGENCE.md records, and each must name a row: a stale entry fails
+// the run. There are none today. The yaml `<<` merge-key order and the
+// csv unterminated-quote position were listed here until tabnas/yaml#109
+// and tabnas/csv#86 brought the Go grammars into line with Rust.
+var specDivergences = map[string]map[string]string{}
 
 func divergenceKey(row *support.Row, inputCol string) string {
 	return row.Named("grammar") + "\t" + row.Named("mode") + "\t" + row.Named(inputCol)
@@ -57,18 +47,16 @@ func runSpec(t *testing.T, file, inputCol string, stage func(testing.TB, *suppor
 		},
 	}
 	var count specCount
+	used := map[string]bool{}
 	t.Run("spec: "+file, func(t *testing.T) {
 		for _, row := range spec.Rows {
 			input := row.UnescNamed(inputCol)
 			expected := row.Named("expected")
 			count.rows++
 			t.Run(fmt.Sprintf("row %d: %q", row.Line, input), func(t *testing.T) {
-				if !AdapterBuilt() && needsAdapter(row) {
-					count.skipped++
-					t.Skipf("%s: %s %s needs the rule-event adapter (build tag tabnas_nodecell)",
-						row.Where(), row.Named("grammar"), row.Named("mode"))
-				}
-				if why, ok := specDivergences[file][divergenceKey(row, inputCol)]; ok {
+				key := divergenceKey(row, inputCol)
+				if why, ok := specDivergences[file][key]; ok {
+					used[key] = true
 					count.skipped++
 					t.Skipf("%s: a runtime divergence: %s", row.Where(), why)
 				}
@@ -80,10 +68,13 @@ func runSpec(t *testing.T, file, inputCol string, stage func(testing.TB, *suppor
 			})
 		}
 	})
-	t.Logf("%s: %d rows, %d passed, %d skipped (adapter built: %v)",
-		file, count.rows, count.passed, count.skipped, AdapterBuilt())
-	fmt.Printf("spec %s: %d rows, %d passed, %d skipped (adapter built: %v)\n",
-		file, count.rows, count.passed, count.skipped, AdapterBuilt())
+	for key := range specDivergences[file] {
+		if !used[key] {
+			t.Errorf("%s: the divergence %q names no row; it is stale, remove it", file, key)
+		}
+	}
+	t.Logf("%s: %d rows, %d passed, %d skipped", file, count.rows, count.passed, count.skipped)
+	fmt.Printf("spec %s: %d rows, %d passed, %d skipped\n", file, count.rows, count.passed, count.skipped)
 }
 
 func TestSpecEvents(t *testing.T) { runSpec(t, "events.tsv", "input", eventsStage) }

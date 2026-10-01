@@ -13,10 +13,12 @@ package tabnastransduce
 // directions, so it can rot in neither. A grammar not listed still works
 // through ModeMaterialize and ValueSource; it just retains the whole
 // value, and ParserSource refuses to run it incrementally.
-//
-// The adapter needs the engine's node-cell identity, built only with the
-// tabnas_nodecell tag (see the package documentation); without it the
-// list is empty.
+
+// incrementalGrammars is the grammars incremental_test.go verified in
+// this runtime.
+var incrementalGrammars = []string{
+	"json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "yaml", "zon",
+}
 
 // IncrementalGrammars is the grammars whose incremental events never
 // contradict the whole-value walk on any fixture, by the name their
@@ -34,7 +36,3 @@ func Incremental(grammar string) bool {
 	}
 	return false
 }
-
-// AdapterBuilt reports whether this build has the rule-event adapter
-// (the tabnas_nodecell build tag).
-func AdapterBuilt() bool { return adapterBuilt }

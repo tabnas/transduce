@@ -1,0 +1,24 @@
+# CI caller: the org-shared polyglot workflow over ts/ and go/. The Rust
+# crate has its own gate, rust.yml, because polyglot-ci takes no Rust input.
+# Live. Change it here, in a reviewed pull request: session credentials
+# can push .github/workflows/* (admin DECISIONS.md ADR-8, as amended
+# 2026-09-24).
+#
+# `deps` is every @tabnas package ts/package.json declares, plus debug
+# (which json and the jsonic grammars build with) and hoover (which ini
+# builds with), in dependency-first order. polyglot-ci clones each at
+# main: the TypeScript job links the clones over the published copies,
+# and the Go job puts every cloned module in a go.work. So both ports run
+# against the siblings' main, as rs/ does through ci/rust/run.sh.
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  ci:
+    uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
+    with:
+      deps: "parser support debug json jsonic jsonl jsonc json5 yaml toml hoover ini csv xml zon markdown feed"

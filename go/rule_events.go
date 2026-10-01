@@ -1,7 +1,5 @@
 // Copyright (c) 2026 tabnas, MIT License
 
-//go:build tabnas_nodecell
-
 package tabnastransduce
 
 // The rule-event adapter: JsonEvents/1 from a live tabnas parse.

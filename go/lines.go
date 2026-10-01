@@ -144,22 +144,13 @@ func (l *LinesSource) Run(sink Sink) (Flow, *Fail) {
 // RunIncremental drives sink with JSON Lines through the rule-event
 // adapter (lexemes kept), and CSV through the walk. It installs the
 // adapter on tabnas-json without ParserSource's gate, which is sound only
-// while json is verified, so a build in which it is not (no adapter)
-// refuses a JSON Lines run with STREAMABILITY_UNKNOWN before reading.
+// while json is verified (TestTheLineSourcesGrammarIsVerified holds it
+// so, as the Rust crate's the_line_sources_grammar_is_verified does).
 func (l *LinesSource) RunIncremental(sink Sink) (Flow, *Fail) {
 	if l.format.Kind == FormatJSONL {
-		if !Incremental("json") {
-			return Continue, unverifiedLines()
-		}
 		return jsonlIncremental(l, sink)
 	}
 	return l.Run(sink)
-}
-
-func unverifiedLines() *Fail {
-	return NewFail(CodeStreamabilityUnknown,
-		`the JSON Lines incremental path needs grammar "json" in IncrementalGrammars, and this build `+
-			`verifies none (it has no incremental adapter); run LinesSource.Run`)
 }
 
 func lineGuard(parser *tabnas.Tabnas, abort *AbortFlag) *parseGuard {

@@ -1,7 +1,5 @@
 // Copyright (c) 2026 tabnas, MIT License
 
-//go:build tabnas_nodecell
-
 package tabnastransduce
 
 // The differential suite behind IncrementalGrammars, ported from
@@ -351,25 +349,29 @@ func moduleGrammars(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct := map[string]bool{}
+	var direct []string
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "require"))
 		if strings.Contains(line, "// indirect") {
 			continue
 		}
-		if f := strings.Fields(line); len(f) >= 2 && strings.HasPrefix(f[0], "github.com/tabnas/") {
-			direct[f[0]] = true
+		if f := strings.Fields(line); len(f) >= 2 && strings.HasPrefix(f[0], "github.com/tabnas/") &&
+			f[0] != "github.com/tabnas/parser/go" {
+			direct = append(direct, f[0])
 		}
 	}
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Path}}\t{{.Dir}}", "all").Output()
+	// The direct requires by name, not `all`: in a workspace (the fleet's
+	// go.work), `all` is every member's build list, and one unrelated
+	// member requiring an unpublished version fails the whole listing.
+	out, err := exec.Command("go", append([]string{"list", "-m", "-f", "{{.Path}}\t{{.Dir}}"}, direct...)...).Output()
 	if err != nil {
 		t.Fatalf("go list -m: %v", err)
 	}
 	var names []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		path, dir, ok := strings.Cut(line, "\t")
-		if !ok || !direct[path] || dir == "" || path == "github.com/tabnas/parser/go" {
-			continue
+		if !ok || dir == "" {
+			t.Fatalf("go list -m: no directory for %q (run `go mod download`)", line)
 		}
 		mod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 		if err != nil {

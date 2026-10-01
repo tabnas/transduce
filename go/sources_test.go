@@ -3,8 +3,7 @@
 package tabnastransduce
 
 // Ported from the Rust unit tests in rs/src/source/{mod,parser,lines}.rs,
-// in the modes this build has: ModeMaterialize always, ModeIncremental
-// when the adapter is built.
+// in both modes.
 
 import (
 	"bufio"
@@ -16,12 +15,9 @@ import (
 
 const parserDoc = `{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}`
 
-// sourceModes is every mode this build can run.
+// sourceModes is every mode a ParserSource runs.
 func sourceModes() []SourceMode {
-	if AdapterBuilt() {
-		return []SourceMode{MaterializeMode(), IncrementalMode(Prune{})}
-	}
-	return []SourceMode{MaterializeMode()}
+	return []SourceMode{MaterializeMode(), IncrementalMode(Prune{})}
 }
 
 func record(mode SourceMode, src string) (*Fail, []Event) {
@@ -50,33 +46,28 @@ func TestIncrementalModeNeedsAVerifiedGrammarNameAndEmitsNothingWithoutOne(t *te
 	if f == nil || f.Code != CodeStreamabilityUnknown || len(rec.Events) != 0 {
 		t.Fatal(f)
 	}
-	if AdapterBuilt() && !strings.Contains(f.Message, "ParserSource.Grammar") {
+	if !strings.Contains(f.Message, "ParserSource.Grammar") {
 		t.Fatal(f)
 	}
 	_, f = NewParserSource(makeGrammar("csv"), "a,b\n1,2\n").Grammar("csv").Mode(IncrementalMode(Prune{})).Run(&rec)
 	if f == nil || f.Code != CodeStreamabilityUnknown || len(rec.Events) != 0 {
 		t.Fatal(f)
 	}
-	if AdapterBuilt() && !strings.Contains(f.Message, `"csv"`) {
+	if !strings.Contains(f.Message, `"csv"`) {
 		t.Fatal(f)
 	}
 	// Materialize needs no name.
 	if _, f := NewParserSource(makeGrammar("csv"), "a,b\n1,2\n").Run(&rec); f != nil || rec.Events[len(rec.Events)-1].Kind != End {
 		t.Fatal(f)
 	}
-	// The unverified switch lifts the gate for the suite: with the adapter,
-	// csv then runs and is refused during the parse; without it, the build
-	// has nothing to run.
+	// The unverified switch lifts the gate for the suite: csv then runs
+	// and is refused during the parse.
 	rec = Recorder{}
 	_, f = NewParserSource(makeGrammar("csv"), "a,b\n1,2\n").Unverified().Mode(IncrementalMode(Prune{})).Run(&rec)
 	if f == nil || f.Code != CodeStreamabilityUnknown || hasEndEvent(rec.Events) {
 		t.Fatal(f)
 	}
-	if AdapterBuilt() {
-		if !strings.Contains(f.Message, "the incremental source cannot follow a grammar that builds") || len(rec.Events) == 0 {
-			t.Fatal(f, rec.Events)
-		}
-	} else if len(rec.Events) != 0 || !strings.Contains(f.Message, "tabnas_nodecell") {
+	if !strings.Contains(f.Message, "the incremental source cannot follow a grammar that builds") || len(rec.Events) == 0 {
 		t.Fatal(f, rec.Events)
 	}
 }
@@ -233,12 +224,6 @@ func TestJSONLMatchesTheWholeFileParseAtEveryReaderBoundary(t *testing.T) {
 		}
 		rec = Recorder{}
 		_, f := NewLinesSource(trickled(linesJSONL, step), JSONLFormat()).RunIncremental(&rec)
-		if !AdapterBuilt() {
-			if f == nil || f.Code != CodeStreamabilityUnknown || len(rec.Events) != 0 {
-				t.Fatalf("refused before reading: %v %v", f, rec.Events)
-			}
-			continue
-		}
 		var stripped []Event
 		lexeme := false
 		for _, ev := range rec.Events {
@@ -257,11 +242,9 @@ func TestABadJSONLLineNamesItsLineNumber(t *testing.T) {
 	if f == nil || f.Code != CodeInputInvalid || f.Row != 3 || f.Column != 7 {
 		t.Fatal(f)
 	}
-	if AdapterBuilt() {
-		_, f = NewLinesSource(strings.NewReader(text), JSONLFormat()).RunIncremental(&Recorder{})
-		if f == nil || f.Code != CodeInputInvalid || f.Row != 3 {
-			t.Fatal(f)
-		}
+	_, f = NewLinesSource(strings.NewReader(text), JSONLFormat()).RunIncremental(&Recorder{})
+	if f == nil || f.Code != CodeInputInvalid || f.Row != 3 {
+		t.Fatal(f)
 	}
 }
 
@@ -271,9 +254,6 @@ func TestEmptyInputIsAnEmptyArrayForBothFormats(t *testing.T) {
 		NewLinesSource(strings.NewReader(""), format).Run(&rec)
 		if !eventsEqualCore(rec.Events, []Event{EvArrayStart(), EvArrayEnd(), EvEnd()}) {
 			t.Fatal(rec.Events)
-		}
-		if format.Kind == FormatJSONL && !AdapterBuilt() {
-			continue
 		}
 		rec = Recorder{}
 		if _, f := NewLinesSource(strings.NewReader("\n\n"), format).RunIncremental(&rec); f != nil || len(rec.Events) != 3 {
@@ -416,9 +396,6 @@ func TestAStopAndAnAbortEndTheRunOnBothPaths(t *testing.T) {
 	abort.Abort()
 	if _, f := NewLinesSource(strings.NewReader(text), JSONLFormat()).Abort(abort).Run(&Recorder{}); f == nil || f.Code != CodeAborted {
 		t.Fatal(f)
-	}
-	if !AdapterBuilt() {
-		return
 	}
 	if flow, f := NewLinesSource(strings.NewReader(text), JSONLFormat()).RunIncremental(stopper()); f != nil || flow != Stop {
 		t.Fatal(flow, f)

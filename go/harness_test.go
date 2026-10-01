@@ -37,28 +37,6 @@ import (
 // unread.
 var specFixtures = []string{"events.tsv", "limits.tsv", "lines.tsv", "route.tsv", "scan.tsv", "table.tsv"}
 
-// rustIncremental is the Rust crate's verified list, which the fixtures'
-// incremental rows were written against: a row that streams one of these
-// grammars incrementally needs the adapter.
-var rustIncremental = map[string]bool{
-	"json": true, "json5": true, "jsonc": true, "jsonic": true,
-	"jsonl": true, "markdown": true, "yaml": true, "zon": true,
-}
-
-// needsAdapter reports whether a row runs the rule-event adapter: an
-// incremental run of a grammar the Rust list verifies, or JSON Lines on
-// the line source's incremental path. Such a row is skipped, by name, in
-// a build without the adapter.
-func needsAdapter(row *support.Row) bool {
-	switch row.Named("mode") {
-	case "incremental":
-		return rustIncremental[row.Named("grammar")]
-	case "lines-incremental":
-		return row.Named("grammar") == "jsonl"
-	}
-	return false
-}
-
 func specDir(t *testing.T) string {
 	t.Helper()
 	dir, err := support.FindSpecDir("")

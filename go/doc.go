@@ -27,18 +27,17 @@
 // the contracts, and the shared fixtures in ../test/spec pin them for
 // every runtime.
 //
-// # The incremental source in this build
+// # The incremental source
 //
 // ParserSource's SourceMode Incremental (and LinesSource's JSON Lines
 // RunIncremental) turns the engine's rule events into source events as
-// the parse proceeds. It needs the engine's node-cell identity
-// (tabnas.Rule.NodeCell and SetNode), which a released Go engine does not
-// have yet, so the adapter is compiled only with the build tag
-// `tabnas_nodecell`. Without the tag the verified list
-// ([IncrementalGrammars]) is empty and every incremental run is refused
-// with STREAMABILITY_UNKNOWN before the parse, exactly as an unlisted
-// grammar is refused; Materialize, ValueSource and the walking line
-// sources are complete in either build.
+// the parse proceeds. It follows the containers the rules build by the
+// engine's node-cell identity (tabnas.Rule.NodeCell and SetNode, in
+// github.com/tabnas/parser/go from v0.12.8). It runs for the grammars
+// [IncrementalGrammars] lists, which the differential suite verifies in
+// this runtime, and refuses any other grammar with STREAMABILITY_UNKNOWN
+// before the parse; Materialize, ValueSource and the walking line
+// sources take every grammar.
 package tabnastransduce
 
 // VERSION is this module's version. It must equal rs/Cargo.toml's

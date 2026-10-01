@@ -8,6 +8,7 @@ description = "Streaming transducers over any tabnas parser: source events, sele
 license = "MIT"
 repository = "https://github.com/tabnas/transduce"
 readme = "README.md"
+include = ["src/**", "README.md", "LICENSE"]
 keywords = ["parser", "streaming", "transducer", "json", "csv"]
 categories = ["parsing", "encoding"]
 
@@ -18,10 +19,12 @@ path = "src/lib.rs"
 [dependencies]
 # The engine is consumed as a SIBLING CHECKOUT, the standard tabnas
 # development model: clone https://github.com/tabnas/parser next to this
-# repo. The `tabnas` crate is not published, so there is no registry
-# version to fall back on. tabnas-json is the grammar the JSON Lines
-# source parses each line with, and tabnas-csv the one the CSV line source
-# parses each chunk of records with.
+# repo. The engine is published on crates.io as tabnas-parser (it keeps
+# the `tabnas` name here), and the grammars under their own names; the
+# release workflow rewrites these paths into requirements on their newest
+# versions when it publishes this crate (admin ADR-21). tabnas-json is the
+# grammar the JSON Lines source parses each line with, and tabnas-csv the
+# one the CSV line source parses each chunk of records with.
 tabnas = { package = "tabnas-parser", path = "../../parser/rs" }
 tabnas-json = { path = "../../json/rs" }
 tabnas-csv = { path = "../../csv/rs" }

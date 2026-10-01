@@ -5,9 +5,10 @@
 #
 # The engine and the grammars are PATH DEPENDENCIES on sibling checkouts
 # (rs/Cargo.toml: `tabnas = { package = "tabnas-parser", path = "../../parser/rs" }` and the like).
-# None is published, so there is no registry version to fall back on.
-# Clone each repository named in SIBLINGS below next to this one before
-# running.
+# The gate builds against those checkouts, not against crates.io, where
+# each is published too: it measures this crate against the siblings'
+# main, as the TypeScript and Go jobs do. Clone each repository named in
+# SIBLINGS below next to this one before running.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -38,7 +39,12 @@ if [[ -n "$MSRV" ]]; then
   # `1.85` channel: `cargo +1.85` names a release channel, which rustup
   # would try to synchronize over the network even when 1.85.1 is already
   # installed, and an offline checkout would fail before cargo ran.
-  TOOLCHAIN=$(rustup toolchain list 2>/dev/null | awk -v m="$MSRV" 'index($1, m) == 1 { print $1; exit }')
+  # Without rustup there is no toolchain to look for: the warning below
+  # says so, rather than the lookup failing the script with no message.
+  TOOLCHAIN=""
+  if command -v rustup >/dev/null 2>&1; then
+    TOOLCHAIN=$(rustup toolchain list | awk -v m="$MSRV" 'index($1, m) == 1 { print $1; exit }')
+  fi
   if [[ -n "$TOOLCHAIN" ]]; then
     CARGO=(cargo "+$TOOLCHAIN")
   else

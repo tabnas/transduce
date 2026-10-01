@@ -76,7 +76,7 @@ func (p *ParserSource) Grammar(name string) *ParserSource {
 // exists for the differential suite that maintains the list and for
 // nothing else: on a grammar the suite has not verified, the events may
 // be a well-formed stream of the wrong shape, or malformed, and the run
-// still succeeds. A build without the adapter refuses all the same.
+// still succeeds.
 func (p *ParserSource) Unverified() *ParserSource {
 	p.unverified = true
 	return p
@@ -102,12 +102,6 @@ func (p *ParserSource) Metrics(metrics *Metrics) *ParserSource {
 
 // gate is why the incremental path may not run, when it may not.
 func (p *ParserSource) gate() *Fail {
-	if !adapterBuilt {
-		return NewFail(CodeStreamabilityUnknown,
-			"this build has no incremental adapter (it needs the engine's node-cell identity, built "+
-				"with the tabnas_nodecell tag), so no grammar is verified for SourceMode Incremental; "+
-				"run it with ModeMaterialize")
-	}
 	if p.unverified {
 		return nil
 	}
