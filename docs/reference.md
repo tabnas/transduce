@@ -108,16 +108,22 @@ of several documents, `a: 1` then `---` then `b: 2`; a jsonic top-level
 implicit list whose first element is a container, `{a:1}` on one line and
 `{b:2}` on the next), and a map the grammar rewrote after it was streamed
 (a YAML `<<` merge key, resolved when the mapping closes), and a
-container the grammar opens inside a map before the member's key (a
-YAML `?` key whose value is a mapping: the grammar stringifies the key
-and stores the member when the pair closes, after the value's mapping
-was built in a rule of its own, so its events would leave before the
-key), all `STREAMABILITY_UNKNOWN` after the first value's events; and a
-repeated member whose containers the grammar merged, `DUPLICATE_MEMBER`,
-below. The container-before-key refusal is a net, not a licence: the
-suite counts a fixture refused that way against the grammar, since a
-grammar that builds its members so does it for every document, and a
-listed grammar does it on no fixture. A
+container the grammar opens inside a map before the member's key, whose
+events would leave before the key, all `STREAMABILITY_UNKNOWN` after the
+first value's events; and a repeated member whose containers the grammar
+merged, `DUPLICATE_MEMBER`, below. The container-before-key refusal is a
+net, not a licence: the suite counts a fixture refused that way against
+the grammar, since a grammar that builds its members so does it for
+every document, and a listed grammar does it on no fixture. The
+imperative grammars below trip it on their own samples. yaml tripped it
+on documents no fixture held until tabnas/yaml#107: it named the first
+member of a mapping that starts in a sequence entry in the same pass
+that opened the mapping, so when that member's value was a collection,
+the value opened before the adapter had its key (`- ? earth: blue` with
+`: moon: white` under it, tabnas/transduce#7, but equally `- a:` with a
+block mapping under it, or `[a: {b: 1}]`). The grammar now names that
+member before its value's rule opens, and each of those documents
+streams as the walk. A
 YAML stream is refused whatever its documents' shapes: when a later
 document opens a container, at that container; when none does (`a: 1`
 then `---` then `2`, or a trailing `---` with nothing after it), when the

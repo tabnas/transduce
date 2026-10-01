@@ -23,9 +23,10 @@
 //! grammar then never stored in the one around it, and a grammar that
 //! builds its values so does it for every document, not for a shape of
 //! one, so it is not verified; the nets stand for the documents no
-//! fixture foresaw (a YAML `?` key whose value is a mapping,
-//! tabnas/transduce#7; a jsonic pair inside a list, dropped when
-//! `list.pair` is off). A grammar is
+//! fixture foresaw (a mapping in a YAML sequence entry whose first
+//! member's value is a collection, tabnas/transduce#7, until
+//! tabnas/yaml#107 named that member before its value; a jsonic pair
+//! inside a list, dropped when `list.pair` is off). A grammar is
 //! listed in `capability::INCREMENTAL` only when no fixture mismatches or
 //! is refused that way, and this suite asserts BOTH directions: a listed
 //! grammar that mismatches anywhere fails, and an unlisted grammar that
@@ -920,17 +921,23 @@ fn a_container_the_grammar_streamed_and_never_stored_is_refused() {
 }
 
 /// A YAML key that is itself a mapping (an explicit `?` key, YAML Test
-/// Suite V9D5, Spec Example 8.19): the grammar stringifies the key and
-/// stores the member when the pair closes, after the value's mapping was
-/// built in a rule of its own, so the incremental source saw the value's
-/// events leave before the key (tabnas/transduce#7). The adapter now
-/// refuses that when the value opens, with `STREAMABILITY_UNKNOWN` after a
-/// protocol-valid prefix and before `End`, and a host falls back to the
-/// walk, which is right. yaml stays listed because no fixture builds a
-/// member so; announcing the key before the value's rule opens is the
-/// grammar's follow-up, after which this document streams as the walk.
+/// Suite V9D5, Spec Example 8.19), in a mapping that starts in a sequence
+/// entry. The incremental source once streamed this member's value before
+/// its key (tabnas/transduce#7), and from tabnas/transduce#12 the adapter
+/// refused the document instead, with `STREAMABILITY_UNKNOWN` when the
+/// value opened: its net for a container opened inside a map before the
+/// member's key. The `?` was not the cause. The grammar named the first
+/// member of a mapping that starts in a sequence entry in the same open
+/// pass that opened the mapping, and the adapter takes a member's key
+/// from a later open pass on a map it already has open, so every such
+/// first member whose value is a collection was refused the same way.
+/// tabnas/yaml#107 names that member in a pass of its own before the
+/// value's rule opens, the grammar's follow-up this test once foresaw, and
+/// each document now streams exactly as the walk. The net stays, and
+/// `a_container_opened_in_a_map_before_its_key_is_refused` tests it over
+/// a grammar that still builds a member so.
 #[test]
-fn a_yaml_key_that_is_a_mapping_is_refused_before_its_value_streams() {
+fn a_yaml_key_that_is_a_mapping_streams_as_the_walk() {
     let text = "- sun: yellow\n- ? earth: blue\n  : moon: white\n";
     let (walk, walked) = run(tabnas_yaml::make, text, SourceMode::Materialize);
     walk.unwrap();
@@ -939,16 +946,10 @@ fn a_yaml_key_that_is_a_mapping_is_refused_before_its_value_streams() {
         r#"[{"sun":"yellow"},{"earth: blue":{"moon":"white"}}]"#
     );
     let (result, events) = incremental(tabnas_yaml::make, text);
-    let err = result
-        .map(|flow| panic!("Ok({flow:?}) after {events:?}"))
-        .unwrap_err();
-    assert_eq!(err.code, Code::StreamabilityUnknown, "{err}");
-    assert!(
-        err.message.contains("before announcing the member's key"),
-        "{err}"
+    assert_eq!(
+        result.unwrap_or_else(|fail| panic!("{fail} after {events:?}")),
+        Flow::Continue
     );
-    assert!(well_formed(&events), "{events:?}");
-    assert!(!events.contains(&OwnedJsonEvent::End));
     assert_eq!(
         without_lexemes(&events),
         vec![
@@ -958,25 +959,48 @@ fn a_yaml_key_that_is_a_mapping_is_refused_before_its_value_streams() {
             OwnedJsonEvent::String("yellow".into()),
             OwnedJsonEvent::ObjectEnd,
             OwnedJsonEvent::ObjectStart,
+            OwnedJsonEvent::Key("earth: blue".into()),
+            OwnedJsonEvent::ObjectStart,
+            OwnedJsonEvent::Key("moon".into()),
+            OwnedJsonEvent::String("white".into()),
+            OwnedJsonEvent::ObjectEnd,
+            OwnedJsonEvent::ObjectEnd,
+            OwnedJsonEvent::ArrayEnd,
+            OwnedJsonEvent::End,
         ],
-        "the first member left whole, the second's map opened, then nothing"
+        "the member's key, then its value's map"
     );
-    // An explicit key whose value is a scalar names the member before the
-    // value lands, and streams as the walk.
-    let text = "? earth\n: moon\n";
-    let (result, events) = incremental(tabnas_yaml::make, text);
-    assert_eq!(result.unwrap(), Flow::Continue);
-    let (_, walked) = run(tabnas_yaml::make, text, SourceMode::Materialize);
     assert_eq!(without_lexemes(&events), walked);
+    // Without the `?`, in a block or a flow sequence, the same first
+    // member was refused the same way, and streams as the walk too; an
+    // explicit key whose value is a scalar always did.
+    for text in [
+        "- a:\n    b: 1\n",
+        "- a:\n  - x\n",
+        "[a: {b: 1}]\n",
+        "? earth\n: moon\n",
+    ] {
+        let (result, events) = incremental(tabnas_yaml::make, text);
+        assert_eq!(
+            result.unwrap_or_else(|fail| panic!("{text:?}: {fail} after {events:?}")),
+            Flow::Continue
+        );
+        let (_, walked) = run(tabnas_yaml::make, text, SourceMode::Materialize);
+        assert_eq!(without_lexemes(&events), walked, "{text:?}");
+    }
 }
 
 /// A grammar that builds a member's value in a rule of its own and names
-/// the member only when the pair closes, never announcing the key (the
-/// shape tabnas/transduce#7 found behind a YAML key that is a mapping):
-/// `[1]` parses to `{"k":[1]}`. The value's events would leave before the
-/// key, which no tree's events do, so the incremental run is refused with
+/// the member only when the pair closes, never announcing the key: `[1]`
+/// parses to `{"k":[1]}`. The value's events would leave before the key,
+/// which no tree's events do, so the incremental run is refused with
 /// `STREAMABILITY_UNKNOWN` when the value opens, after a protocol-valid
 /// prefix and before `End`, never a completed stream the walk contradicts.
+/// No listed grammar builds a member so since tabnas/yaml#107 (yaml did,
+/// for the first member of a mapping in a sequence entry, the shape
+/// tabnas/transduce#7 found), so this grammar is what keeps the net
+/// tested; toml, ini, xml and feed, which are not listed, trip it on their
+/// own samples.
 #[test]
 fn a_container_opened_in_a_map_before_its_key_is_refused() {
     fn late_key() -> Tabnas {

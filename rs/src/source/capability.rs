@@ -22,8 +22,9 @@
 //! the wrapping list; a jsonic top-level implicit list whose first element
 //! is a container), a map the grammar rewrote after it was streamed (a
 //! YAML merge key), and a container the grammar opens inside a map before
-//! the member's key (a YAML `?` key whose value is a mapping: the key is
-//! stored when the pair closes, after the value was built), all
+//! the member's key (as the imperative grammars below open a section's or
+//! an element's container, and as yaml opened the value of the first
+//! member of a mapping in a sequence entry until tabnas/yaml#107), all
 //! `STREAMABILITY_UNKNOWN`; and a repeated member whose containers the
 //! grammar merged (jsonic's `map.extend`, on for yaml, json5 and jsonic),
 //! `DUPLICATE_MEMBER`; and a container the adapter streamed as it was

@@ -913,9 +913,11 @@ pub(crate) fn unstored_container() -> Fail {
 /// The failure for a container the grammar opens inside a map before the
 /// member it belongs to has a key: a value built in a pushed rule and
 /// stored under its key only when the pair closes, or a key the grammar
-/// builds as a container (a YAML `?` key that is a mapping, before the
-/// grammar announced it). The value's events would leave before the key,
-/// and a stream no tree's events match cannot be repaired after the fact.
+/// builds as a container. toml, ini, xml and feed open a section's or an
+/// element's container so; yaml opened the value of the first member of a
+/// mapping in a sequence entry so until tabnas/yaml#107. The value's
+/// events would leave before the key, and a stream no tree's events match
+/// cannot be repaired after the fact.
 pub(crate) fn value_before_key() -> Fail {
     Fail::new(
         Code::StreamabilityUnknown,

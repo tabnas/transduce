@@ -92,3 +92,12 @@ gap:
   the abort flag, a sink that stops or fails part-way, and the metrics.
   A port tests the same contracts in its own suite; they are API shapes
   (a borrowed or an owned sink, a `BufRead`), not results a row can name.
+- **A grammar the test builds.** A row names a fleet grammar, and since
+  tabnas/yaml#107 no listed one opens a container inside a map before
+  the member's key, so the adapter's refusal of that
+  (`STREAMABILITY_UNKNOWN`, "before announcing the member's key") has no
+  row: `events.tsv`'s YAML key that is a mapping now streams as the
+  walk. Rust pins the refusal over a grammar built in the test
+  (`a_container_opened_in_a_map_before_its_key_is_refused` in
+  `rs/tests/incremental_test.rs`), and a port does the same in its own
+  suite.
