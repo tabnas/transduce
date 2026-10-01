@@ -455,15 +455,38 @@ departs from the steps above, and what it measured:
   sequence replaces it (tabnas/yaml#88, which also fails
   `matrix:\n  - [1, 2]\n  - [3, 4]`). The render's output for each is
   valid YAML 1.2.
-- **`--alchemy` with `--render yaml` is refused.** Composing a program's
-  JSON events with a part's render needs a way to feed one program's
-  events into another program's sink, which alchemy does not have yet;
-  until it does, a program's output renders as CSV or JSON.
-- **A render that writes from records is read and not run.** aless's
-  registry lists the renders that write from a tree, which take the
-  source's events as they are. One that writes from records needs the
-  inferred table in front of it, behind the row check `--render csv`
-  has, which aless does not compose yet; no format ships one today.
+- **`--alchemy` with `--render yaml` was refused**, since composing a
+  program's JSON events with a part's render needed a way to feed one
+  program's events into another program's sink. alchemy has it now:
+  `Source::export_as` links a source's `export` under another name
+  (tabnas/alchemy#26), so the host links the user's program as
+  `program-export` and writes the `export` that calls it, in one plan
+  under one set of limits, and the program's output shape takes the
+  source's place in the composition as [the design](#the-design) says
+  (rjrodger/aless#32).
+- **A render that writes from records was read and not run.** The host
+  composes the inferred table in front of one now, behind the row check
+  `--render csv` has, and the first such render is Markdown's pipe table
+  (tabnas/markdown#77, which also ships the fleet's first lift, from a
+  table's tree to its rows); a lifted format reaches alchemy's `csv` the
+  same way, composed, where a tree reaches the native CSV export as
+  before (rjrodger/aless#32).
+- **The adapter's loss is printed with the render's.** The host's note
+  carries the adapter's sentences after the format's and names the
+  adapter (`adapter`: the inferred table, or `records`), as [the
+  design](#the-design) has it; the `{"error": …}` object carries the
+  same `loss`.
+- **A cell from several strings needed a native.** The Markdown lift
+  assembles a cell from the runs a cell holds, and the renders name the
+  key a typed failure concerns; `concat` answers a text and `fail` takes
+  a string, so alchemy gained `string-join` (tabnas/alchemy#26).
+- **The adapter refuses two more shapes it cannot follow** (tabnas/transduce#12):
+  a container the grammar opens inside a map before the member's key
+  (#7's case) and a container it streamed that the grammar never stored
+  (a jsonic pair inside a list, dropped when `list.pair` is off), both
+  `STREAMABILITY_UNKNOWN` before anything wrong leaves, so the host's
+  one fallback covers them; the tree contract moved into this crate as
+  `TreeContract` (#11).
 - **The loss declaration** reaches standard error on a write that
   succeeds, as a JSON object whose `warning` member holds `kind`
   (`"loss"`), `message`, `file`, `render` and `loss`, the render's
