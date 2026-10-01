@@ -595,31 +595,45 @@ func TestAContainerTheGrammarStreamedAndNeverStoredIsRefused(t *testing.T) {
 	}
 }
 
-// A YAML key that is a mapping is refused before its value streams.
-func TestAYAMLKeyThatIsAMappingIsRefusedBeforeItsValueStreams(t *testing.T) {
+// A YAML key that is itself a mapping (YAML Test Suite V9D5), in a mapping
+// that starts in a sequence entry. The grammar named the first member of
+// such a mapping in the pass that opened the mapping, so the value's
+// mapping opened before the adapter had the key and the run was refused
+// (tabnas/transduce#7). Since tabnas/yaml#107 the grammar names that member
+// before its value's rule opens, and the document streams exactly as the
+// walk; so do the same first member without the `?`, in a block or a flow
+// sequence, and an explicit key whose value is a scalar.
+func TestAYAMLKeyThatIsAMappingStreamsAsTheWalk(t *testing.T) {
 	text := "- sun: yellow\n- ? earth: blue\n  : moon: white\n"
 	wf, walked := diffRun("yaml", text, MaterializeMode())
 	if v, _ := rootValue(walked, Reject); wf != nil || v.String() != `[{"sun":"yellow"},{"earth: blue":{"moon":"white"}}]` {
 		t.Fatalf("%v %v", wf, v)
 	}
 	f, events := incrementalRun("yaml", text)
-	if f == nil || f.Code != CodeStreamabilityUnknown || !strings.Contains(f.Message, "before announcing the member's key") {
-		t.Fatalf("%v", f)
+	if f != nil {
+		t.Fatalf("%v after %v", f, events)
 	}
-	want := []Event{EvArrayStart(), EvObjectStart(), EvKey("sun"), EvString("yellow"), EvObjectEnd(), EvObjectStart()}
-	if !eventsEqual(withoutLexemes(events), want) {
-		t.Fatalf("%v", events)
+	want := []Event{
+		EvArrayStart(), EvObjectStart(), EvKey("sun"), EvString("yellow"), EvObjectEnd(),
+		EvObjectStart(), EvKey("earth: blue"), EvObjectStart(), EvKey("moon"), EvString("white"),
+		EvObjectEnd(), EvObjectEnd(), EvArrayEnd(), EvEnd(),
 	}
-	text = "? earth\n: moon\n"
-	f, events = incrementalRun("yaml", text)
-	_, walked = diffRun("yaml", text, MaterializeMode())
-	if f != nil || !eventsEqual(withoutLexemes(events), walked) {
-		t.Fatalf("%v %v %v", f, events, walked)
+	if !eventsEqual(withoutLexemes(events), want) || !eventsEqual(withoutLexemes(events), walked) {
+		t.Fatalf("%v, the walk %v", events, walked)
+	}
+	for _, text := range []string{"- a:\n    b: 1\n", "- a:\n  - x\n", "[a: {b: 1}]\n", "? earth\n: moon\n"} {
+		f, events := incrementalRun("yaml", text)
+		_, walked := diffRun("yaml", text, MaterializeMode())
+		if f != nil || !eventsEqual(withoutLexemes(events), walked) {
+			t.Fatalf("%q: %v %v %v", text, f, events, walked)
+		}
 	}
 }
 
 // A grammar that builds a member's value in a rule of its own and names
 // the member only when the pair closes is refused when the value opens.
+// No listed grammar builds a member so since tabnas/yaml#107, so this
+// grammar is what keeps the net tested.
 func TestAContainerOpenedInAMapBeforeItsKeyIsRefused(t *testing.T) {
 	lateKey := func() *tabnas.Tabnas {
 		j := tabnas.Make()

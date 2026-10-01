@@ -93,8 +93,9 @@ a: 1\n---\nb: 2\n	yaml	materialize		[["array_start"],["object_start"],["key","a"
 1\n---\n2\n	yaml	incremental		[["array_start"],["number",1,null],["number",2,null],["array_end"],["end"]]
 	yaml	incremental		[["null"],["end"]]
 	yaml	materialize		[["null"],["end"]]
-# A mapping as a key opens its value before announcing the key.
-- sun: yellow\n- ? earth: blue\n  : moon: white\n	yaml	incremental		ERROR:STREAMABILITY_UNKNOWN	[["array_start"],["object_start"],["key","sun"],["string","yellow"],["object_end"],["object_start"]]
+# A mapping as a key, in a sequence entry: the grammar names the member
+# before its value opens (tabnas/yaml#107), so the stream is the walk's.
+- sun: yellow\n- ? earth: blue\n  : moon: white\n	yaml	incremental		[["array_start"],["object_start"],["key","sun"],["string","yellow"],["object_end"],["object_start"],["key","earth: blue"],["object_start"],["key","moon"],["string","white"],["object_end"],["object_end"],["array_end"],["end"]]
 - sun: yellow\n- ? earth: blue\n  : moon: white\n	yaml	materialize		[["array_start"],["object_start"],["key","sun"],["string","yellow"],["object_end"],["object_start"],["key","earth: blue"],["object_start"],["key","moon"],["string","white"],["object_end"],["object_end"],["array_end"],["end"]]
 ? earth\n: moon\n	yaml	incremental		[["object_start"],["key","earth"],["string","moon"],["object_end"],["end"]]
 # zon refuses a repeated field itself, as INPUT_INVALID at the same
