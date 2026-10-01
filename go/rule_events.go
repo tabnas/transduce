@@ -284,7 +284,7 @@ func (a *adapter) onDone(rule *tabnas.Rule, done tabnas.RuleDone) {
 	if done.Alt != nil && done.Alt.Err != nil {
 		return
 	}
-	cell := a.cellOf(rule)
+	cell := rule.NodeCell()
 	if done.State == tabnas.OPEN {
 		a.opened(rule, cell)
 		return
@@ -707,46 +707,6 @@ func jsonlIncremental(l *LinesSource, sink Sink) (Flow, *Fail) {
 		return Stop, nil
 	}
 	return flow, f
-}
-
-// cellOf is the rule's node cell: tabnas.Rule.NodeCell, unless that is
-// not on the frame stack while the rule builds into a container that an
-// open frame holds, in which case it is that frame's cell. Rules that
-// build into one container share one cell in Rust (an Rc) and one object
-// in TypeScript, so a replaced rule (alt.r) hands its container to its
-// successor along with its identity. A Go grammar whose actions assign
-// Node directly and write the grown container back along the chain
-// themselves (tabnas-yaml's yamlBlockList and yamlBlockElem rotation,
-// and its yamlElemMap and yamlElemPair) leaves the engine's ownership
-// bookkeeping pointing elsewhere, and NodeCell does not walk the
-// replacement chain, so the successor and the rules it pushes would
-// answer a cell of their own. Identity here is strict: a map by pointer,
-// a list by a backing array of its own (an empty list shares one with
-// every other and is never matched this way).
-func (a *adapter) cellOf(rule *tabnas.Rule) *tabnas.Rule {
-	cell := rule.NodeCell()
-	if a.open == 0 || a.onStack(cell) || !isContainerValue(cell.Node) {
-		return cell
-	}
-	for i := a.open - 1; i >= 0; i-- {
-		node := a.frames[i].cell.Node
-		if sameContainerStrict(node, cell.Node) || sameContainerStrict(node, rule.Node) {
-			return a.frames[i].cell
-		}
-	}
-	return cell
-}
-
-func sameContainerStrict(a, b any) bool {
-	switch x := a.(type) {
-	case []any:
-		y, ok := b.([]any)
-		return ok && cap(x) > 0 && cap(y) > 0 && unsafe.SliceData(x) == unsafe.SliceData(y)
-	case tabnas.ListRef:
-		y, ok := b.(tabnas.ListRef)
-		return ok && cap(x.Val) > 0 && cap(y.Val) > 0 && unsafe.SliceData(x.Val) == unsafe.SliceData(y.Val)
-	}
-	return isContainerValue(a) && sameContainer(a, b)
 }
 
 // The failures the adapter refuses with.
