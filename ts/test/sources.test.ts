@@ -470,6 +470,42 @@ describe('LinesSource', () => {
     assert.equal(w.end(), 'stop')
   })
 
+  it('an abort names the row the record or chunk it was reading starts on', () => {
+    // An abort lands between two of the engine's steps, where it has no
+    // position of its own, so the run names the row the record (JSON Lines)
+    // or chunk (CSV) it was reading starts on, and no column.
+    const aborter = (abort: AbortFlag, after: number) => {
+      let n = 0
+      return new FnSink(() => {
+        if (++n === after) abort.abort()
+        return 'continue'
+      })
+    }
+    // Raised with the second record's first event, which the incremental
+    // path emits during that record's parse and the walk while it walks the
+    // value: the run stops in that record, which starts on row 3. Already
+    // raised: the run's first event fails, before any record is read, and
+    // names no row.
+    const text = '{"a":1}\n\n{"a":2}\n{"a":3}\n'
+    for (const [after, row] of [[6, 3], [0, undefined]] as [number, number | undefined][]) {
+      for (const path of ['run', 'runIncremental'] as const) {
+        const abort = new AbortFlag()
+        if (0 === after) abort.abort()
+        const f = failOf(() => lines(text, LineFormat.jsonl(), (s) => s.abort(abort))[path](aborter(abort, after)))
+        assert.deepEqual([f.code, f.row, f.col], ['ABORTED', row, undefined], `${path}, after ${after}: ${f}`)
+      }
+    }
+    // CSV: the first row of the chunk, with a chunk for each record, and
+    // with one chunk for the whole text.
+    for (const [chunk, row] of [[0, 3], [256 * 1024, 1]]) {
+      const abort = new AbortFlag()
+      const f = failOf(() =>
+        lines('a\n1\n2\n3\n', LineFormat.csv(), (s) => s.abort(abort).chunkBytes(chunk)).run(aborter(abort, 5)),
+      )
+      assert.deepEqual([f.code, f.row, f.col], ['ABORTED', row, undefined], `chunk ${chunk}: ${f}`)
+    }
+  })
+
   it('input that is not UTF-8 is invalid input at its line and column', () => {
     const bytes = Buffer.concat([Buffer.from('{"a":1}\n{"a":"'), Buffer.from([0xff]), Buffer.from('"}\n')])
     for (const path of ['run', 'runIncremental'] as const) {
@@ -491,5 +527,318 @@ describe('LinesSource', () => {
       assert.equal(metrics.keys, rec.events.filter((e) => 'key' === e.type).length)
       assert.equal(metrics.scalars, rec.events.filter(isScalar).length)
     }
+  })
+})
+
+// A reading of one text: its events, or its failure as the engine's code,
+// row and column.
+type Reading = { events: JsonEvent[] } | { fail: [string, number | undefined, number | undefined] }
+
+// The whole parse's reading, which the line source must reproduce.
+function wholeReading(parse: () => unknown): Reading {
+  try {
+    return { events: walked(parse()) }
+  } catch (e: any) {
+    return { fail: [e.code, e.lineNumber, e.columnNumber] }
+  }
+}
+
+// The line source's reading. Its failure carries the engine's code at the
+// head of its message.
+function lineReading(run: (rec: EventRecorder) => Flow): Reading {
+  const rec = new EventRecorder()
+  try {
+    assert.equal(run(rec), 'continue')
+    return { events: rec.events }
+  } catch (f: any) {
+    assert.ok(f instanceof Fail, String(f))
+    assert.equal(f.code, 'INPUT_INVALID', String(f))
+    return { fail: [f.message.split(':')[0], f.row, f.col] }
+  }
+}
+
+function sameReading(a: Reading, b: Reading): boolean {
+  if ('events' in a && 'events' in b) return same(a.events, b.events)
+  if ('fail' in a && 'fail' in b) return a.fail.every((x, i) => x === b.fail[i])
+  return false
+}
+
+function show(r: Reading): string {
+  return JSON.stringify('events' in r ? r.events : r.fail)
+}
+
+function objects(r: Reading): number {
+  assert.ok('events' in r, show(r))
+  return r.events.filter((e) => 'object_start' === e.type).length
+}
+
+// Holds the CSV line source to the whole parse of `text` through the same
+// grammar options, at chunk sizes from a chunk per record (0) to the whole
+// text and, on the incremental path, at a few bytes a write too, and
+// returns that reading.
+function csvStreamsAsWhole(text: string, options: Record<string, any> = {}): Reading {
+  const header = options.header ?? true
+  const want = wholeReading(() => makeCsv({ ...options, header }).parse(text))
+  const format = LineFormat.csv(header, options)
+  const n = Buffer.byteLength(text)
+  for (let chunk = 0; chunk <= n + 1; chunk++) {
+    if (!(chunk < 4 || 0 === (chunk & (chunk - 1)) || chunk >= n)) continue
+    const got = lineReading((rec) => lines(text, format, (s) => s.chunkBytes(chunk)).run(rec))
+    assert.ok(sameReading(got, want), `${JSON.stringify(text)}, chunk ${chunk}: ${show(got)}, not ${show(want)}`)
+  }
+  for (const step of [1, 3]) {
+    const got = lineReading((rec) =>
+      lines(trickle(text, step), format, (s) => s.chunkBytes(0)).runIncremental(rec),
+    )
+    assert.ok(sameReading(got, want), `${JSON.stringify(text)}, step ${step}: ${show(got)}, not ${show(want)}`)
+  }
+  return want
+}
+
+// Holds the JSON Lines source to the whole parse of `text` by the JSON
+// Lines grammar, on both paths, whole and a few bytes a write, and returns
+// that reading.
+function jsonlStreamsAsWhole(text: string): Reading {
+  const want = wholeReading(() => makeJsonl().parse(text))
+  for (const step of [0, 1, 3]) {
+    const input = () => (0 === step ? text : trickle(text, step))
+    const walk = lineReading((rec) => lines(input(), LineFormat.jsonl()).run(rec))
+    assert.ok(sameReading(walk, want), `walk, ${JSON.stringify(text)}, step ${step}: ${show(walk)}`)
+    const inc = lineReading((rec) => lines(input(), LineFormat.jsonl()).runIncremental(rec))
+    const bare = 'events' in inc ? { events: withoutLexemes(inc.events) } : inc
+    assert.ok(sameReading(bare, want), `incremental, ${JSON.stringify(text)}, step ${step}: ${show(inc)}`)
+  }
+  return want
+}
+
+// tabnas-csv's vendored corpus file
+// `papa-misplaced-quotes-in-data-twice-not-as-opening-quotes.csv`, byte for
+// byte. A quote inside a field is that field's text, not the start of a
+// quoted field, so the grammar reads two lines, the header and a record.
+const MISPLACED_QUOTES = 'A,B",C\nD,E",F'
+
+describe('LinesSource: records end where the grammar ends them', () => {
+  it('quotes inside a field are read as the grammar reads them', () => {
+    assert.equal(objects(csvStreamsAsWhole(MISPLACED_QUOTES)), 1)
+    // The corpus's own options: no header, each record an array.
+    const corpus = { header: false, object: false }
+    csvStreamsAsWhole(MISPLACED_QUOTES, corpus)
+    const more = `${MISPLACED_QUOTES}\nG,H,I\nJ"K,L,"M\nN"\n`
+    assert.equal(objects(csvStreamsAsWhole(more)), 3)
+    csvStreamsAsWhole(more, corpus)
+  })
+
+  it('an input ending inside a quoted field fails as the grammar does', () => {
+    // In the header, which a header-only chunk never parsed, and in a
+    // record, with and without a newline after it.
+    for (const text of ['a,"b\n', 'a,"b', 'a,"b\nc,d\n', '"\n', 'a\n"x\n', 'a\n1\n"x']) {
+      const want = csvStreamsAsWhole(text)
+      assert.ok('fail' in want && 'unterminated_string' === want.fail[0], `${JSON.stringify(text)}: ${show(want)}`)
+    }
+  })
+
+  it('a last record without a newline is read', () => {
+    for (const text of ['a,b\n1,2\n3,4', 'a,b\n1,2\n3,"x\ny"', 'a,b\r\n1,2\r\n3,4']) {
+      assert.equal(objects(csvStreamsAsWhole(text)), 2, JSON.stringify(text))
+    }
+  })
+
+  it('the header is the first record the grammar reads', () => {
+    const empty = { record: { empty: true } }
+    const relaxed = { strict: false }
+    const comment = { comment: true }
+    const cases: [string, Record<string, any>, number][] = [
+      // A blank line before it is none of it...
+      ['\n\na,b\n1,2\n3,4\n', {}, 2],
+      ['\r\na,b\r\n1,2\r\n3,4\r\n', {}, 2],
+      // ...unless a blank line is a record, when it is the header.
+      ['\na,b\n\n1,2\n', empty, 3],
+      // A line of spaces is the header in strict mode, blank otherwise.
+      ['  \na,b\n1,2\n3,4\n', {}, 3],
+      ['  \na,b\n1,2\n3,4\n', relaxed, 2],
+      // A comment is no record, and a quote inside one no quote.
+      ['# x "\na,b\n1,2\n3,4\n', comment, 2],
+      ['// x "\na,b\n1,2\n3,4\n', relaxed, 2],
+      ['a,b # c "\n1,2\n3,4\n', comment, 2],
+    ]
+    for (const [text, options, records] of cases) {
+      assert.equal(objects(csvStreamsAsWhole(text, options)), records, JSON.stringify(text))
+    }
+  })
+
+  it('a lone carriage return ends a CSV record', () => {
+    for (const text of ['a,b\r1,2\r3,4\r', 'a,b\r1,2\n3,4\n5,6\n']) {
+      assert.ok(2 <= objects(csvStreamsAsWhole(text)), JSON.stringify(text))
+    }
+  })
+
+  it('a field spans lines only where the grammar reads one that does', () => {
+    const quote = { string: { quote: "'" } }
+    const tildes = { field: { separation: '~~' } }
+    const comment = { comment: true }
+    const cases: [string, Record<string, any>][] = [
+      // The engine's own strings: a backtick spans lines, and an escaped
+      // newline continues a single-quoted one, which a `"` inside does not
+      // end.
+      ['a,b\n`x\ny`,z\n1,2\n', {}],
+      ["a,b\n'x\\\ny',z\n1,2\n", {}],
+      ['a,b\n\'x,"y\',z\n"p\nq",r\n', {}],
+      // A quote after a space, or after a separator of the grammar's.
+      ['a,b\nx, "p\nq"\n1,2\n', {}],
+      ['a~~b\nx~~"p\nq"\n1~~2\n', tildes],
+      // The configured quote, and a `"` that is then the engine's, which a
+      // line refuses.
+      ["a,b\n'x\ny',z\n1,2\n", quote],
+      ['a,b\n"x,y\n1,2\n', quote],
+      // A block comment over lines.
+      ['a,b\n/* x\ny */1,2\n3,4\n', comment],
+    ]
+    for (const [text, options] of cases) csvStreamsAsWhole(text, options)
+  })
+
+  it('configured record separators end records', () => {
+    const semicolons = { record: { separators: ';' } }
+    assert.equal(objects(csvStreamsAsWhole('a,b;1,x;3,4;5,6', semicolons)), 3)
+    // A newline is then no line ending, and never a place to cut. (This
+    // grammar refuses it in a field, where the Rust one reads it as text.)
+    csvStreamsAsWhole('a,b;1,x\ny;3,4\nz;5,6', semicolons)
+  })
+
+  it('a JSON Lines line is blank only when the grammar reads it so', () => {
+    // Space and tab are the grammar's blanks; a form feed, a vertical tab,
+    // a no-break space or a line separator is not, and the grammar refuses
+    // the line rather than skipping it.
+    for (const blank of ['\f', '\v', ' ', '\u0085', ' ', '　']) {
+      const want = jsonlStreamsAsWhole(`{"a":1}\n${blank}\n{"b":2}\n`)
+      assert.ok('fail' in want && 2 === want.fail[1], `${JSON.stringify(blank)} is refused on its line: ${show(want)}`)
+    }
+    assert.equal(objects(jsonlStreamsAsWhole('{"a":1}\n \t\n\r\n{"b":2}\n   ')), 2)
+  })
+
+  it('a lone carriage return ends a JSON Lines record', () => {
+    assert.equal(objects(jsonlStreamsAsWhole('{"a":1}\r{"b":2}\r\r \r{"c":3}\n')), 3)
+    // A value cut by one is incomplete, as the grammar reads it, and the
+    // position of a failure after one is the grammar's.
+    for (const text of ['{"a":\r1}\n', '{"a":1}\r{"b": }\n']) {
+      assert.ok('fail' in jsonlStreamsAsWhole(text), JSON.stringify(text))
+    }
+    // Inside a string it is the string's (refused there, as a control
+    // character), not a record's end.
+    assert.ok('fail' in jsonlStreamsAsWhole('{"a":"x\ry"}\n'))
+  })
+
+  it('records one line holds are bounded and cut one by one', () => {
+    // Many records and no `\n`: records ended by a lone `\r`, by a
+    // configured separator, and JSON Lines records ended by `\r`. Each
+    // record is under the limit and the line far over it, so the limit is
+    // the record's, and a chunk closes after a record rather than after the
+    // line.
+    const limits = Limits.with({ max_record_bytes: 8 })
+    const crs = `a,b\r${'1,2\r'.repeat(200)}`
+    const semicolons = { record: { separators: ';' } }
+    const separated = `a,b;${'1,x;'.repeat(200)}`
+    for (const [text, options] of [[crs, {}], [separated, semicolons]] as [string, Record<string, any>][]) {
+      const want = wholeReading(() => makeCsv(options).parse(text))
+      assert.equal(objects(want), 200)
+      for (const chunk of [0, 64, 256 * 1024]) {
+        const got = lineReading((rec) =>
+          lines(text, LineFormat.csv(true, options), (s) => s.limits(limits).chunkBytes(chunk)).run(rec),
+        )
+        assert.ok(sameReading(got, want), `${JSON.stringify(text.slice(0, 12))}, chunk ${chunk}: ${show(got).slice(0, 200)}`)
+      }
+      // The first half of the line in, records are already out: chunks
+      // close inside it.
+      const rec = new EventRecorder()
+      const writer = new LinesSource(null, LineFormat.csv(true, options))
+        .limits(limits)
+        .chunkBytes(64)
+        .writer(rec)
+      writer.write(text.slice(0, text.length / 2))
+      assert.ok(rec.events.filter((e) => 'object_start' === e.type).length > 50, `${rec.events.length} events`)
+      writer.write(text.slice(text.length / 2))
+      writer.end()
+      assert.ok(same(rec.events, (want as { events: JsonEvent[] }).events))
+    }
+    const records = '{"a":1}\r'.repeat(200)
+    const want = wholeReading(() => makeJsonl().parse(records))
+    assert.equal(objects(want), 200)
+    assert.ok(sameReading(lineReading((rec) => lines(records, LineFormat.jsonl(), (s) => s.limits(limits)).run(rec)), want))
+    const inc = lineReading((rec) => lines(records, LineFormat.jsonl(), (s) => s.limits(limits)).runIncremental(rec))
+    assert.ok(sameReading('events' in inc ? { events: withoutLexemes(inc.events) } : inc, want))
+    // A record over the limit still fails, at the row it starts on, which is
+    // counted as the engine counts rows: by `\n`, or by the configured
+    // separator.
+    for (const [text, options, row] of [
+      ['a,b\r1,2\r123456789,x\r', {}, 1],
+      ['a,b;1,x;123456789,x;', semicolons, 3],
+    ] as [string, Record<string, any>, number][]) {
+      const f = failOf(() => lines(text, LineFormat.csv(true, options), (s) => s.limits(limits)).run(new EventRecorder()))
+      assert.equal(f.limit?.name, 'max_record_bytes')
+      assert.equal(f.row, row, `${JSON.stringify(text)}: ${f}`)
+    }
+  })
+
+  it('a line token of two characters is never cut', () => {
+    // Under `record.empty` a run of line characters ends at a repeated one,
+    // so `\r\n`, and `\n\r` as much, is one line token. A chunk cut between
+    // its two characters would start with a line token, a record of its own
+    // to a chunk without a header; and where a write ends between the two,
+    // the piece waits for the next.
+    for (const header of [false, true]) {
+      const options = { record: { empty: true }, header }
+      for (const text of ['a,b\r\n1,2\r\n\r\n3,4\r\n', 'a,b\n\r1,2\n\r\n\r3,4', 'a\r\n\r\r\nb\r\n']) {
+        csvStreamsAsWhole(text, options)
+      }
+    }
+  })
+
+  it("a line character inside a JSON Lines string is the string's", () => {
+    // The grammar refuses a string at a raw line character, and the record
+    // is read whole up to the line character after it, so the failure is
+    // the grammar's: a `\n` in a string ends a record no more than a `\r`
+    // does.
+    for (const text of ['{"a":"x\ny"}\n{"b":1}\n', '["\\\n"]\n', '{"a":"x\r\ny"}\r\n']) {
+      assert.ok('fail' in jsonlStreamsAsWhole(text), JSON.stringify(text))
+    }
+  })
+
+  it('a line character inside a fixed token ends no piece', () => {
+    // The lexer reads a fixed token before a line, so a field separator
+    // that holds a line character owns it, and a piece does not end there.
+    // Where a fixed token holds one, a run of line characters is one token
+    // to the lexer, and a piece takes the run whole, so that no chunk starts
+    // inside it.
+    const starts = { field: { separation: '\n~' } }
+    const inside = { field: { separation: '~\n~' } }
+    for (const [text, options] of [
+      ['a\n~b\nx\n~y\n', starts],
+      ['a\n~b\n\n~c\nx\n~y\n', starts],
+      ['a\n~b\r\n~c\nx\n~y', starts],
+      ['a~\n~b\nx~\n~y\n', inside],
+    ] as [string, Record<string, any>][]) {
+      csvStreamsAsWhole(text, options)
+    }
+  })
+
+  it('a separator of several bytes is found across writes', () => {
+    // A configured separator outside ASCII is matched on its whole UTF-8
+    // form, written a byte at a time too; under `record.empty` a token of
+    // two of them is followed across writes, and a character that only
+    // starts like one is left to the next record.
+    csvStreamsAsWhole('a,b␞1,é␞3,4␞', { record: { separators: '␞' } })
+    csvStreamsAsWhole('a,b␞¶£,é␞£,2¶␞3,4', { record: { separators: '␞¶', empty: true }, header: false })
+    // Outside the basic plane too, which the engine keeps as two UTF-16
+    // halves, each a line and a row character: a failure after one is
+    // placed as the grammar places it.
+    const astral = { record: { separators: '😀' } }
+    assert.equal(objects(csvStreamsAsWhole('a,b😀1,é😀3,4😀', astral)), 2)
+    assert.ok('fail' in csvStreamsAsWhole('a,b😀1,2😀3,"x', astral))
+    // Each record is under the limit and the line far over it.
+    const text = `a,b😀${'1,2😀'.repeat(100)}`
+    const want = wholeReading(() => makeCsv(astral).parse(text))
+    const got = lineReading((rec) =>
+      lines(text, LineFormat.csv(true, astral), (s) => s.limits(Limits.with({ max_record_bytes: 8 })).chunkBytes(64)).run(rec),
+    )
+    assert.ok(sameReading(got, want), show(got).slice(0, 200))
   })
 })

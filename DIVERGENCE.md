@@ -1,20 +1,21 @@
 # Divergences
 
 Where a runtime of this crate produces a **different result for the same
-input**, and why that difference is allowed to stand. Rust in
-[`rs/`](rs/) is the only runtime today; the TypeScript and Go ports run
+input**, and why that difference is allowed to stand. Three runtimes run
 the shared fixtures in [`test/spec/`](test/spec/), which
-[`docs/reference.md`](docs/reference.md) ("Shared fixtures") describes,
-and agree with Rust on every row of them.
-
-**There is no measured divergence yet, because there is no port to
-measure against.** When one lands, every entry here is re-measured by
-running its input through each runtime, and an entry that closes is
+[`docs/reference.md`](docs/reference.md) ("Shared fixtures") describes:
+Rust in [`rs/`](rs/), TypeScript in [`ts/`](ts/) and Go in [`go/`](go/).
+TypeScript agrees with Rust on every row; Go skips the rows
+`specDivergences` in `go/spec_test.go` names, each a difference in a Go
+grammar module, measured against Rust. Every entry here is re-measured
+by running its input through each runtime, and an entry that closes is
 deleted together with the test that pins it.
 
-What follows is what the shared fixtures deliberately leave out, because
-it belongs to the Rust runtime or is not yet decided, so that a port does
-not read the absence of a row as coverage, or as licence.
+Entries 3 and 4 are measured: a grammar's or an engine's difference
+between runtimes, which each runtime's line source follows. The rest is
+what the shared fixtures deliberately leave out, because it belongs to
+the Rust runtime or is not yet decided, so that a port does not read the
+absence of a row as coverage, or as licence.
 
 ## Where these are pinned
 
@@ -62,7 +63,41 @@ row cannot be written. Pinned on the Rust side by `cells_print_as_json`
 in `rs/src/table.rs` and `lexemes_survive` in `rs/src/datum.rs` for the
 numbers inside the range.
 
-## 3. Rust-only harness and tooling
+## 3. tabnas-csv reads a newline in a field differently under `record.separators`
+
+| input, CSV with `record: { separators: ';' }` | Rust | TypeScript |
+|---|---|---|
+| `a,b;1,x\ny;3,4\nz;5,6` | three records, the newlines field text | `INPUT_INVALID` (`unexpected`) at 2:3 |
+
+**A grammar's behaviour, not this crate's.** With the separator set, `\n`
+is no line character to either grammar; the Rust one reads it as field
+text and the TypeScript one refuses it. Each line source holds to the
+whole parse of its own runtime's grammar, and neither cuts a record at
+the newline, so this crate agrees with itself in both and the `csv`
+repository owns the difference. No row can carry it, since the `options`
+column has no separators. Pinned by `configured_record_separators_end_records`
+in `rs/src/source/lines.rs` and its twin in `ts/test/sources.test.ts`.
+
+## 4. The Go engine reads a line token differently under `record.empty`
+
+| input, CSV with `header: false, record: { empty: true }` | Rust and TypeScript | Go |
+|---|---|---|
+| `a,b\n\r1,2\n\r\n\r3,4` | four records: `\n\r` is one line token, as a run stops at a repeated character | six: `\n\r` is two, as only `\r\n` is read as one |
+| `a,b\r\n1,2\r\n"x` | `unterminated_string` at row 3 | at row 1: a `\r\n` advances no row |
+
+**The engine's behaviour, not this crate's.** Under `line.single` the Go
+lexer (tabnas/parser `go/lexer.go`, `matchLine`) reads `\r\n` or a single
+line character as a line token, and counts no row for a `\r\n`; the
+canonical TypeScript and the Rust engine read a run up to a repeated
+character, and count every row character. Each line source cuts its
+pieces at its own engine's line tokens, so it reads what its runtime's
+whole parse reads, and the Go reader counts rows as the canonical does,
+so a chunk's error row can differ from the Go whole parse's in a CRLF file
+read with `record.empty`. No row can carry it, since the `options` column
+has no `record`. Pinned by `TestALineTokenOfTwoCharactersIsNeverCut` in
+`go/lines_test.go` and its twins.
+
+## 5. Rust-only harness and tooling
 
 Not behaviour, listed so their absence elsewhere is not mistaken for a
 gap:

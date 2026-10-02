@@ -33,6 +33,9 @@ var specDivergences = map[string]map[string]string{
 		"csv\tlines\ta,b\\n1,2\\n3,\"x\\n4,5\\n": "tabnas-csv's Go grammar reports an " +
 			"unterminated quoted field at the row where the source ENDS and the field's column " +
 			"(5:3 for the whole file); Rust reports the field's own row and column (3:3)",
+		"csv\tlines-incremental\ta,\"b\\nc,d\\n": "tabnas-csv's Go grammar reports an " +
+			"unterminated quoted field at the row where the source ENDS and the field's column " +
+			"(3:3, the whole file's parse too); Rust reports the field's own row and column (1:3)",
 	},
 }
 

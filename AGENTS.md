@@ -213,7 +213,7 @@ The code is the contract; the message is informative. Every code is in
 | `RESOURCE_LIMIT_EXCEEDED` | a `Limits` field was passed; `Fail::limit` names it |
 | `INPUT_INVALID` | the input did not parse; the engine's code and position ride along, in both modes alike: an incremental run of a document the grammar refuses fails with the same code and position after a protocol-valid prefix (zon's repeated fields; the member the grammar never stored is not streamed). A grammar's own guard cancelling the parse (tabnas-json refuses nesting past 128, below `Limits::max_depth`) is this too, and the message names the grammar's guard |
 | `OUTPUT_FAILED` | writing failed |
-| `ABORTED` | the run was cancelled |
+| `ABORTED` | the run was cancelled; from a line source, `row` names the line the record or chunk it was reading starts on |
 
 A code is never renamed, removed or repurposed. A failure also says
 whether output had already been committed (`output: "partial"`), because

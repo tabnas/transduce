@@ -89,6 +89,13 @@ a\nxé\n	csv	lines	events				{"max_scalar_bytes":2}	ERROR:RESOURCE_LIMIT_EXCEEDE
 a\n"long\nquoted\nfield"\n	csv	lines	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
 a\nxé\n	csv	lines	events				{"max_record_bytes":3}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
 a\nxé\n	csv	lines	events				{"max_record_bytes":4}	[["array_start"],["object_start"],["key","a"],["string","xé"],["object_end"],["array_end"],["end"]]
+# A line may hold many records, ended by a lone CR: the limit is each
+# record's, never the line's.
+a,b\r1,2\r3,4\r	csv	lines	events				{"max_record_bytes":4}	[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["object_start"],["key","a"],["string","3"],["key","b"],["string","4"],["object_end"],["array_end"],["end"]]
+a,b\r1,2\r34,5\r	csv	lines	events				{"max_record_bytes":4}	ERROR:RESOURCE_LIMIT_EXCEEDED@1:1	max_record_bytes
+{"a":1}\r{"a":2}\r	jsonl	lines	events				{"max_record_bytes":8}	[["array_start"],["object_start"],["key","a"],["number",1,null],["object_end"],["object_start"],["key","a"],["number",2,null],["object_end"],["array_end"],["end"]]
+{"a":1}\r{"a":2}\r	jsonl	lines-incremental	events				{"max_record_bytes":8}	[["array_start"],["object_start"],["key","a"],["number",1,"1"],["object_end"],["object_start"],["key","a"],["number",2,"2"],["object_end"],["array_end"],["end"]]
+{"a":1}\r{"a":23}\r	jsonl	lines	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@1:1	max_record_bytes
 # max_output_bytes is a renderer's limit: no stage here writes output,
 # so none trips it.
 ["output"]	json	incremental	events				{"max_output_bytes":1}	[["array_start"],["string","output"],["array_end"],["end"]]
