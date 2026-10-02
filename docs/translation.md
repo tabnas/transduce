@@ -204,25 +204,16 @@ them:
   and the parts do not go that way), and a render handed the wrong shape
   fails the composed program's check with `protocol_mismatch` at the
   render's file and line.
-- **In the Rust crate**, the parts embedded with `include_str!` and
-  exposed as `lift_text()` and `render_text()`, and the manifest itself
-  as `manifest_text()`, so that the shapes and the loss declaration
-  reach the host from the one place they are written and nothing is
-  copied into the host. A crate packaged for crates.io holds nothing
-  outside its own directory, so `include_str!` of a file at the
-  repository's root compiles in a checkout and fails the verification
-  build `cargo publish` runs. The crate embeds copies instead, under
-  `rs/translate/` (`manifest.json`, and a file per part: `render.alc`
-  for yaml), as it embeds its grammar's copy, and a change to a part is
-  made at the root and copied there. One test holds the copies to the
-  files: the embedded manifest is the repository's, and each path it
-  names, read from the repository, is the accessor's text, so that a
-  renamed file, or a part or a manifest edited alone, fails the crate's
-  own gate before a port could load one part and the host another. yaml,
-  whose grammar text is private today, gains these accessors and
-  nothing else. The manifest names the files so that
-  the TypeScript and Go ports, when they run alchemy, find the same
-  text; until then translation is the Rust host's.
+- **In each package runtime**, `translate()` or `Translate()` returns the
+  package-local structural value above. TypeScript embeds generated text in
+  `ts/src/translate.ts`, Go embeds copies under `go/translate/`, and Rust
+  embeds copies under `rs/translate/`; a packaged module or crate therefore
+  needs nothing outside its own directory. A repository change is made in
+  `tabnas.plugin.json` or `alchemy/*.alc`, then the package's embed step
+  updates its copies. Each runtime's drift test holds the embedded manifest
+  and every source the manifest names byte for byte to those root files, so
+  an edited or renamed file cannot silently diverge in one port. Rust's old
+  text accessors remain compatibility wrappers over `translate()`.
 - **In alchemy**, the linking: `compile_sources`, taking several named
   sources and resolving them into one namespace (a program's is today's
   `compile`, with one source). A span already carries its file
@@ -247,9 +238,10 @@ them:
   compile is a refusal naming the format and the file, never an abort.
 - **In the host**, a registry from format to parts, keyed by the
   manifest's `languageId` (added to the two manifests that lack it;
-  aless maps its `Format` to it), filled from the crates' functions
-  (the manifest's `translate` object for the shapes and the loss, the
-  two texts; aless depends on the thirteen grammar crates it reads
+  aless maps its `Format` to it), filled from each crate's structural
+  descriptor (the manifest's `translate` object for the shapes and the
+  loss, and each part's explicit entry and source; aless depends on the
+  thirteen grammar crates it reads
   already, and a format outside that set reaches it only by a new
   dependency, on instruction). The registry lives in aless: no other
   host translates until one asks, and the alternative, a fleet crate
@@ -386,8 +378,9 @@ this order (the dependencies are below the list):
    aliases, which the reader resolves by copying, tags, styles, and a
    stream of several documents, which the reader builds as one sequence
    and the render writes back as one). The manifest gains its
-   `translate` object; the crate exposes `render_text()` and
-   `manifest_text()`.
+   `translate` object; all three packages expose the structural descriptor,
+   and the crate keeps `render_text()` and `manifest_text()` as compatibility
+   wrappers.
 4. **alchemy: the inferred binding.** `table-from-json` with `:columns`
    given as the keyword `:infer`, lowered to the transducer's
    `Schema::Infer` natively, and, for the interpreted twin the
@@ -636,10 +629,9 @@ departs from the steps above, and what it measured:
   members are dropped and its absent ones are missing; that is the
   transducer's documented `Infer` and the policy `--render csv` runs
   today, and the host says it whenever the adapter runs.
-- **Snippets and the ports.** TypeScript and Go do not run alchemy;
-  the manifest carries the file names so that they can, and until they
-  do a translation is the Rust host's. The parts are text, so the ports
-  add nothing to the grammar repositories when they arrive.
+- **Snippets and the ports.** TypeScript and Go expose the same parts as
+  Rust now. A host in any runtime can link them when it runs alchemy; the
+  package interface itself has no alchemy dependency.
 - **Sequencing across repositories.** The pilot planned seven pull
   requests in five repositories and took nine, in the order it gives:
   the render needed three more natives (tabnas/alchemy#12), and the
