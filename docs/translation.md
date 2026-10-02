@@ -118,6 +118,46 @@ adapters once.
 
 ## Where the parts live and how they reach the host
 
+### The grammar-package interface
+
+Every grammar package exposes its translation parts through the same
+structural interface. The interface has no shared runtime type and therefore
+adds no dependency from a grammar to alchemy or to another support crate.
+Each package declares the small type in its own language, and the fleet
+conformance test holds the declarations and values to this shape:
+
+```text
+TranslationParts {
+  manifest: text
+  lift?:   TranslationPart
+  render?: TranslationPart
+}
+
+TranslationPart {
+  entry:  text
+  source?: text
+}
+```
+
+`manifest` is the byte-for-byte text of `tabnas.plugin.json`. `entry` is
+always explicit: `<format>-lift` and `<format>-render` for a part in the
+format repository, or the standard-library/native entry (`json` or `csv`)
+named by the manifest. `source` is present for a repository-owned alchemy
+file and absent for an entry alchemy carries. A manifest with no `translate`
+object answers no `TranslationParts`; a host can therefore ask every grammar
+the same question without knowing in advance whether it is writable.
+
+The language spellings are deliberately local and structurally equal:
+
+- TypeScript exports `translate(): TranslationParts | undefined`.
+- Go exports `Translate() *TranslationParts`, returning `nil` when absent.
+- Rust exports `translate() -> Option<TranslationParts>`.
+
+The returned values are immutable package data. Existing Rust accessors such
+as `manifest_text()`, `lift_text()` and `render_text()` remain as compatibility
+wrappers over this interface. A host uses `entry` directly; it never derives
+an entry point from a format name or file path.
+
 Every grammar repository already carries a manifest, `tabnas.plugin.json`
 (`name` and `extensions` everywhere; `languageId` and `pluginKind` in
 most, which markdown and feed lack; `grammar` where the grammar is a
