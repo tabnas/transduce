@@ -7,7 +7,7 @@ require (
 	github.com/tabnas/csv/go v0.6.1
 	github.com/tabnas/json/go v0.5.12
 	github.com/tabnas/jsonic/go v0.7.3
-	github.com/tabnas/parser/go v0.12.8
+	github.com/tabnas/parser/go v0.12.9
 )
 
 // The grammars the tests run (the differential suite reads this list), and
