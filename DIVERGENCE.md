@@ -11,8 +11,8 @@ grammar module, measured against Rust. Every entry here is re-measured
 by running its input through each runtime, and an entry that closes is
 deleted together with the test that pins it.
 
-Entries 3 and 4 are measured: a grammar's or an engine's difference
-between runtimes, which each runtime's line source follows. The rest is
+Entry 3 is measured: a grammar's difference between runtimes, which
+each runtime's line source follows. The rest is
 what the shared fixtures deliberately leave out, because it belongs to
 the Rust runtime or is not yet decided, so that a port does not read the
 absence of a row as coverage, or as licence.
@@ -78,34 +78,7 @@ repository owns the difference. No row can carry it, since the `options`
 column has no separators. Pinned by `configured_record_separators_end_records`
 in `rs/src/source/lines.rs` and its twin in `ts/test/sources.test.ts`.
 
-## 4. The Go engine before tabnas/parser#271 reads a line token differently under `record.empty`
-
-| input, CSV with `header: false, record: { empty: true }` | Rust, TypeScript, and Go on an engine with #271 | Go on an engine before #271 (v0.12.8 and earlier) |
-|---|---|---|
-| `a,b\n\r1,2\n\r\n\r3,4` | four records: `\n\r` is one line token, as a run stops at a repeated character | six: `\n\r` is two, as only `\r\n` is read as one |
-| `a,b\r\n1,2\r\n"x` | `unterminated_string` at row 3 | at row 1: a `\r\n` advances no row |
-
-**The engine's behaviour, not this crate's, and repaired in the engine.**
-Under `line.single` the Go lexer (tabnas/parser `go/lexer.go`,
-`matchLine`) read `\r\n` or a single line character as a line token, and
-counted no row for a `\r\n`; the canonical TypeScript and the Rust engine
-read a run up to a repeated character, and count every row character.
-tabnas/parser#271, after v0.12.8, gave the Go lexer the canonical
-reading. Each line source cuts its pieces at its own engine's line
-tokens, so it reads what its runtime's whole parse reads: the Go one asks
-the engine it is built against which reading its lexer has
-(`engineSingle` in `go/lines.go`), so it follows an engine on either side
-of #271. Against an engine before #271 the Go reader still counts rows as
-the canonical does, so a chunk's error row can differ from that engine's
-whole parse in a CRLF file read with `record.empty`. The entry closes when
-`go/go.mod` requires an engine with #271, and `singlePair` goes with it.
-No row can carry it, since the `options` column has no `record`. Pinned by
-`TestALineTokenOfTwoCharactersIsNeverCut` (with its twins in Rust and
-TypeScript), `TestARunOfTwoLineCharactersReadsAsTypeScriptReadsIt` and
-`TestUnderLineSingleAPieceEndsWhereTheLexerEndsALineToken`, in
-`go/lines_test.go`.
-
-## 5. Rust-only harness and tooling
+## 4. Rust-only harness and tooling
 
 Not behaviour, listed so their absence elsewhere is not mistaken for a
 gap:

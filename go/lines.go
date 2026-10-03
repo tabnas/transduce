@@ -12,7 +12,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
 	"unicode/utf8"
 
 	tabnascsv "github.com/tabnas/csv/go"
@@ -376,37 +375,18 @@ const (
 	// singleRun: a run of line characters up to the first repeated one,
 	// so `\r\n` and `\n\r` are each one token and `\n\n` is two. The
 	// canonical reading (TypeScript's makeLineMatcher, the Rust lexer),
-	// and the Go engine's since tabnas/parser#271.
+	// and the Go engine's since tabnas/parser#271, which go.mod requires.
 	singleRun
-	// singlePair: a `\r\n`, or one line character alone, so `\n\r` is two
-	// tokens: the Go engine's reading before tabnas/parser#271, in
-	// v0.12.8 and every release before it.
-	singlePair
 )
 
-// engineSingle is how this build's engine reads a line token under
-// line.single, asked of its lexer once. A line source cuts where the
-// whole parse it stands for cuts, or a chunk starts inside a line token
-// and reads a record that is not there; the Go engine changed its reading
-// to the canonical one in tabnas/parser#271, so a build against an engine
-// before it reads singlePair. singlePair, and this question, go once
-// go.mod requires an engine that has #271.
-var engineSingle = sync.OnceValue(func() lineSingle {
-	cfg := tabnas.DefaultLexConfig()
-	cfg.LineSingle = true
-	cfg.IgnoreSet = map[tabnas.Tin]bool{}
-	if tkn := tabnas.NewLex("\n\r", cfg).Next(); tkn.Tin == tabnas.TinLN && tkn.Src == "\n\r" {
-		return singleRun
-	}
-	return singlePair
-})
-
-// singleOf is how a lexer with this configuration reads a line token.
+// singleOf is how a lexer with this configuration reads a line token. A
+// line source cuts where the whole parse it stands for cuts, or a chunk
+// starts inside a line token and reads a record that is not there.
 func singleOf(cfg *tabnas.LexConfig) lineSingle {
 	if !cfg.LineSingle {
 		return singleOff
 	}
-	return engineSingle()
+	return singleRun
 }
 
 // pieces is the input from a reader in pieces, each ending just past a
@@ -632,28 +612,13 @@ func (p *pieces) inFixed(at, k int) (inside, sure bool) {
 
 // follow is where the line token whose characters so far are token,
 // ending at end, ends: under line.single every line character not yet in
-// it, as the lexer reads one (singlePair: a `\n` after a `\r` and nothing
-// else); where a fixed token holds a line character, every line
-// character, as the lexer reads a run; otherwise a `\n` after a `\r`, so
-// that `\r\n` is one line ending and a record is held to its own line. ok
-// is false while what is read cannot yet tell, with the token kept to
-// pick up from once more is read, so a long run is followed once and not
-// again from its start on every read.
+// it, as the lexer reads one; where a fixed token holds a line character,
+// every line character, as the lexer reads a run; otherwise a `\n` after a
+// `\r`, so that `\r\n` is one line ending and a record is held to its own
+// line. ok is false while what is read cannot yet tell, with the token
+// kept to pick up from once more is read, so a long run is followed once
+// and not again from its start on every read.
 func (p *pieces) follow(end int, token []rune) (int, bool) {
-	if p.single == singlePair {
-		// The lexer takes the `\n` of a `\r\n` whether or not `\n` is a
-		// line character of the grammar's.
-		if len(token) == 1 && token[0] == '\r' {
-			switch {
-			case end < len(p.pending) && p.pending[end] == '\n':
-				return end + 1, true
-			case end == len(p.pending) && !p.eof:
-				p.following = &following{end: end, token: token}
-				return 0, false
-			}
-		}
-		return end, true
-	}
 	for {
 		grew, unsure := false, false
 		for i, form := range p.forms {
@@ -1124,16 +1089,8 @@ func (lx *lexis) commentAt(rest string) int {
 
 // lineRun is the length of the line token at the head of rest: under
 // line.single every line character up to a repeated one, as the lexer
-// reads one (singlePair: a `\r\n` or one line character), and otherwise
-// every line character in a run.
+// reads one, and otherwise every line character in a run.
 func (lx *lexis) lineRun(rest string) int {
-	if lx.single == singlePair {
-		c, n := utf8.DecodeRuneInString(rest)
-		if c == '\r' && strings.HasPrefix(rest[n:], "\n") {
-			return n + 1
-		}
-		return n
-	}
 	n := 0
 	for i, c := range rest {
 		if !lx.lineSet[c] || (lx.single == singleRun && strings.ContainsRune(rest[:i], c)) {
