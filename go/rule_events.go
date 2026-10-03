@@ -50,6 +50,12 @@ package tabnastransduce
 // number that reads as the same value, and attached to that number when
 // it is inserted next.
 //
+// A plain Go map keeps no order (Rust's maps and TypeScript's objects keep
+// their insertion order), so wherever the adapter reads one, for its new
+// members, a value it walks late or a root it walks whole, it takes the
+// walk's order: the member order the grammar declared for the parse in
+// ctx.Meta["fields"], then the rest sorted.
+//
 // Pruning drops the elements of a list frame through the cell
 // (tabnas.Rule.SetNode) after they were emitted, so a document's rows do
 // not pile up in the engine's tree while the transducer streams them.
@@ -120,6 +126,10 @@ type adapter struct {
 	rootDone         bool
 	emitted          bool
 	seed             maphash.Seed
+	// guard is the parse budget install put on the parser. It keeps the
+	// engine's last context, where a grammar that builds plain Go maps
+	// declares their member order (ctx.Meta["fields"]).
+	guard *parseGuard
 }
 
 func newAdapter(sink Sink, limits Limits, abort *AbortFlag, metrics *Metrics, prune Prune, stop *AbortFlag) *adapter {
@@ -149,7 +159,7 @@ func (a *adapter) install(parser *tabnas.Tabnas, abort *AbortFlag) {
 	parser.SubRuleDone(func(rule *tabnas.Rule, _ *tabnas.Context, done tabnas.RuleDone) {
 		a.onDone(rule, done)
 	})
-	installGuard(parser, func() bool { return !abort.IsAborted() && !a.stop.IsAborted() })
+	a.guard = installGuard(parser, func() bool { return !abort.IsAborted() && !a.stop.IsAborted() })
 }
 
 // reset readies the adapter for another document into the same sink:
@@ -172,10 +182,11 @@ func (a *adapter) complete() bool { return a.rootDone && a.open == 0 }
 // document, so the value the engine returned can be walked in its place.
 func (a *adapter) idle() bool { return !a.emitted }
 
-// walkWhole emits a whole value through the sink, outside the parse.
+// walkWhole emits a whole value through the sink, outside the parse,
+// with the member order the grammar declared, as the walk emits it.
 func (a *adapter) walkWhole(value any) (Flow, *Fail) {
 	a.emitted = true
-	return WalkValue(value, a.sink)
+	return walkValueOrdered(value, a.sink, a.guard.fieldOrder())
 }
 
 // send sends one event straight to the sink, outside the parse.
@@ -248,7 +259,7 @@ func (a *adapter) walk(value any) bool {
 	if !a.emit(EvObjectStart()) {
 		return false
 	}
-	for _, k := range memberNames(value) {
+	for _, k := range a.memberNames(value) {
 		v, _ := memberOf(value, k)
 		if !a.emit(EvKey(k)) || !a.walk(v) {
 			return false
@@ -386,7 +397,7 @@ func (a *adapter) closed(rule *tabnas.Rule, cell *tabnas.Rule, replaces bool) {
 			}
 			if length > old {
 				for i := old; i < length; i++ {
-					key, value, ok := entryAt(node, i)
+					key, value, ok := a.entryAt(node, i)
 					if !ok {
 						break
 					}
@@ -462,7 +473,7 @@ func (a *adapter) closed(rule *tabnas.Rule, cell *tabnas.Rule, replaces bool) {
 			node := cell.Node
 			if !array {
 				var names uint64
-				for _, k := range memberNames(node) {
+				for _, k := range a.memberNames(node) {
 					names += maphash.String(a.seed, k)
 				}
 				if names != a.frames[topI].names {
@@ -793,18 +804,19 @@ func listItems(v any) ([]any, bool) {
 	return nil, false
 }
 
-// memberNames is the member names of a map, in its order (a plain Go
-// map's sorted).
-func memberNames(v any) []string {
+// memberNames is the member names of a map, in its order: a plain Go
+// map, which has none, in the walk's order (plainKeys), the names the
+// grammar declared for this parse first.
+func (a *adapter) memberNames(v any) []string {
 	switch c := v.(type) {
 	case *tabnas.OrderedMap:
 		if c != nil {
 			return c.Keys
 		}
 	case map[string]any:
-		return plainKeys(c, nil)
+		return plainKeys(c, a.guard.fieldOrder())
 	case tabnas.MapRef:
-		return plainKeys(c.Val, nil)
+		return plainKeys(c.Val, a.guard.fieldOrder())
 	}
 	return nil
 }
@@ -826,16 +838,16 @@ func memberOf(v any, key string) (any, bool) {
 	return nil, false
 }
 
-// entryAt is the i-th entry of a container: its key ("" in a list) and
-// its value.
-func entryAt(v any, i int) (string, any, bool) {
+// entryAt is the i-th entry of a container, in memberNames' order: its
+// key ("" in a list) and its value.
+func (a *adapter) entryAt(v any, i int) (string, any, bool) {
 	if items, ok := listItems(v); ok {
 		if i < len(items) {
 			return "", items[i], true
 		}
 		return "", nil, false
 	}
-	names := memberNames(v)
+	names := a.memberNames(v)
 	if i < len(names) {
 		x, _ := memberOf(v, names[i])
 		return names[i], x, true
