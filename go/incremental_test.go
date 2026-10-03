@@ -736,6 +736,110 @@ func TestMarkdownDocumentsStreamAsTheWalk(t *testing.T) {
 	}
 }
 
+// A grammar that builds plain Go maps, which keep no order, declares
+// their member order in ctx.Meta["fields"] (tabnas-csv its header's
+// cells, tabnas-markdown since 0.7.7 its AST's fields, in TypeScript's
+// insertion order). The walk gives a plain map's members in that order,
+// and so does the adapter wherever it reads one: a root it walks whole
+// (markdown builds its whole tree in its last pass), an entry that lands
+// whole and is walked at its insertion, and a member it streams as it
+// lands. The grammars here declare the order themselves, so this holds
+// whichever markdown go.mod pins.
+func TestAPlainMapStreamsInTheMemberOrderTheGrammarDeclares(t *testing.T) {
+	fields := []any{"type", "depth", "url", "title", "children"}
+	declare := func(_ *tabnas.Rule, ctx *tabnas.Context) { ctx.Meta["fields"] = fields }
+	heading := func(depth any) map[string]any {
+		return map[string]any{"type": "heading", "depth": depth, "children": []any{
+			map[string]any{"type": "link", "url": "u", "title": "t"},
+		}}
+	}
+	headingEvents := []Event{
+		EvObjectStart(), EvKey("type"), EvString("heading"), EvKey("depth"), EvNumber(1), EvKey("children"),
+		EvArrayStart(), EvObjectStart(), EvKey("type"), EvString("link"), EvKey("url"), EvString("u"),
+		EvKey("title"), EvString("t"), EvObjectEnd(), EvArrayEnd(), EvObjectEnd(),
+	}
+	// The root, built in the root rule's last pass and walked whole.
+	whole := func() *tabnas.Tabnas {
+		j := tabnas.Make()
+		j.Rule("val", func(rs *tabnas.RuleSpec, _ *tabnas.Parser) {
+			rs.AddBO(declare)
+			rs.AddOpen(&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinNR}}})
+			rs.AddClose(&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinZZ}}, A: func(r *tabnas.Rule, _ *tabnas.Context) {
+				r.Node = heading(r.O0.Val)
+			}})
+		})
+		return j
+	}
+	// A list streamed as it grows, whose element lands whole.
+	late := func() *tabnas.Tabnas {
+		j := tabnas.Make()
+		j.Rule("val", func(rs *tabnas.RuleSpec, _ *tabnas.Parser) {
+			rs.AddBO(declare)
+			rs.AddOpen(&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinOS}}, P: "list"})
+			rs.AddClose(&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinZZ}}, A: func(r *tabnas.Rule, _ *tabnas.Context) {
+				r.Node = r.Child.Node
+			}})
+		})
+		j.Rule("list", func(rs *tabnas.RuleSpec, _ *tabnas.Parser) {
+			rs.AddBO(func(r *tabnas.Rule, _ *tabnas.Context) { r.Node = []any{} })
+			rs.AddOpen(&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinNR}}, A: func(r *tabnas.Rule, _ *tabnas.Context) {
+				if l, ok := r.Node.([]any); ok {
+					r.Node = append(l, heading(r.O0.Val))
+				}
+			}})
+			rs.AddClose(&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinCS}}})
+		})
+		return j
+	}
+	// A map streamed member by member, one member per number, in the
+	// declared order, by a replace loop.
+	members := func() *tabnas.Tabnas {
+		j := tabnas.Make()
+		j.Rule("val", func(rs *tabnas.RuleSpec, _ *tabnas.Parser) {
+			rs.AddBO(func(r *tabnas.Rule, ctx *tabnas.Context) {
+				declare(r, ctx)
+				if _, ok := r.Node.(map[string]any); !ok {
+					r.Node = map[string]any{}
+				}
+			})
+			rs.AddOpen(&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinNR}}, A: func(r *tabnas.Rule, _ *tabnas.Context) {
+				if m, ok := r.Node.(map[string]any); ok {
+					m[[]string{"type", "depth", "children"}[len(m)]] = r.O0.Val
+				}
+			}})
+			rs.AddClose(
+				&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinNR}}, B: 1, R: "val"},
+				&tabnas.AltSpec{S: [][]tabnas.Tin{{tabnas.TinZZ}}},
+			)
+		})
+		return j
+	}
+	for _, c := range []struct {
+		name    string
+		grammar func() *tabnas.Tabnas
+		text    string
+		want    []Event
+	}{
+		{"whole", whole, "1", append(append([]Event{}, headingEvents...), EvEnd())},
+		{"late", late, "[1]", append(append([]Event{EvArrayStart()}, headingEvents...), EvArrayEnd(), EvEnd())},
+		{"members", members, "1 2 3", []Event{
+			EvObjectStart(), EvKey("type"), EvNumber(1), EvKey("depth"), EvNumber(2), EvKey("children"), EvNumber(3),
+			EvObjectEnd(), EvEnd(),
+		}},
+	} {
+		var walked Recorder
+		if _, f := NewParserSource(c.grammar(), c.text).Run(&walked); f != nil || !eventsEqual(walked.Events, c.want) {
+			t.Errorf("%s: the walk: %v %v", c.name, f, walked.Events)
+			continue
+		}
+		var streamed Recorder
+		_, f := NewParserSource(c.grammar(), c.text).Unverified().Mode(IncrementalMode(Prune{})).Run(&streamed)
+		if f != nil || !eventsEqual(withoutLexemes(streamed.Events), c.want) {
+			t.Errorf("%s: incremental: %v\n%v\nnot the walk's\n%v", c.name, f, streamed.Events, c.want)
+		}
+	}
+}
+
 // The source consults the list by the grammar's name: an unlisted grammar
 // is refused before the parse, a listed one runs.
 func TestAnUnlistedGrammarInIncrementalModeIsRefusedBeforeItEmitsAnything(t *testing.T) {
