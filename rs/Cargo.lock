@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-csv"
-version = "0.5.11"
+version = "0.6.1"
 dependencies = [
  "indexmap",
  "serde",
@@ -361,7 +361,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ini"
-version = "0.5.12"
+version = "0.5.13"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-json"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "regex",
  "serde_json",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-json5"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "indexmap",
  "regex",
@@ -392,7 +392,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonc"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "serde_json",
  "tabnas-jsonic",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonic"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "indexmap",
  "regex",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonl"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "serde_json",
  "tabnas-json",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-markdown"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "indexmap",
  "regex",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-parser"
-version = "0.12.7"
+version = "0.12.8"
 dependencies = [
  "indexmap",
  "regex",
@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-toml"
-version = "0.5.9"
+version = "0.5.10"
 dependencies = [
  "indexmap",
  "regex",
@@ -483,7 +483,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-xml"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "indexmap",
  "regex",
@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.15"
+version = "0.5.17"
 dependencies = [
  "indexmap",
  "regex",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-zon"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "indexmap",
  "serde",
