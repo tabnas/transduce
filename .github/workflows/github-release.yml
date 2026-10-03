@@ -57,6 +57,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
         run: |
+          # A release tag of the version its own source declares, as
+          # crates-release.yml requires. The Release links the npm version
+          # its tag names, so a stray tag or a typo given to a dispatch would
+          # publish a link to a version that source is not, and could take
+          # "Latest" from the real one.
+          case "$TAG" in
+            ts/v[0-9]*|go/v[0-9]*) ;;
+            *) echo "::error::'$TAG' is not a release tag (ts/v<version> or go/v<version>)"; exit 1 ;;
+          esac
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG exists"
             exit 0
@@ -65,6 +74,11 @@ jobs:
             || { echo "::error::no tag $TAG in this repository"; exit 1; }
           V="${TAG#*/v}"
           PKG="$(git show "$TAG:ts/package.json" | jq -r .name)"
+          TV="$(git show "$TAG:ts/package.json" | jq -r .version)"
+          if [ "$TV" != "$V" ]; then
+            echo "::error::$TAG names $V, but the ts/package.json it tags is ${PKG:-<no name>}@${TV:-<no version>}"
+            exit 1
+          fi
           NOTES="- npm: [\`$PKG@$V\`](https://www.npmjs.com/package/$PKG/v/$V)"
           case "$TAG" in
             go/v*) NOTES="$NOTES"$'\n'"- Go: \`$(git show "$TAG:go/go.mod" | sed -n 's/^module //p')@v$V\`" ;;
