@@ -228,3 +228,4 @@ never parsed from source text. Every retained value is measured against
 bounds (`rule.maxmul`, `rewind.history`, the grammars' depth guards) stand
 underneath; this crate adds no way around them. Nothing here reads files,
 opens connections or evaluates code.
+> **Naming:** Always spell the project name `tabnas`, all lowercase, including in prose and headings. Never write `TabNAS`.
