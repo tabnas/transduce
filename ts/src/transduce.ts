@@ -22,7 +22,7 @@
 // chain slows the parse at the start. That is the backpressure.
 
 // This package's version, as package.json declares it.
-export const VERSION = '0.1.0'
+export const VERSION = '0.1.1'
 
 export {
   Datum,

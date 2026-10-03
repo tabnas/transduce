@@ -286,6 +286,95 @@ func TestALineTokenOfTwoCharactersIsNeverCut(t *testing.T) {
 	}
 }
 
+func TestARunOfTwoLineCharactersReadsAsTypeScriptReadsIt(t *testing.T) {
+	// The inputs tabnas/parser#271 decided, CSV with record.empty and no
+	// header. TypeScript and Rust read four records from each, `\n\r` one
+	// line token as `␞¶` and `¶␞` are where those are the separators, and
+	// put the unterminated string after two CRLF line ends at row 3. The
+	// line source holds to the whole parse at every chunk size, and that
+	// is TypeScript's reading on an engine with #271. An engine before it
+	// reads `\n\r` as two line tokens, so six records, and advances no row
+	// at a CRLF, which the line source does not follow (DIVERGENCE.md).
+	empty := map[string]any{"record": map[string]any{"empty": true}}
+	marks := map[string]any{"record": map[string]any{"separators": "␞¶", "empty": true}}
+	records := 4
+	if engineSingle() == singlePair {
+		records = 6
+	}
+	for _, c := range []struct {
+		text    string
+		options map[string]any
+	}{
+		{"a,b\n\r1,2\n\r\n\r3,4", empty},
+		{"a,b␞¶£,é␞£,2¶␞3,4", marks},
+	} {
+		if n := objectCount(t, csvStreamsAsWhole(t, c.text, false, c.options)); n != records {
+			t.Fatalf("%q: %d records, not %d", c.text, n, records)
+		}
+	}
+	if engineSingle() == singleRun {
+		if got := csvStreamsAsWhole(t, "a,b\r\n1,2\r\n\"x", false, empty); !got.failed ||
+			got.code != "unterminated_string" || got.row != 3 || got.col != 1 {
+			t.Fatalf("%v", got)
+		}
+	}
+}
+
+func TestUnderLineSingleAPieceEndsWhereTheLexerEndsALineToken(t *testing.T) {
+	// The canonical reading stops a run of line characters at its first
+	// repeated one, so `\n\r` is one line token as `\r\n` is; the Go engine
+	// before tabnas/parser#271 read a `\r\n` or one character alone. Under
+	// either, a piece ends just past each token, read whole or a byte at a
+	// time (which follows a token across reads), and the record scanner's
+	// line run is that token.
+	crlf, marks := []rune{'\n', '\r'}, []rune{'␞', '¶'}
+	for _, c := range []struct {
+		single lineSingle
+		line   []rune
+		text   string
+		pieces []string
+	}{
+		{singleRun, crlf, "a\n\r1\n\r\n\rb", []string{"a\n\r", "1\n\r", "\n\r", "b"}},
+		{singleRun, crlf, "a\n\r\nb\r\n\r\rc", []string{"a\n\r", "\n", "b\r\n", "\r", "\r", "c"}},
+		{singleRun, marks, "x␞¶y¶␞¶z", []string{"x␞¶", "y¶␞", "¶", "z"}},
+		{singlePair, crlf, "a\n\r1\n\r\n\rb", []string{"a\n", "\r", "1\n", "\r\n", "\r", "b"}},
+		{singlePair, crlf, "a\n\r\nb\r\n\r\rc", []string{"a\n", "\r\n", "b\r\n", "\r", "\r", "c"}},
+		{singlePair, marks, "x␞¶y¶␞¶z", []string{"x␞", "¶", "y¶", "␞", "¶", "z"}},
+	} {
+		for _, step := range []int{0, 1} {
+			var r io.Reader = strings.NewReader(c.text)
+			if step > 0 {
+				r = trickled(c.text, step)
+			}
+			p := newPieces(r, c.line, map[rune]bool{'\n': true}, c.single, nil)
+			var got []string
+			for {
+				_, piece, ok, f := p.nextPiece(1<<20, func() *Fail { panic("no limit") })
+				if f != nil {
+					t.Fatal(f)
+				}
+				if !ok {
+					break
+				}
+				got = append(got, piece)
+			}
+			if fmt.Sprintf("%q", got) != fmt.Sprintf("%q", c.pieces) {
+				t.Fatalf("reading %d, %q, step %d: pieces %q, not %q", c.single, c.text, step, got, c.pieces)
+			}
+		}
+		lx := &lexis{single: c.single, lineSet: runeSet(c.line)}
+		at := 0
+		for _, piece := range c.pieces {
+			if i := strings.IndexFunc(piece, func(r rune) bool { return lx.lineSet[r] }); i >= 0 {
+				if n := lx.lineRun(c.text[at+i:]); n != len(piece)-i {
+					t.Fatalf("reading %d, %q at %d: a line run of %d bytes, not %d", c.single, c.text, at+i, n, len(piece)-i)
+				}
+			}
+			at += len(piece)
+		}
+	}
+}
+
 func TestASeparatorOfSeveralBytesIsFoundAcrossReads(t *testing.T) {
 	csvStreamsAsWhole(t, "a,b␞1,é␞3,4␞", true, map[string]any{"record": map[string]any{"separators": "␞"}})
 	astral := map[string]any{"record": map[string]any{"separators": "😀"}}
@@ -332,7 +421,7 @@ func TestALongLineTokenIsFollowedOnce(t *testing.T) {
 	// byte at a time, a run costs its length and not its square.
 	const run = 100_000
 	text := "a\n~b\nc\n~d" + strings.Repeat("\n", run) + "x\n~y\n"
-	p := newPieces(trickled(text, 1), []rune{'\n', '\r'}, map[rune]bool{'\n': true}, false, []string{"\n~"})
+	p := newPieces(trickled(text, 1), []rune{'\n', '\r'}, map[rune]bool{'\n': true}, singleOff, []string{"\n~"})
 	type got struct {
 		row uint64
 		n   int
