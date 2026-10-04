@@ -40,7 +40,9 @@
 # NO TEST STEP. The build runs, against already-published dependency
 # versions (every @tabnas devDependency is "*", resolved from the
 # registry), so a failing build never publishes; ci.yml gates the bump
-# PR across the full matrix.
+# PR across the full matrix. The build resolves @tabnas/alchemy from the
+# registry, whose shared types the source imports, so alchemy is released
+# before transduce (admin publish.sh ORDER).
 #
 # THE FIRST PUBLISH IS THE MAINTAINER'S, BY HAND. npm registers a trusted
 # publisher only for a package that already exists, so @tabnas/transduce
