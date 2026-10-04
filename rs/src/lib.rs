@@ -18,6 +18,13 @@
 //! Everything is synchronous and push-based: the parser calls the first
 //! sink from inside its own callback, and a slow writer at the end of the
 //! chain slows the parse at the start. That is the backpressure.
+//!
+//! The protocol types (events, sinks, tables, failures, limits,
+//! selectors, datums, and the data on either side of a router and of
+//! `scan-emit`) are tabnas-alchemy's shared types, `tabnas_alchemy::shared`,
+//! re-exported here at the paths they have always had. [`routers()`]
+//! answers this crate's implementation of alchemy's `Routers`, the
+//! interface a compiled alchemy program makes its routing stages through.
 
 #![forbid(unsafe_code)]
 
@@ -27,18 +34,15 @@
 #[doc = include_str!("../README.md")]
 mod readme_examples {}
 
-pub mod datum;
-pub mod error;
-pub mod event;
-pub mod limits;
 pub mod matcher;
 pub mod route;
+pub mod routers;
 pub mod scan;
-pub mod selector;
-pub mod sink;
 pub mod source;
-pub mod table;
 pub mod table_from_json;
+
+/// The protocol modules, which are alchemy's shared types.
+pub use tabnas_alchemy::shared::{datum, error, event, limits, selector, sink, table};
 
 pub use datum::{
     walk_datum, write_json, write_json_number, write_json_string, Datum, DatumBuilder, Duplicates,
@@ -48,6 +52,7 @@ pub use event::{JsonEvent, Number, OwnedJsonEvent};
 pub use limits::{AbortFlag, Limits, Metrics};
 pub use matcher::{CaptureId, Hit, HitKind, Matcher};
 pub use route::{Budget, CaptureMode, CaptureSpec, FnRoute, RouteSink, Router, Selected};
+pub use routers::{routers, TransduceRouters};
 pub use scan::{ScanEmit, Transition};
 pub use selector::{Path, Segment, Selector, Step};
 pub use sink::{replay, CountSink, Flow, FnSink, Sink, TreeContract};

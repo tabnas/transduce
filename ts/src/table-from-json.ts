@@ -15,23 +15,34 @@
 // of members inside a row never matters, and a number keeps the lexeme the
 // source events carried.
 
-import { Datum, Duplicates, getPath } from './datum'
-import { Fail } from './error'
-import { JsonEvent } from './event'
-import { Limits, Metrics, NODE_BYTES, utf8Bytes } from './limits'
-import { CaptureId } from './matcher'
-import { CaptureSpec, RouteSink, Router, Selected } from './route'
-import { Path, Selector } from './selector'
-import { Flow, Sink } from './sink'
 import {
   BoundColumn,
+  CaptureId,
+  CaptureSpec,
   Cell,
   ColumnMapper,
+  Datum,
+  Duplicates,
+  Fail,
+  Flow,
+  JsonEvent,
+  Limits,
+  Metrics,
+  NODE_BYTES,
+  Path,
   PublicColumn,
+  RouteSink,
+  Selected,
+  Selector,
+  Sink,
   TableBinding,
   TableSink,
   boundColumn,
-} from './table'
+  getPath,
+  utf8Bytes,
+} from '@tabnas/alchemy/shared'
+
+import { Router } from './route'
 
 // Where the columns are, once known.
 type Columns =

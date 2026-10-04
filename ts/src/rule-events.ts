@@ -50,16 +50,26 @@
 // the engine returns, which is why only the incremental source, which
 // discards that value, ever asks for it.
 
-import { Fail } from './error'
-import { Ev, JsonEvent } from './event'
+import {
+  AbortFlag,
+  Ev,
+  Fail,
+  Flow,
+  JsonEvent,
+  Limits,
+  Metrics,
+  Selector,
+  Sink,
+  engineKeys,
+  engineScalar,
+  isEngineContainer,
+  isEngineMap,
+  isJsonNumber,
+} from '@tabnas/alchemy/shared'
+
 import { Guarded } from './guard'
-import { isJsonNumber } from './json'
-import { AbortFlag, Limits, Metrics } from './limits'
 import { Matcher } from './matcher'
-import { Selector } from './selector'
-import { Flow, Sink } from './sink'
 import { Prune, walkValue } from './source'
-import { engineKeys, engineScalar, isEngineContainer, isEngineMap } from './value'
 
 // One open container.
 type Frame = {

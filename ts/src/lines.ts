@@ -95,12 +95,19 @@ function makeJson(): any {
   return grammar('@tabnas/json', 'JSON Lines', (): JsonModule => require('@tabnas/json')).make()
 }
 
-import { Fail, enginePosition } from './error'
-import { Ev } from './event'
+import {
+  AbortFlag,
+  Ev,
+  Fail,
+  Flow,
+  Limits,
+  Metrics,
+  Sink,
+  enginePosition,
+} from '@tabnas/alchemy/shared'
+
 import { Guarded } from './guard'
-import { AbortFlag, Limits, Metrics } from './limits'
 import { Adapter, notStreamable, prepare } from './rule-events'
-import { Flow, Sink } from './sink'
 import { Prune, Source, engineFailure, walkValue } from './source'
 
 // How much of the input one CSV parse holds, at most one record over.

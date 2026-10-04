@@ -1,3 +1,5 @@
+github.com/tabnas/alchemy/go v0.1.3 h1:VXlaXgmRuKzFNynDNcgoiPxe98QN8ButSict6qTF4ew=
+github.com/tabnas/alchemy/go v0.1.3/go.mod h1:kzzbSHkpAsyczKpsC/wx7lKTrg0ad3dWIOxAYNz75yo=
 github.com/tabnas/csv/go v0.6.2 h1:dyNPUMZMqG5OKYuk6948Mp6NZCHEWmOFOiUEDXJ94ug=
 github.com/tabnas/csv/go v0.6.2/go.mod h1:EGiCf03VLWqCwk9s75dwoZL9TaIX4081VyZijYpfiQY=
 github.com/tabnas/debug/go v0.3.10 h1:C0GGfHCvEHlqknz2DyNmgraA8OmQR+YIkGYo9MZrXLE=

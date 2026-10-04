@@ -16,12 +16,7 @@
 // of it can therefore trust the sequence. A concrete `Path` is built only
 // on request, for a delivered match or a failure.
 
-import { Fail } from './error'
-import { JsonEvent } from './event'
-import { Path, Segment, Selector } from './selector'
-
-// Which selector matched: its position in the list given to the matcher.
-export type CaptureId = number
+import { CaptureId, Fail, JsonEvent, Path, Segment, Selector } from '@tabnas/alchemy/shared'
 
 const ROOT = 0
 

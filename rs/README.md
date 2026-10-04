@@ -4,6 +4,12 @@ The `tabnas-transduce` crate, library `tabnas_transduce`. See the
 repository [README](../README.md) and [AGENTS.md](../AGENTS.md), and
 [`docs/architecture.md`](../docs/architecture.md) for the design.
 
+The protocol types (events, sinks, tables, failures, limits, selectors,
+datums) are tabnas-alchemy's shared types, `tabnas_alchemy::shared`,
+re-exported here at the paths they have always had; `routers()` answers
+this crate's implementation of alchemy's `Routers`, which a host passes
+to `tabnas_alchemy::compile`.
+
 ```rust
 use tabnas_transduce::{CountSink, Source, ValueSource};
 
@@ -45,6 +51,7 @@ assert!(table.ended);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The engine and the grammars are sibling checkouts named by path in
-`Cargo.toml`. From this directory: `cargo test --all-targets`,
-`cargo test --doc`, `cargo clippy --all-targets --all-features -- -D warnings`.
+alchemy's shared types, the engine and the grammars are sibling
+checkouts named by path in `Cargo.toml`. From this directory:
+`cargo test --all-targets`, `cargo test --doc`,
+`cargo clippy --all-targets --all-features -- -D warnings`.

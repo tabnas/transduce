@@ -1,5 +1,7 @@
 # Streaming transducers and renderers for tabnas — Rust design brief
 
+> The protocol modules this design sketches (`event`, `sink`, `error`, `limits`, `datum`, `selector`, `table`) are now alchemy's shared types, [`tabnas_alchemy::shared`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared), and the renderer-facing types (`TextOut`, the CSV and JSON options) moved there from render. transduce and render depend on them and re-export them; alchemy's runtime takes transduce's `Routers` and render's `Renderers` from its host. The design is otherwise as written.
+
 Status: implementation brief, 2026-09-27. Derived from the maintainer's design
 document "Declarative Streaming Transducers and Renderers" (the "spec" below)
 and the maintainer's answers:

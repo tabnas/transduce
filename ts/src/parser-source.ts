@@ -30,13 +30,11 @@
 // event the adapter could turn into a value (YAML's empty document is
 // `null`) has its value walked instead.
 
+import { AbortFlag, Ev, Fail, Flow, Limits, Metrics, Sink } from '@tabnas/alchemy/shared'
+
 import { isIncremental } from './capability'
-import { Fail } from './error'
-import { Ev } from './event'
 import { Guarded } from './guard'
-import { AbortFlag, Limits, Metrics } from './limits'
 import { Adapter, notStreamable, prepare } from './rule-events'
-import { Flow, Sink } from './sink'
 import { Prune, Source, SourceMode, engineFailure, walkValue } from './source'
 
 // A tabnas parser applied to one text, as a source.

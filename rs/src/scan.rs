@@ -10,34 +10,8 @@
 use crate::error::Fail;
 use crate::sink::Flow;
 
-/// The result of one step: the next state and what to emit for it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Transition<S, O> {
-    pub state: S,
-    pub outputs: Vec<O>,
-}
-
-impl<S, O> Transition<S, O> {
-    pub fn new(state: S, outputs: Vec<O>) -> Self {
-        Transition { state, outputs }
-    }
-
-    /// A step that emits nothing.
-    pub fn stay(state: S) -> Self {
-        Transition {
-            state,
-            outputs: Vec::new(),
-        }
-    }
-
-    /// A step that emits one item.
-    pub fn emit(state: S, output: O) -> Self {
-        Transition {
-            state,
-            outputs: vec![output],
-        }
-    }
-}
+/// The result of one step, which is one of alchemy's shared types.
+pub use tabnas_alchemy::shared::scan::Transition;
 
 /// The operator. Feed items with [`ScanEmit::item`], then call
 /// [`ScanEmit::finish`] exactly once when the input completed

@@ -18,6 +18,13 @@ npm install @tabnas/transduce @tabnas/json @tabnas/csv
 A line source whose grammar is not installed fails with a `TypeError` that
 names the package.
 
+The protocol types (`JsonEvent`, `Sink`, `TableEvent`, `Selector`, `Datum`,
+`Fail` and its codes, `Limits`, `Metrics` and the captures' types) are
+`@tabnas/alchemy`'s shared types, imported from `@tabnas/alchemy/shared`, a
+peer, and re-exported here under the same names. `routers` is this
+package's stages as alchemy's `Routers`, which a host passes to alchemy's
+`compile` with `@tabnas/render`'s `renderers`.
+
 See the [project README](https://github.com/tabnas/transduce#readme) for the
 architecture, API examples, limits, and protocol documentation.
 

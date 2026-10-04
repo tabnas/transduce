@@ -364,13 +364,15 @@ describe('incremental: the differential suite', () => {
   // The grammar packages package.json takes as devDependencies, read at test
   // time so a grammar added there without a GRAMMARS entry fails here. A
   // grammar is a package that depends on the engine; the engine itself and
-  // @tabnas/support, the fixture runner, are not grammars.
+  // @tabnas/support, the fixture runner, are not grammars, and neither is
+  // @tabnas/alchemy here: this package takes it for its shared types, and
+  // its grammar reads programs, not the documents a source streams.
   it('every grammar in the devDependencies is verified here', () => {
     const pkg = require('../package.json')
     const grammars = Object.keys(pkg.devDependencies)
       .filter((dep) => dep.startsWith('@tabnas/'))
       .map((dep) => dep.slice('@tabnas/'.length))
-      .filter((name) => 'parser' !== name && 'support' !== name)
+      .filter((name) => 'parser' !== name && 'support' !== name && 'alchemy' !== name)
       .filter((name) => {
         const dep = JSON.parse(
           readFileSync(join(__dirname, '..', 'node_modules', '@tabnas', name, 'package.json'), 'utf8'),

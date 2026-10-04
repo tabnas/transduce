@@ -9,10 +9,16 @@
 // as promptly as a parse does; and the source metrics (events, keys,
 // scalars) are counted locally and flushed in one step.
 
-import { Fail } from './error'
-import { JsonEvent } from './event'
-import { AbortFlag, Limits, Metrics, utf8Bytes } from './limits'
-import { Flow, Sink } from './sink'
+import {
+  AbortFlag,
+  Fail,
+  Flow,
+  JsonEvent,
+  Limits,
+  Metrics,
+  Sink,
+  utf8Bytes,
+} from '@tabnas/alchemy/shared'
 
 // A sink wrapper that enforces the source limits and counts.
 export class Guarded<S extends Sink> implements Sink {
