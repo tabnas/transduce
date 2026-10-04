@@ -60,8 +60,40 @@
 // the moment it passes the limit, whatever its length, rather than growing
 // a chunk without bound.
 
-import { make as makeCsv } from '@tabnas/csv'
-import { make as makeJson } from '@tabnas/json'
+// The grammars are optional peers. A program that builds no JSON Lines or
+// CSV line source needs neither installed (render reads events, never
+// lines), so each is loaded when a line source starts, not when this
+// package is, and a run without it fails as a usage error naming it.
+type CsvModule = typeof import('@tabnas/csv')
+type JsonModule = typeof import('@tabnas/json')
+
+function grammar<T>(name: string, format: string, load: () => T): T {
+  try {
+    return load()
+  } catch (error: any) {
+    // Only the grammar itself missing, not something it requires.
+    if (
+      'MODULE_NOT_FOUND' === error?.code &&
+      String(error.message).startsWith(`Cannot find module '${name}'`)
+    ) {
+      throw new TypeError(
+        `LinesSource: ${format} needs ${name}, an optional peer of ` +
+          `@tabnas/transduce; install it alongside`,
+      )
+    }
+    throw error
+  }
+}
+
+function makeCsv(options: Record<string, unknown>): any {
+  return grammar('@tabnas/csv', 'CSV', (): CsvModule => require('@tabnas/csv')).make(
+    options as any,
+  )
+}
+
+function makeJson(): any {
+  return grammar('@tabnas/json', 'JSON Lines', (): JsonModule => require('@tabnas/json')).make()
+}
 
 import { Fail, enginePosition } from './error'
 import { Ev } from './event'
