@@ -38,6 +38,14 @@
     "@tabnas/csv": ">=0",
     "@tabnas/json": ">=0"
   },
+  "peerDependenciesMeta": {
+    "@tabnas/csv": {
+      "optional": true
+    },
+    "@tabnas/json": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@tabnas/csv": "*",
     "@tabnas/feed": "*",
