@@ -10,10 +10,9 @@ require (
 	github.com/tabnas/parser/go v0.12.9
 )
 
-// The protocol types, declared in alchemy's shared package. No release of
-// alchemy carries that package yet: a go.work over the sibling checkout
-// resolves it until one does.
-require github.com/tabnas/alchemy/go v0.1.3
+// The protocol types, declared in alchemy's shared package, which alchemy
+// carries from v0.2.0.
+require github.com/tabnas/alchemy/go v0.2.0
 
 // The grammars the tests run (the differential suite reads this list), and
 // the shared fixture runner.
@@ -25,9 +24,9 @@ require (
 	github.com/tabnas/jsonl/go v0.1.12
 	github.com/tabnas/markdown/go v0.7.8
 	github.com/tabnas/support/go v0.3.6
-	github.com/tabnas/toml/go v0.5.11
+	github.com/tabnas/toml/go v0.5.12
 	github.com/tabnas/xml/go v0.7.12
-	github.com/tabnas/yaml/go v0.5.18
+	github.com/tabnas/yaml/go v0.5.19
 	github.com/tabnas/zon/go v0.5.12
 )
 
