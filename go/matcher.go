@@ -6,10 +6,6 @@ import (
 	"sort"
 )
 
-// CaptureID is which selector matched: its position in the slice given
-// to NewMatcher.
-type CaptureID = int
-
 type nodeID = int
 
 const rootNode nodeID = 0
@@ -105,7 +101,7 @@ func NewMatcher(selectors []Selector) *Matcher {
 	nodes := []trieNode{newTrieNode()}
 	for id, sel := range selectors {
 		at := rootNode
-		for _, step := range sel.steps {
+		for _, step := range sel.Steps() {
 			at = trieChild(&nodes, at, step)
 		}
 		nodes[at].terminals = append(nodes[at].terminals, id)

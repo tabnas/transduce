@@ -248,7 +248,7 @@ document's `End`. The `rows` metric counts the rows delivered.
 
 ## Failure codes
 
-See `Code::ALL` in `rs/src/error.rs` and the table in `AGENTS.md`. A
+See `Code::ALL` in alchemy's [`rs/src/shared/error.rs`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared/error.rs) and the table in `AGENTS.md`. A
 `Fail` carries `code`, `message`, and when they apply `path`, `limit`
 (`{name, value}`), `row`, `col`, `file` (the source the position is in,
 when the program was compiled from several), and `output` (`"partial"`

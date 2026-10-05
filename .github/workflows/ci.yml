@@ -19,7 +19,7 @@ jobs:
   ci:
     uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
     with:
-      deps: "parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed"
+      deps: "parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed alchemy"
 
   # The shared workflow runs `go test ./...` with no build tags and takes
   # none as an input (its inputs are deps, build-order, run-ts, run-go,
@@ -62,7 +62,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for dep in parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed; do
+          for dep in parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed alchemy; do
             git clone --depth 1 "https://github.com/tabnas/$dep.git" "$dep"
           done
 

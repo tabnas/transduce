@@ -8,25 +8,7 @@
 // the functions own nothing. This is what the DSL's `scan-emit` lowers to,
 // and the table transducer is one instance of it.
 
-import { Fail } from './error'
-import { Flow } from './sink'
-
-// The result of one step: the next state and what to emit for it.
-export type Transition<S, O> = { state: S; outputs: O[] }
-
-export const Transition = Object.freeze({
-  of<S, O>(state: S, outputs: O[]): Transition<S, O> {
-    return { state, outputs }
-  },
-  // A step that emits nothing.
-  stay<S, O>(state: S): Transition<S, O> {
-    return { state, outputs: [] }
-  },
-  // A step that emits one item.
-  emit<S, O>(state: S, output: O): Transition<S, O> {
-    return { state, outputs: [output] }
-  },
-})
+import { Fail, Flow, Transition } from '@tabnas/alchemy/shared'
 
 // The operator. Feed items with `item`, then call `finish` exactly once
 // when the input completed successfully; never call it after a failure or

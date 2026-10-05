@@ -493,13 +493,18 @@ grammar_tests! {
 /// from the manifest at test time so a grammar added there without a
 /// `GRAMMARS` row fails here. A grammar is a crate that depends on the
 /// engine, which its own manifest says: `tabnas-support`, the fixture
-/// runner, is a path crate too and is not one.
+/// runner, is a path crate too and is not one. Nor is `tabnas-alchemy`,
+/// taken for its shared types alone, without the language and its grammar
+/// (`default-features = false`).
 fn manifest_grammars() -> Vec<String> {
     let mut names: Vec<String> = include_str!("../Cargo.toml")
         .lines()
         .filter_map(|line| {
             let (name, rest) = line.split_once('=')?;
             let name = name.trim().strip_prefix("tabnas-")?;
+            if name == "alchemy" {
+                return None;
+            }
             let (_, path) = rest.split_once("path = \"")?;
             let (path, _) = path.split_once('"')?;
             let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

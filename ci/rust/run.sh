@@ -17,7 +17,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 # takes hoover, feed takes xml, and every grammar takes parser and most
 # take json or jsonic), and support, whose fixture runner the shared
 # fixtures in test/spec run through.
-SIBLINGS="parser json jsonl jsonic jsonc json5 yaml toml ini hoover csv xml zon markdown feed support"
+SIBLINGS="parser json jsonl jsonic jsonc json5 yaml toml ini hoover csv xml zon markdown feed support alchemy"
 
 for SIBLING in $SIBLINGS; do
   if [[ ! -f "$ROOT/../$SIBLING/rs/Cargo.toml" ]]; then

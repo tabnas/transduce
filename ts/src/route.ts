@@ -15,76 +15,24 @@
 // stream the check could not foresee still fails rather than mixing two
 // values.
 
-import { Datum, DatumBuilder, Duplicates } from './datum'
-import { Fail } from './error'
-import { JsonEvent } from './event'
-import { Limits, Metrics } from './limits'
-import { CaptureId, Matcher } from './matcher'
-import { Path, Selector } from './selector'
-import { Flow, Sink } from './sink'
+import {
+  CaptureId,
+  CaptureSpec,
+  Datum,
+  DatumBuilder,
+  Duplicates,
+  Fail,
+  Flow,
+  JsonEvent,
+  Limits,
+  Metrics,
+  Path,
+  RouteSink,
+  Selected,
+  Sink,
+} from '@tabnas/alchemy/shared'
 
-// What a capture keeps of its match: build the value and deliver it whole
-// (`materialize`), or deliver only that the value occurred, and where,
-// when it ends (`observe`).
-export type CaptureMode = 'materialize' | 'observe'
-
-// The byte budget one materialized capture may not exceed, named after the
-// `Limits` field the failure reports.
-export type Budget = { bytes: number; name: string }
-
-// One capture: a tag for the consumer, the selector to match, the mode,
-// and for a `materialize` capture an optional budget (else the router's
-// `max_capture_bytes`).
-export class CaptureSpec {
-  readonly tag: string
-  readonly selector: Selector
-  readonly mode: CaptureMode
-  budget: Budget | null = null
-
-  constructor(tag: string, selector: Selector, mode: CaptureMode) {
-    this.tag = tag
-    this.selector = selector
-    this.mode = mode
-  }
-
-  static materialize(tag: string, selector: Selector): CaptureSpec {
-    return new CaptureSpec(tag, selector, 'materialize')
-  }
-
-  static observe(tag: string, selector: Selector): CaptureSpec {
-    return new CaptureSpec(tag, selector, 'observe')
-  }
-
-  // This spec with its own budget, whose failure names `name`.
-  withBudget(bytes: number, name: string): CaptureSpec {
-    this.budget = { bytes, name }
-    return this
-  }
-}
-
-// One completed match: the spec's position in the router's list, its tag,
-// the concrete path, and the value for a `materialize` capture (`null`
-// for `observe`).
-export type Selected = {
-  id: CaptureId
-  tag: string
-  path: Path
-  value: Datum | null
-}
-
-// The consumer of a router's matches.
-export interface RouteSink {
-  // A capture's value is beginning. Nothing has been retained for it yet,
-  // so a consumer that knows the value is out of order can refuse it here
-  // at no cost (throw a `Fail`); the router adds the path to a failure
-  // that has none.
-  began?(id: CaptureId, tag: string): void
-
-  selected(selected: Selected): Flow
-
-  // The document ended, validated. Exactly once, after the last match.
-  end(): Flow
-}
+import { Matcher } from './matcher'
 
 // A route sink that records every match.
 export class SelectedRecorder implements RouteSink {

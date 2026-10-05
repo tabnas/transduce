@@ -16,6 +16,12 @@ name = "tabnas_transduce"
 path = "src/lib.rs"
 
 [dependencies]
+# The protocol types (events, sinks, tables, failures, limits, selectors,
+# datums) are alchemy's shared types: its `shared` unit alone, without the
+# language (`default-features = false`), with the conversions from the
+# engine's own error and value (`tabnas`). A sibling checkout, like the
+# engine.
+tabnas-alchemy = { path = "../../alchemy/rs", default-features = false, features = ["tabnas"] }
 # The engine is consumed as a SIBLING CHECKOUT, the standard tabnas
 # development model: clone https://github.com/tabnas/parser next to this
 # repo. The `tabnas` crate is not published, so there is no registry

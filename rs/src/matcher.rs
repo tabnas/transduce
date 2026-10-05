@@ -25,8 +25,8 @@ use crate::event::JsonEvent;
 use crate::selector::{Path, Segment, Selector, Step};
 
 /// Which selector matched: its position in the slice given to
-/// [`Matcher::new`].
-pub type CaptureId = usize;
+/// [`Matcher::new`]. One of alchemy's shared types.
+pub use tabnas_alchemy::shared::matcher::CaptureId;
 
 type NodeId = usize;
 
@@ -301,7 +301,7 @@ impl Matcher {
                 if self.root_done {
                     return Err(Fail::protocol("a second root value arrived"));
                 }
-                self.node_stack.truncate(0);
+                self.node_stack.clear();
                 self.node_stack.push(ROOT);
                 0
             }

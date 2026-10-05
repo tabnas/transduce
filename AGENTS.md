@@ -44,15 +44,22 @@ seconds needs nothing extra.
 
 Read [`docs/architecture.md`](docs/architecture.md) first: it is the
 design this crate implements, with what was measured before it was
-designed. In one paragraph: a **source** produces `JsonEvents/1`
-([`event.rs`](rs/src/event.rs)) and pushes them into a chain of
-**sinks** ([`sink.rs`](rs/src/sink.rs)), synchronously, on the parsing
+designed. The protocol it describes (events, sinks, selectors, datums,
+tables, `Fail` and its codes, limits) is now alchemy's shared types,
+[`tabnas_alchemy::shared`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared), which this crate depends on and
+re-exports at the old paths; this crate keeps the sources, the matcher,
+the router, the table transducer, `scan-emit` and the guard, and offers
+them to alchemy's runtime as its `Routers`. In one paragraph: a
+**source** produces `JsonEvents/1`
+([`event.rs`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared/event.rs)) and pushes them into a chain of
+**sinks** ([`sink.rs`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared/sink.rs)), synchronously, on the parsing
 thread, so a slow writer at the end slows the parser at the start and
-nothing queues in between. **Selectors** ([`selector.rs`](rs/src/selector.rs))
+nothing queues in between. **Selectors** ([`selector.rs`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared/selector.rs))
 are data describing locations; the **matcher** and **router** recognize
 every selector in one pass and materialize selected scopes into
-[`Datum`](rs/src/datum.rs) values under a byte limit. The **table
-transducer** ([`table.rs`](rs/src/table.rs)) turns selected metadata and
+[`Datum`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared/datum.rs) values under a byte limit. The **table
+transducer** ([`table_from_json.rs`](rs/src/table_from_json.rs), over the
+protocol in [`table.rs`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared/table.rs)) turns selected metadata and
 rows into `TableRows/1`, a flat `Schema → Row* → End` protocol whose rows
 are already projected into schema order. **Limits** are part of a plan
 and fail loudly; **metrics** report retention high-water marks; an
@@ -141,15 +148,10 @@ is exactly the grammar's.
 
 | Path | What it is |
 |---|---|
-| `rs/src/event.rs` | `JsonEvents/1`: borrowed events, owned recording form |
-| `rs/src/sink.rs` | `Sink`, `Flow`, recorders and adapters; `TreeContract`, which holds a stream to a tree's events in front of a sink that takes them as one |
-| `rs/src/error.rs` | `Code` (the stable failure codes), `Fail` |
-| `rs/src/limits.rs` | `Limits`, `Metrics`, `AbortFlag` |
-| `rs/src/datum.rs` | the retained value, its builder, the JSON writer |
-| `rs/src/selector.rs` | `Selector`, `Step`, `Path`, `Segment` |
+| `rs/src/lib.rs` | re-exports alchemy's shared types at their old paths: `event`, `sink`, `error` (`Code`, `Fail`), `limits`, `datum`, `selector`, `table`; they live in `tabnas_alchemy::shared`, which this crate depends on with `default-features = false` |
+| `rs/src/routers.rs` | `TransduceRouters` (`routers()`): this crate's router, table transducer, `scan-emit` and guard as alchemy's `Routers` |
 | `rs/src/matcher.rs` | shared-prefix matching of many selectors in one pass |
 | `rs/src/route.rs` | captures: materialize or observe selected scopes, deliver in order |
-| `rs/src/table.rs` | `TableRows/1`, bindings, the standard column mapping |
 | `rs/src/table_from_json.rs` | the metadata-first table transducer |
 | `rs/src/scan.rs` | `scan-emit` |
 | `rs/src/source/mod.rs` | `Source`, `ValueSource`, `SourceMode`, `Prune` |
@@ -196,7 +198,8 @@ numbers in its pull request.
 ## Error codes
 
 The code is the contract; the message is informative. Every code is in
-`Code::ALL` (`rs/src/error.rs`) and written in `SCREAMING_SNAKE_CASE`:
+`Code::ALL` (alchemy's [`shared/error.rs`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared/error.rs), re-exported
+here) and written in `SCREAMING_SNAKE_CASE`:
 
 | Code | Raised when |
 |---|---|

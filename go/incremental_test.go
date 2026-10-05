@@ -344,8 +344,10 @@ func TestIncrementalMarkdown(t *testing.T) { verifyGrammar(t, "markdown") }
 func TestIncrementalFeed(t *testing.T)     { verifyGrammar(t, "feed") }
 
 // moduleGrammars is the grammar modules go.mod requires directly: a
-// tabnas module whose own go.mod requires the engine. Read at test time,
-// so a grammar added there without a diffGrammars row fails here.
+// tabnas module whose own go.mod requires the engine, other than the
+// engine itself and alchemy, which is required for the protocol types its
+// shared package declares, not as a grammar this suite reads. Read at test
+// time, so a grammar added there without a diffGrammars row fails here.
 func moduleGrammars(t *testing.T) []string {
 	raw, err := os.ReadFile("go.mod")
 	if err != nil {
@@ -368,7 +370,7 @@ func moduleGrammars(t *testing.T) []string {
 	var names []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		path, dir, ok := strings.Cut(line, "\t")
-		if !ok || !direct[path] || dir == "" || path == "github.com/tabnas/parser/go" {
+		if !ok || !direct[path] || dir == "" || path == "github.com/tabnas/parser/go" || path == "github.com/tabnas/alchemy/go" {
 			continue
 		}
 		mod, err := os.ReadFile(filepath.Join(dir, "go.mod"))

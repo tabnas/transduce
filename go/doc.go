@@ -23,6 +23,14 @@
 // sink from inside its own callback, and a slow writer at the end of the
 // chain slows the parse at the start. That is the backpressure.
 //
+// The protocol types (the events and the Sink, the table protocol,
+// selectors, retained values, limits, metrics, the abort flag and the
+// codes) are declared in alchemy's shared package,
+// github.com/tabnas/alchemy/go/shared, which render and alchemy build on
+// too; this package names each again, as an alias, so its API is
+// unchanged. [Routers] is the stages alchemy's runtime builds, as
+// alchemy's shared.Routers, which a host hands to alchemy's Compile.
+//
 // The Rust crate in ../rs is the reference; docs/reference.md describes
 // the contracts, and the shared fixtures in ../test/spec pin them for
 // every runtime.

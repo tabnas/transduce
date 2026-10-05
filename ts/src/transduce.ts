@@ -20,6 +20,12 @@
 // Everything is synchronous and push-based: the parser calls the first
 // sink from inside its own callback, and a slow writer at the end of the
 // chain slows the parse at the start. That is the backpressure.
+//
+// The protocols, `Fail` and its codes, `Limits`, `Metrics`, `Selector`,
+// `Datum` and the captures' types are alchemy's shared types
+// (`@tabnas/alchemy/shared`), which this package imports and re-exports
+// under the names it always exported them by. `routers` is this package's
+// stages as alchemy's `Routers`, for a host to pass to alchemy's `compile`.
 
 // This package's version, as package.json declares it.
 export const VERSION = '0.1.2'
@@ -35,23 +41,33 @@ export {
   toJSON,
   toText,
   walkDatum,
-} from './datum'
-export type { Duplicates } from './datum'
-export { Code, Fail, isFail } from './error'
-export type { Limit } from './error'
-export { Ev, eventEquals, eventText, isEnd, isScalar, isStart } from './event'
-export type { JsonEvent, JsonEventType } from './event'
-export { isJsonNumber, jsonNumber, jsonString, numberText } from './json'
-export { AbortFlag, LIMIT_NAMES, Limits, Metrics, NODE_BYTES, utf8Bytes } from './limits'
+} from '@tabnas/alchemy/shared'
+export type { Duplicates } from '@tabnas/alchemy/shared'
+export { Code, Fail, isFail } from '@tabnas/alchemy/shared'
+export type { Limit } from '@tabnas/alchemy/shared'
+export { Ev, eventEquals, eventText, isEnd, isScalar, isStart } from '@tabnas/alchemy/shared'
+export type { JsonEvent, JsonEventType } from '@tabnas/alchemy/shared'
+export { isJsonNumber, jsonNumber, jsonString, numberText } from '@tabnas/alchemy/shared'
+export {
+  AbortFlag,
+  LIMIT_NAMES,
+  Limits,
+  Metrics,
+  NODE_BYTES,
+  utf8Bytes,
+} from '@tabnas/alchemy/shared'
 export { Matcher } from './matcher'
-export type { CaptureId, Hit, HitKind } from './matcher'
-export { CaptureSpec, FnRoute, Router, SelectedRecorder } from './route'
-export type { Budget, CaptureMode, RouteSink, Selected } from './route'
-export { ScanEmit, Transition } from './scan'
-export { Path, Selector, keyText, pathText } from './selector'
-export type { Segment, Step } from './selector'
-export { CountSink, EventRecorder, FnSink, TreeContract, replay } from './sink'
-export type { Flow, Sink } from './sink'
+export type { Hit, HitKind } from './matcher'
+export type { CaptureId } from '@tabnas/alchemy/shared'
+export { FnRoute, Router, SelectedRecorder } from './route'
+export { CaptureSpec } from '@tabnas/alchemy/shared'
+export type { Budget, CaptureMode, RouteSink, Selected } from '@tabnas/alchemy/shared'
+export { ScanEmit } from './scan'
+export { Transition } from '@tabnas/alchemy/shared'
+export { Path, Selector, keyText, pathText } from '@tabnas/alchemy/shared'
+export type { Segment, Step } from '@tabnas/alchemy/shared'
+export { CountSink, EventRecorder, FnSink, TreeContract, replay } from '@tabnas/alchemy/shared'
+export type { Flow, Sink } from '@tabnas/alchemy/shared'
 export { Prune, SourceMode, ValueSource, engineFailure, walkValue } from './source'
 export type { Source } from './source'
 export { Guarded } from './guard'
@@ -59,7 +75,7 @@ export { ParserSource } from './parser-source'
 export { DEFAULT_CHUNK_BYTES, LineFormat, LinesSource } from './lines'
 export type { LinesChunk, LinesInput, LinesWriter } from './lines'
 export { INCREMENTAL, capability, isIncremental } from './capability'
-export { Cell, Schema, Table, boundColumn, columnFromMeta } from './table'
+export { Cell, Schema, Table, boundColumn, columnFromMeta } from '@tabnas/alchemy/shared'
 export type {
   BoundColumn,
   ColumnMapper,
@@ -68,5 +84,6 @@ export type {
   TableBinding,
   TableEvent,
   TableSink,
-} from './table'
+} from '@tabnas/alchemy/shared'
 export { TableFromJson } from './table-from-json'
+export { routers } from './routers'

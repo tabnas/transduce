@@ -10,6 +10,11 @@ require (
 	github.com/tabnas/parser/go v0.12.9
 )
 
+// The protocol types, declared in alchemy's shared package. No release of
+// alchemy carries that package yet: a go.work over the sibling checkout
+// resolves it until one does.
+require github.com/tabnas/alchemy/go v0.1.3
+
 // The grammars the tests run (the differential suite reads this list), and
 // the shared fixture runner.
 require (

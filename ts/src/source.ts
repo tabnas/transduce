@@ -14,12 +14,18 @@
 // Every source emits through `Guarded`, which enforces the source limits,
 // polls the abort flag and counts the source metrics.
 
-import { Fail, engineCode, engineDetail } from './error'
-import { Ev } from './event'
-import { AbortFlag } from './limits'
-import { Selector } from './selector'
-import { Flow, Sink } from './sink'
-import { engineKeys, engineScalar } from './value'
+import {
+  AbortFlag,
+  Ev,
+  Fail,
+  Flow,
+  Selector,
+  Sink,
+  engineCode,
+  engineDetail,
+  engineKeys,
+  engineScalar,
+} from '@tabnas/alchemy/shared'
 
 // Which arrays the incremental source empties as it streams them: none
 // (`never`), the array whose elements the selector names (`under`: a

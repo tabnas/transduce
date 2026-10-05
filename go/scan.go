@@ -2,13 +2,6 @@
 
 package tabnastransduce
 
-// Transition is the result of one scan-emit step: the next state and
-// what to emit for it.
-type Transition[S, O any] struct {
-	State   S
-	Outputs []O
-}
-
 // Stay is a step that emits nothing.
 func Stay[S, O any](state S) Transition[S, O] { return Transition[S, O]{State: state} }
 
