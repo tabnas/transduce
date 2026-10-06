@@ -31,6 +31,7 @@
 // `null`) has its value walked instead.
 
 import { AbortFlag, Ev, Fail, Flow, Limits, Metrics, Sink } from '@tabnas/alchemy/shared'
+import type { Tabnas } from '@tabnas/parser'
 
 import { isIncremental } from './capability'
 import { Guarded } from './guard'
@@ -39,7 +40,7 @@ import { Prune, Source, SourceMode, engineFailure, walkValue } from './source'
 
 // A tabnas parser applied to one text, as a source.
 export class ParserSource implements Source {
-  private parser: any
+  private parser: Tabnas
   private text: string
   private sourceMode: SourceMode = SourceMode.materialize()
   private sourceLimits: Limits = Limits.default()
@@ -51,7 +52,7 @@ export class ParserSource implements Source {
 
   // A source in materialize mode with default limits, its own abort flag
   // and fresh metrics; the builder methods change each.
-  constructor(parser: any, text: string) {
+  constructor(parser: Tabnas, text: string) {
     this.parser = parser
     this.text = text
   }
@@ -155,7 +156,7 @@ export class ParserSource implements Source {
 
 // Parse, then walk; the grammar's value comes back beside the outcome.
 function materialize<S extends Sink>(
-  parser: any,
+  parser: Tabnas,
   text: string,
   abort: AbortFlag,
   guarded: Guarded<S>,
@@ -173,7 +174,7 @@ function materialize<S extends Sink>(
 }
 
 function incremental<S extends Sink>(
-  parser: any,
+  parser: Tabnas,
   text: string,
   limits: Limits,
   abort: AbortFlag,

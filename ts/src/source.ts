@@ -25,6 +25,7 @@ import {
   engineDetail,
   engineKeys,
   engineScalar,
+  isEngineMap,
 } from '@tabnas/alchemy/shared'
 
 // Which arrays the incremental source empties as it streams them: none
@@ -118,9 +119,12 @@ export function walkValue(value: unknown, sink: Sink): Flow {
     }
   }
   if ('stop' === sink.event(Ev.objectStart)) return 'stop'
-  for (const k of engineKeys(value)) {
-    if ('stop' === sink.event(Ev.key(k))) return 'stop'
-    if ('stop' === walkValue((value as any)[k], sink)) return 'stop'
+  // Neither an array nor a scalar: a map, which `isEngineMap` confirms.
+  if (isEngineMap(value)) {
+    for (const k of engineKeys(value)) {
+      if ('stop' === sink.event(Ev.key(k))) return 'stop'
+      if ('stop' === walkValue(value[k], sink)) return 'stop'
+    }
   }
   return sink.event(Ev.objectEnd)
 }

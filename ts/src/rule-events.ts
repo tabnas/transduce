@@ -66,6 +66,7 @@ import {
   isEngineMap,
   isJsonNumber,
 } from '@tabnas/alchemy/shared'
+import type { Context, Rule, RuleDone, RuleDoneSub, Tabnas, TabnasOptions } from '@tabnas/parser'
 
 import { Guarded } from './guard'
 import { Matcher } from './matcher'
@@ -269,7 +270,7 @@ export class Adapter<S extends Sink> {
   // entries present when the adapter first sees a container were never
   // streamed (jsonic's promoted first value), and the next close pass
   // emits them before the new ones.
-  private pushFrame(cell: object, array: boolean, rule: any, prune: boolean): void {
+  private pushFrame(cell: object, array: boolean, rule: Rule, prune: boolean): void {
     this.frames.push({
       cell,
       array,
@@ -284,7 +285,7 @@ export class Adapter<S extends Sink> {
   }
 
   // The subscriber's body.
-  onDone(rule: any, done: any): void {
+  onDone(rule: Rule, done: RuleDone): void {
     if ('running' !== this.status.type) return
     try {
       this.step(rule, done)
@@ -295,7 +296,7 @@ export class Adapter<S extends Sink> {
     }
   }
 
-  private step(rule: any, done: any): void {
+  private step(rule: Rule, done: RuleDone): void {
     // Any further event means the pass that held a member stood.
     if (!this.flushHeld()) return
     if (null != done.alt?.err) return
@@ -307,7 +308,7 @@ export class Adapter<S extends Sink> {
     }
   }
 
-  private opened(rule: any, cell: unknown): void {
+  private opened(rule: Rule, cell: unknown): void {
     if (!isEngineContainer(cell)) return
     const node = cell as object
     const array = Array.isArray(node)
@@ -355,7 +356,7 @@ export class Adapter<S extends Sink> {
     }
   }
 
-  private closed(rule: any, cell: unknown, replaces: boolean): void {
+  private closed(rule: Rule, cell: unknown, replaces: boolean): void {
     // A root scalar's lexeme has to be known before it is emitted below.
     this.rememberLexeme(rule)
     // Whether a whole root value had left before this pass: the pass that
@@ -364,8 +365,9 @@ export class Adapter<S extends Sink> {
 
     let pruneFrom = -1
     const topI = this.frames.length - 1
-    if (0 <= topI && this.frames[topI].cell === cell && isEngineContainer(cell)) {
-      const node = cell as any
+    // An engine container (`isEngineContainer`): an array or a map.
+    if (0 <= topI && this.frames[topI].cell === cell && (Array.isArray(cell) || isEngineMap(cell))) {
+      const node: unknown[] | Record<string, unknown> = cell
       const array = Array.isArray(node)
       const keys = array ? null : engineKeys(node)
       const len = array ? node.length : (keys as string[]).length
@@ -534,7 +536,7 @@ export class Adapter<S extends Sink> {
 
   // Keep the source text of a number rule's first token when it is a JSON
   // number spelling the node's value.
-  private rememberLexeme(rule: any): void {
+  private rememberLexeme(rule: Rule): void {
     const node = rule.node
     if ('number' !== typeof node) return
     const token = rule.o?.[0]
@@ -568,27 +570,34 @@ function member(node: unknown, key: string): { found: boolean; value: unknown } 
 // grammar installed at its own cadence. Member order is recorded on the
 // engine's maps (`map.ordered`), which leaves the values' shape alone.
 export function prepare(
-  parser: any,
+  parser: Tabnas,
   proceed: () => boolean,
-  onDone?: (rule: any, done: any) => void,
+  onDone?: (rule: Rule, done: RuleDone) => void,
 ): void {
-  const budget = parser.options?.parse?.budget ?? {}
+  // The engine's `options` answers a `Record<string, any>`; what it holds
+  // under `parse` is what `TabnasOptions` describes.
+  const parse: TabnasOptions['parse'] = parser.options?.parse
+  const budget = parse?.budget ?? {}
   const prev = 'function' === typeof budget.onCheck ? budget.onCheck : null
-  const prevN = prev && 0 < budget.checkEveryN ? budget.checkEveryN : 0
+  const every = budget.checkEveryN ?? 0
+  const prevN = null !== prev && 0 < every ? every : 0
   parser.options({
     map: { ordered: true },
     parse: {
       budget: {
         checkEveryN: 1,
-        onCheck: (ctx: any) => {
+        onCheck: (ctx: Context) => {
           if (!proceed()) return false
           if (null !== prev && 0 < prevN && 0 === ctx.kI % prevN) return prev(ctx)
           return true
         },
       },
     },
-  })
-  if (onDone) parser.sub({ ruleDone: (rule: any, _ctx: any, done: any) => onDone(rule, done) })
+  } satisfies TabnasOptions)
+  if (onDone) {
+    const ruleDone: RuleDoneSub = (rule, _ctx, done) => onDone(rule, done)
+    parser.sub({ ruleDone })
+  }
 }
 
 // The failure for an incremental run whose events did not amount to one

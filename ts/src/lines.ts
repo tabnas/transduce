@@ -70,10 +70,14 @@ type JsonModule = typeof import('@tabnas/json')
 function grammar<T>(name: string, format: string, load: () => T): T {
   try {
     return load()
-  } catch (error: any) {
+  } catch (error) {
     // Only the grammar itself missing, not something it requires.
     if (
-      'MODULE_NOT_FOUND' === error?.code &&
+      null !== error &&
+      ('object' === typeof error || 'function' === typeof error) &&
+      'code' in error &&
+      'MODULE_NOT_FOUND' === error.code &&
+      'message' in error &&
       String(error.message).startsWith(`Cannot find module '${name}'`)
     ) {
       throw new TypeError(
@@ -85,13 +89,11 @@ function grammar<T>(name: string, format: string, load: () => T): T {
   }
 }
 
-function makeCsv(options: Record<string, unknown>): any {
-  return grammar('@tabnas/csv', 'CSV', (): CsvModule => require('@tabnas/csv')).make(
-    options as any,
-  )
+function makeCsv(options: CsvMakeOptions): Tabnas {
+  return grammar('@tabnas/csv', 'CSV', (): CsvModule => require('@tabnas/csv')).make(options)
 }
 
-function makeJson(): any {
+function makeJson(): Tabnas {
   return grammar('@tabnas/json', 'JSON Lines', (): JsonModule => require('@tabnas/json')).make()
 }
 
@@ -105,6 +107,8 @@ import {
   Sink,
   enginePosition,
 } from '@tabnas/alchemy/shared'
+import type { CsvMakeOptions } from '@tabnas/csv'
+import type { Config, Tabnas, TabnasOptions } from '@tabnas/parser'
 
 import { Guarded } from './guard'
 import { Adapter, notStreamable, prepare } from './rule-events'
@@ -574,9 +578,9 @@ function sameBytes(a: Uint8Array, ai: number, b: Uint8Array, bi: number, n: numb
 }
 
 // The sources of a parser's fixed tokens, while it lexes them.
-function fixedTokens(config: any): string[] {
+function fixedTokens(config: Config): string[] {
   return config.fixed.lex
-    ? Object.values(config.fixed.token as Record<string, number>)
+    ? Object.values(config.fixed.token)
         .map((tin) => config.fixed.ref[tin])
         .filter((src: unknown): src is string => 'string' === typeof src && 0 < src.length)
     : []
@@ -670,7 +674,7 @@ class JsonRecords {
   private quote: string | null = null
   private escaped = false
 
-  constructor(parser: any, maxBytes: number) {
+  constructor(parser: Tabnas, maxBytes: number) {
     const config = parser.internal().config
     this.line = lexed(config.line.lex, config.line.chars)
     this.rows = Object.keys(config.line.rowChars ?? {})
@@ -749,7 +753,7 @@ class JsonlWalk implements Driver {
   private records: JsonRecords
   private onRecord: (row: number, text: string) => Flow
   private guarded: Guarded<Sink>
-  private parser: any
+  private parser: Tabnas
   private abort: AbortFlag
 
   constructor(sink: Sink, options: DriverOptions) {
@@ -803,7 +807,7 @@ class JsonlIncremental implements Driver {
   private records: JsonRecords
   private onRecord: (row: number, text: string) => Flow
   private adapter: Adapter<Sink>
-  private parser: any
+  private parser: Tabnas
   private abort: AbortFlag
   // The record being read, which an abort the adapter raised names.
   private reading = 0
@@ -922,7 +926,7 @@ class Lexis {
   spaceIgnored = false
   commentIgnored = false
 
-  static csv(parser: any): Lexis {
+  static csv(parser: Tabnas): Lexis {
     const config = parser.internal().config
     const options = parser.options.plugin?.csv ?? {}
     const lexis = new Lexis()
@@ -933,7 +937,7 @@ class Lexis {
     lexis.fixed = fixedTokens(config)
     // The longest marker first, and a tie by name: the engine's order.
     lexis.comments = config.comment.lex
-      ? Object.entries(config.comment.def as Record<string, any>)
+      ? Object.entries(config.comment.def)
           .filter(([, def]) => def.lex && def.start)
           .sort(([an, a], [bn, b]) => b.start.length - a.start.length || (an < bn ? -1 : an > bn ? 1 : 0))
           .map(([, def]): [string, string | null] => [def.start, def.line ? null : (def.end ?? '')])
@@ -951,7 +955,7 @@ class Lexis {
     // the space and line characters, the fixed tokens, the comment markers
     // and the grammar's own enders.
     lexis.stops = [...lexis.space, ...lexis.line]
-    const enders = parser.options.ender
+    const enders: TabnasOptions['ender'] = parser.options.ender
     lexis.stopPrefixes = [
       ...lexis.fixed,
       ...lexis.comments.map(([start]) => start),
@@ -1127,7 +1131,7 @@ function utf8Bytes(text: string): number {
 class CsvWalk implements Driver {
   splitter: PieceSplitter
   private guarded: Guarded<Sink>
-  private parser: any
+  private parser: Tabnas
   private abort: AbortFlag
   private scanner: Scanner
   private maxRecordBytes: number
@@ -1172,7 +1176,7 @@ class CsvWalk implements Driver {
     this.maxRecordBytes = options.limits.max_record_bytes
     this.chunkBytes = options.chunkBytes
     this.wantHeader = header
-    this.parser = makeCsv({ ...grammar, header } as any)
+    this.parser = makeCsv({ ...grammar, header })
     this.recordEmpty = !!this.parser.options.plugin?.csv?.record?.empty
     const abort = options.abort
     prepare(this.parser, () => !abort.isAborted())
