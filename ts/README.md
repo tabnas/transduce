@@ -18,6 +18,13 @@ npm install @tabnas/transduce @tabnas/json @tabnas/csv
 A line source whose grammar is not installed fails with a `TypeError` that
 names the package.
 
+`@tabnas/parser`, the engine, is a required peer. `ParserSource` takes a
+parser made with the engine or with a grammar package, and its
+declarations type it as the engine's `Tabnas`, as the Go and Rust ports
+name the engine's types in theirs. The grammars name the engine as a peer
+too, so one copy of it serves them all, and TypeScript reads their
+`Tabnas` and this package's as the same class.
+
 The protocol types (`JsonEvent`, `Sink`, `TableEvent`, `Selector`, `Datum`,
 `Fail` and its codes, `Limits`, `Metrics` and the captures' types) are
 `@tabnas/alchemy`'s shared types, imported from `@tabnas/alchemy/shared`, a
