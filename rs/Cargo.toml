@@ -31,10 +31,11 @@ tabnas-alchemy = { path = "../../alchemy/rs", default-features = false, features
 tabnas = { package = "tabnas-parser", path = "../../parser/rs" }
 tabnas-json = { path = "../../json/rs" }
 tabnas-csv = { path = "../../csv/rs" }
-indexmap = "2"
-serde_json = { version = "1.0", features = ["preserve_order"] }
 
 [dev-dependencies]
+# The unit tests in src/matcher.rs and src/table_from_json.rs and the shared
+# fixture harness (tests/common) read JSON with serde_json.
+serde_json = { version = "1.0", features = ["preserve_order"] }
 # The grammars the differential suite runs every fixture through, each a
 # sibling checkout like the engine.
 tabnas-jsonl = { path = "../../jsonl/rs" }
