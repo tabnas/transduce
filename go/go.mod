@@ -7,7 +7,7 @@ require (
 	github.com/tabnas/csv/go v0.6.2
 	github.com/tabnas/json/go v0.5.13
 	github.com/tabnas/jsonic/go v0.7.4
-	github.com/tabnas/parser/go v0.12.9
+	github.com/tabnas/parser/go v0.12.10
 )
 
 // The protocol types, declared in alchemy's shared package, which alchemy
