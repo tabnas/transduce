@@ -1,7 +1,8 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
 // The exported VERSION must equal package.json "version", which is the
-// crate's (rs/Cargo.toml): the two runtimes ship as one version.
+// crate's (rs/Cargo.toml): the three runtimes ship as one version, and
+// go/version_test.go holds Go's VERSION to the crate's the same way.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
