@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-csv"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "indexmap",
  "serde",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-feed"
-version = "0.6.13"
+version = "0.6.14"
 dependencies = [
  "indexmap",
  "regex",
@@ -363,14 +363,14 @@ dependencies = [
 
 [[package]]
 name = "tabnas-hoover"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "tabnas-parser",
 ]
 
 [[package]]
 name = "tabnas-ini"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-json"
-version = "0.5.14"
+version = "0.5.15"
 dependencies = [
  "regex",
  "serde_json",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-json5"
-version = "0.5.12"
+version = "0.5.13"
 dependencies = [
  "indexmap",
  "regex",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonc"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "serde_json",
  "tabnas-jsonic",
@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonic"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "indexmap",
  "regex",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonl"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "serde_json",
  "tabnas-json",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-markdown"
-version = "0.7.9"
+version = "0.7.10"
 dependencies = [
  "indexmap",
  "regex",
@@ -450,14 +450,14 @@ dependencies = [
 
 [[package]]
 name = "tabnas-support"
-version = "0.3.7"
+version = "0.3.8"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "tabnas-toml"
-version = "0.5.13"
+version = "0.5.14"
 dependencies = [
  "indexmap",
  "regex",
@@ -468,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-transduce"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "criterion",
  "serde_json",
@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-xml"
-version = "0.7.13"
+version = "0.7.14"
 dependencies = [
  "indexmap",
  "regex",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.20"
+version = "0.5.21"
 dependencies = [
  "indexmap",
  "regex",
@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-zon"
-version = "0.5.13"
+version = "0.5.14"
 dependencies = [
  "indexmap",
  "serde",
