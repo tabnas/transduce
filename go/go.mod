@@ -12,7 +12,7 @@ require (
 
 // The protocol types, declared in alchemy's shared package, which alchemy
 // carries from v0.2.0.
-require github.com/tabnas/alchemy/go v0.2.1
+require github.com/tabnas/alchemy/go v0.2.2
 
 // The grammars the tests run (the differential suite reads this list), and
 // the shared fixture runner.
