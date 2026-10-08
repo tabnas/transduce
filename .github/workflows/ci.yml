@@ -17,7 +17,7 @@ jobs:
   # at a ../debug clone, so without the two clones the workspace cannot
   # load ini and every test that reads an INI document fails to build.
   ci:
-    uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
+    uses: ./.github/workflows/polyglot-ci-trial.yml
     with:
       deps: "parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed alchemy"
 
@@ -37,6 +37,13 @@ jobs:
   # same checkout, sibling clones and go.work its go job builds. When
   # polyglot-ci.yml gains a build-tags input this job becomes that input
   # (admin#97).
+  ci-all-from-source:
+    uses: ./.github/workflows/polyglot-ci-trial.yml
+    with:
+      deps: "parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed alchemy"
+      skip-released: false
+      run-go: false
+
   go-nodecell:
     strategy:
       fail-fast: false

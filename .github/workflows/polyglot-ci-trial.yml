@@ -1,0 +1,382 @@
+# Target: tabnas/.github -> .github/workflows/polyglot-ci.yml
+#
+# Reusable CI for tabnas polyglot repos (ts/ + go/).
+#
+# Callers pass the tabnas sibling repos they depend on; this workflow clones
+# them side by side (the layout local development uses), builds everything in
+# order, and tests this repo's ts/ and go/ trees.
+#
+# Caller example (.github/workflows/ci.yml in each repo):
+#
+#   name: ci
+#   on:
+#     push:        { branches: [ main ] }
+#     pull_request: { branches: [ main ] }
+#   jobs:
+#     ci:
+#       uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
+#       with:
+#         deps: "parser debug json abnf railroad"
+#
+# `parser` itself inverts the order (it smoke-tests its dependents), so it
+# passes build-order explicitly:
+#
+#       with:
+#         deps: "debug json abnf railroad"
+#         build-order: "parser debug json abnf railroad"
+#
+# Action refs use version tags for readability; Renovate
+# (helpers:pinGitHubActionDigests) pins them to commit SHAs automatically.
+
+name: polyglot-ci
+
+on:
+  workflow_call:
+    inputs:
+      deps:
+        description: >-
+          Space-separated tabnas sibling repos to clone, in topological
+          (dependency-first) order. Empty for repos with no tabnas deps.
+        type: string
+        default: ""
+      build-order:
+        description: >-
+          Space-separated build order for the ts stack, including this repo.
+          Defaults to "<deps> <this repo>".
+        type: string
+        default: ""
+      run-ts:
+        description: Build and test the ts/ tree.
+        type: boolean
+        default: true
+      run-go:
+        description: Build and test the go/ tree.
+        type: boolean
+        default: true
+      node-version:
+        type: string
+        default: "24.x"
+      go-version:
+        type: string
+        default: "1.24"
+      skip-released:
+        description: >-
+          Take a dependency from the npm registry, not its clone, when its
+          ts/ is what its latest release was built from (see the Build step).
+          False builds every dependency from source.
+        type: boolean
+        default: true
+
+jobs:
+  ts:
+    if: ${{ inputs.run-ts }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Use LF line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: ${{ github.event.repository.name }}
+      - name: Use Node.js ${{ inputs.node-version }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+      - name: Clone tabnas dependencies
+        shell: bash
+        run: |
+          set -e
+          for dep in ${{ inputs.deps }}; do
+            git clone --depth 1 "https://github.com/tabnas/$dep.git" "$dep"
+          done
+      - name: Build (dependencies, then this repo)
+        shell: bash
+        env:
+          SKIP_RELEASED: ${{ inputs.skip-released }}
+        run: |
+          set -e
+          ORDER="${{ inputs.build-order }}"
+          [ -n "$ORDER" ] || ORDER="${{ inputs.deps }} ${{ github.event.repository.name }}"
+          ROOT="$PWD"
+          SELF="${{ github.event.repository.name }}"
+
+          # Read a package's name with a RELATIVE require: on the windows
+          # runner $ROOT is an MSYS path (/d/a/repo/repo) which node cannot
+          # resolve, and an absolute path here fails with "Cannot find module".
+          pkg_name() { (cd "$ROOT/$1/ts" && node -p "require('./package.json').name"); }
+
+          # FROM SOURCE OR FROM THE REGISTRY. A dependency comes from the npm
+          # registry, as `npm i` installs it, when building it here would
+          # build what its latest release already published:
+          #
+          #   - its ts/ is the ts/ of the commit npm records for its latest
+          #     version (gitHead): the clone's HEAD, or a commit fetched by
+          #     SHA that `git diff` finds no change against. Its tests and its
+          #     lockfile do not count, since neither is in the package, so a
+          #     commit to them, or outside ts/ (a handover page, a Go fix),
+          #     does not force a build;
+          #   - it declares (dependencies, peerDependencies or devDependencies)
+          #     no package this run builds from source, so it is never left
+          #     compiled against an engine other than the one under test (in
+          #     parser's own run every dependent declares parser, so all of
+          #     them build, as its smoke test needs);
+          #   - the repo under test does not read its build by path (debug's
+          #     tests load ../abnf/ts/dist/abnf.js, which only a build here
+          #     writes).
+          #
+          # The repo under test always builds, and so does anything this
+          # cannot establish (no network, no gitHead, a fetch that fails).
+          # skip-released: false builds every dependency, as before.
+          # Measured on alchemy's 18 dependencies, building was 77 s of npm i
+          # and tsc on windows, with every one of them already released.
+          from_registry() {
+            local dep=$1 name gh
+            [ "$SKIP_RELEASED" = "true" ] && [ "$dep" != "$SELF" ] || return 1
+            name=$(pkg_name "$dep") || return 1
+            gh=$(npm view "$name" gitHead 2>/dev/null) || return 1
+            [ -n "$gh" ] || return 1
+            if [ "$gh" != "$(git -C "$ROOT/$dep" rev-parse HEAD)" ]; then
+              git -C "$ROOT/$dep" fetch -q --depth 1 origin "$gh" 2>/dev/null || return 1
+              git -C "$ROOT/$dep" diff --quiet "$gh" HEAD -- ts \
+                ':(exclude)ts/test' ':(exclude)ts/package-lock.json' || return 1
+            fi
+            if [ -n "$BUILT_NAMES" ] && (cd "$ROOT/$dep/ts" && node -e '
+                const p = require("./package.json")
+                const all = { ...p.dependencies, ...p.peerDependencies, ...p.devDependencies }
+                process.exit(process.argv.slice(1).some((n) => n in all) ? 0 : 1)
+              ' $BUILT_NAMES); then
+              return 1
+            fi
+            if grep -rqE "['\"]$dep['\"][[:space:]]*,[[:space:]]*['\"]ts['\"][[:space:]]*,[[:space:]]*['\"]dist|/$dep/ts/dist" \
+                 "$ROOT/$SELF/ts" --include='*.js' --include='*.cjs' --include='*.mjs' --include='*.ts' \
+                 --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=dist-test 2>/dev/null; then
+              return 1
+            fi
+            echo "registry: $name (ts/ unchanged since its latest release, $gh)"
+          }
+
+          BUILT=""; BUILT_NAMES=""; REGISTRY=""
+          for pkg in $ORDER; do
+            if from_registry "$pkg"; then
+              REGISTRY="$REGISTRY $pkg"
+            else
+              BUILT="$BUILT $pkg"
+              BUILT_NAMES="$BUILT_NAMES $(pkg_name "$pkg")"
+            fi
+          done
+          echo "from source:$BUILT"
+          echo "from the registry:${REGISTRY:- none}"
+
+          # Point each @tabnas/* dependency built here at its sibling
+          # checkout, replacing the published copy `npm i` installs.
+          #
+          # Without this the clones are dead work. Every package declares its
+          # siblings as "*", so npm resolves them from the registry and the
+          # source we just built is never loaded — meaning no cross-repo
+          # change can be validated before it is released. It is invisible in
+          # the log too: a repo's version is not bumped until release, so the
+          # registry copy and the source copy report the SAME version while
+          # differing in code. A dependency taken from the registry above is
+          # left as npm installed it: that copy is what a build would make.
+          #
+          # The go job below already does the equivalent, via `go work use`
+          # over the cloned modules. This is the TypeScript half.
+          link_siblings() {
+            pkgdir="$1"
+            for dep in $BUILT; do
+              # Never link a package into its own node_modules.
+              [ "$ROOT/$dep/ts" = "$pkgdir" ] && continue
+              name=$(pkg_name "$dep")
+              [ -n "$name" ] || continue
+              target="$pkgdir/node_modules/$name"
+              # Only substitute what npm actually installed; do not invent
+              # dependencies a package never declared.
+              { [ -e "$target" ] || [ -L "$target" ]; } || continue
+              rm -rf "$target"
+              mkdir -p "$(dirname "$target")"
+              # A real link on every platform. On windows, git-bash's plain
+              # `ln -s` DEEP-COPIES the tree and exits 0, node_modules and
+              # all, and each sibling's node_modules already holds copies of
+              # its own siblings, so the copies compound down the order:
+              # measured on alchemy (18 dependencies), 105 of them took 1,075 s
+              # of a 1,224 s windows job, against 12 s of symlinks on ubuntu.
+              # `winsymlinks:nativestrict` makes `ln -s` create an NTFS
+              # symlink or fail; a directory junction needs no privilege; a
+              # copy is the last resort, and the log says which happened.
+              # Anything asking "is this the sibling?" (the enginepin guards in
+              # json and support) now sees a link on windows as elsewhere.
+              if MSYS=winsymlinks:nativestrict ln -s "$ROOT/$dep/ts" "$target" 2>/dev/null \
+                 && [ -f "$target/package.json" ]; then
+                echo "linked $name -> $dep/ts (symlink)"
+              else
+                [ -L "$target" ] && rm -f "$target"
+                if [ "$RUNNER_OS" = "Windows" ] \
+                   && MSYS_NO_PATHCONV=1 cmd /c mklink /J "$(cygpath -w "$target")" "$(cygpath -w "$ROOT/$dep/ts")" >/dev/null 2>&1 \
+                   && [ -f "$target/package.json" ]; then
+                  echo "linked $name -> $dep/ts (junction)"
+                else
+                  cp -R "$ROOT/$dep/ts" "$target"
+                  echo "copied $name <- $dep/ts (no link could be made)"
+                fi
+              fi
+            done
+          }
+
+          for pkg in $BUILT; do
+            ( cd "$pkg/ts" && npm i )
+            # Link BEFORE building, so each package compiles against sibling
+            # source rather than the registry. A link to a dependency later
+            # in the order is resolved when it is read, after that build.
+            link_siblings "$ROOT/$pkg/ts"
+            ( cd "$pkg/ts" && npm run build --if-present )
+          done
+      - name: Test
+        shell: bash
+        working-directory: ${{ github.event.repository.name }}/ts
+        run: npm test
+
+  go:
+    if: ${{ inputs.run-go }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          path: ${{ github.event.repository.name }}
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: ${{ inputs.go-version }}
+      - name: Clone tabnas dependencies
+        shell: bash
+        run: |
+          set -e
+          for dep in ${{ inputs.deps }}; do
+            git clone --depth 1 "https://github.com/tabnas/$dep.git" "$dep"
+          done
+      # Mirror admin/scripts/link.sh: vendor symlinks for ../vendor/ replaces,
+      # then a go.work over every module EXCEPT those vendor-replaced ones.
+      - name: Set up go workspace
+        shell: bash
+        run: |
+          set -e
+          for gm in $(find . -name go.mod -not -path '*/vendor/*' -not -path '*/node_modules/*'); do
+            while IFS= read -r line; do
+              [ -n "$line" ] || continue
+              v=$(printf '%s' "$line" | sed -E 's#.*\.\./vendor/([^/]+)/go.*#\1#')
+              dep=$(printf '%s' "$line" | awk '{print $2}' | sed -E 's#github.com/tabnas/([^/]+)/go#\1#')
+              repodir=$(dirname "$(dirname "$gm")")
+              mkdir -p "$repodir/vendor"
+              ln -snf "$(cd "$dep" && pwd)" "$repodir/vendor/$v"
+            done < <(grep -E '^[[:space:]]*replace .*=>[[:space:]]*\.\./vendor/' "$gm" || true)
+          done
+          go work init
+          for gm in $(find . -name go.mod -not -path '*/vendor/*' -not -path '*/node_modules/*'); do
+            grep -qE '^[[:space:]]*replace .*=>[[:space:]]*\.\./vendor/' "$gm" && continue
+            go work use "$(dirname "$gm")"
+          done
+      - name: Build
+        working-directory: ${{ github.event.repository.name }}/go
+        run: go build ./...
+      # The workspace above makes go.mod's declared versions invisible: every
+      # github.com/tabnas/* require resolves to the sibling clone, so a stale or
+      # wrong pin is never exercised and CI structurally cannot see it. That hid
+      # three stale pins at two depths, and one (ebnf) had already shipped
+      # broken to main before anyone noticed. GOWORK=off resolves from go.mod
+      # against the module proxy instead, which is what a consumer of the
+      # published module actually gets.
+      #
+      # Read the error before acting on it — an unpublished pin and a wrong pin
+      # both land here, and either can surface as "unknown revision go/vX.Y.Z"
+      # or as "missing go.sum entry" depending on what go.sum already holds:
+      #   the version is simply not published yet — normal mid-release-wave,
+      #       and the honest reading of a red main straight after a merge that
+      #       adds engine API. Publish the dependency, then re-run.
+      #   the version is published but wrong, or the code no longer compiles
+      #       against it — the defect this step exists to catch. Fix go.mod;
+      #       do not paper over it by leaning on the workspace.
+      - name: Build from go.mod (GOWORK=off — the workspace hides stale pins)
+        shell: bash
+        working-directory: ${{ github.event.repository.name }}
+        env:
+          GOWORK: "off"
+        run: |
+          set -e
+          for gm in $(find go -name go.mod -not -path '*/vendor/*' | sort); do
+            d="$(dirname "$gm")"
+
+            # GOWORK=off turns the workspace off; it does NOT turn a module's
+            # own `replace` off. A replace into `../vendor/<dep>` — the form the
+            # workspace step above symlinks to a sibling clone — would therefore
+            # route this build straight back to that clone, and the step would
+            # pass while the declared version went untested. That is the one
+            # form this gate refuses: fail loudly rather than let a gate quietly
+            # stop seeing what it says it sees.
+            #
+            # It is scoped to that form deliberately. This check once refused
+            # ANY path-shaped replace, on the stated grounds that "no repo in
+            # the fleet carries one today" — which was false the day it shipped.
+            # support/go/adder and json/go/debugtest both did, and both are
+            # nested test-harness modules whose replaces are the point: adder
+            # replaces support with `../` so the suite exercises the working
+            # tree rather than the published version, and debugtest reaches the
+            # sibling debug/parser clones the `deps:` input already checks out.
+            # Neither can drop its replace, so a blanket refusal turned two
+            # repos red for a condition this gate was never designed to catch.
+            #
+            # Scoping it back does not cost coverage here: both modules build
+            # and compile their tests under GOWORK=off, so every require they
+            # do NOT replace is still resolved through the proxy — adder's
+            # `parser/go` pin is fetched and exercised on every run, which the
+            # blanket check prevented by aborting first.
+            #
+            # A version-to-version replace is fine and is not flagged: it still
+            # resolves through the proxy, so the declared graph is exercised.
+            if go -C "$d" mod edit -json \
+                 | jq -e '[(.Replace // [])[] | select(.New.Path | test("(^|/)vendor/"))] | length > 0' \
+                 >/dev/null; then
+              echo "::error file=$gm::vendor replace directive present -" \
+                   "GOWORK=off resolves through it to a sibling clone, so this" \
+                   "step cannot validate the declared versions of this module." \
+                   "Extend the step before committing a vendor replace."
+              exit 1
+            fi
+
+            echo "==> $d: build"
+            ( cd "$d" && go build ./... )
+
+            # go build never compiles _test.go, so a dependency reachable only
+            # from tests stays unresolved here and is then satisfied by the
+            # workspace in the Test step below — the same blind spot one level
+            # down. -run '^$' builds every test binary and runs no test.
+            echo "==> $d: compile tests"
+            ( cd "$d" && go test -count=1 -run '^$' ./... )
+          done
+      # `go test ./...` does not cross a module boundary, so a NESTED module
+      # under go/ never ran here — and a test that quietly does not run reports
+      # a green tick that is a lie. support/go/adder hit exactly this and worked
+      # around it with a bespoke `go-adder` job, whose comment says the fix
+      # belongs upstream "if a second one appears". json/go/debugtest is that
+      # second one: its suite had never run in CI at all, and its go.mod had
+      # drifted out of tidy unnoticed as a direct result.
+      #
+      # Enumerated the same way the GOWORK=off step above enumerates, so the
+      # two steps cannot disagree about what a module is. Fleet-wide this walks
+      # exactly two nested modules (adder, debugtest); every other repo has one
+      # go.mod under go/ and is unaffected.
+      - name: Test
+        shell: bash
+        working-directory: ${{ github.event.repository.name }}
+        run: |
+          set -e
+          for gm in $(find go -name go.mod -not -path '*/vendor/*' | sort); do
+            d="$(dirname "$gm")"
+            echo "==> $d: test"
+            ( cd "$d" && go test -v ./... )
+          done
