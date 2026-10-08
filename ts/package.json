@@ -1,6 +1,6 @@
 {
   "name": "@tabnas/transduce",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "main": "dist/transduce.js",
   "type": "commonjs",
   "types": "dist/transduce.d.ts",
