@@ -449,8 +449,46 @@ func TestTableOrderMissingAndInference(t *testing.T) {
 	if labels(tbl) != "[b a]" || rows(tbl) != `1 "x" | missing "y" | 3 missing` {
 		t.Fatal(labels(tbl), rows(tbl))
 	}
-	if _, f := runTable(t, TableBinding{Schema: InferSchema(), Rows: Root().EachIndex()}, DefaultLimits(), treeEvents(t, "[1,2]")); f == nil || f.Code != CodeInputInvalid || f.Path != "[0]" {
-		t.Fatal(f)
+}
+
+func TestInferLabelsAnArrayRowByPosition(t *testing.T) {
+	infer := TableBinding{Schema: InferSchema(), Rows: Root().EachIndex()}
+	tbl, f := runTable(t, infer, DefaultLimits(), treeEvents(t, `[[1,"x"],["y",true,3],[2]]`))
+	if f != nil || labels(tbl) != "[0 1]" || rows(tbl) != `1 "x" | "y" true | 2 missing` {
+		t.Fatal(f, labels(tbl), rows(tbl))
+	}
+	// An empty array row is a table of no columns, as no rows is.
+	tbl, f = runTable(t, infer, DefaultLimits(), treeEvents(t, `[[],[1]]`))
+	if f != nil || len(tbl.Columns) != 0 || len(tbl.Rows) != 2 || len(tbl.Rows[0]) != 0 || len(tbl.Rows[1]) != 0 || !tbl.Ended {
+		t.Fatal(f, tbl)
+	}
+}
+
+func TestInferGivesAScalarRowOneValueColumn(t *testing.T) {
+	tbl, f := runTable(t, TableBinding{Schema: InferSchema(), Rows: Root().EachIndex()}, DefaultLimits(), treeEvents(t, `[1,"s",true,null]`))
+	if f != nil || labels(tbl) != "[value]" || rows(tbl) != `1 | "s" | true | null` {
+		t.Fatal(f, labels(tbl), rows(tbl))
+	}
+}
+
+// A later row of another kind than the first projects through the first
+// row's paths: a key path on an array or a scalar, and an index path on
+// an object or a scalar, miss, so the cell is missing under the column's
+// policy; the empty path of a "value" column finds every row, a container
+// as its compact JSON text.
+func TestInferProjectsALaterRowOfAnotherKindThroughTheFirstRowsPaths(t *testing.T) {
+	infer := TableBinding{Schema: InferSchema(), Rows: Root().EachIndex()}
+	tbl, f := runTable(t, infer, DefaultLimits(), treeEvents(t, `[{"a":1},[2],3]`))
+	if f != nil || labels(tbl) != "[a]" || rows(tbl) != `1 | missing | missing` {
+		t.Fatal(f, labels(tbl), rows(tbl))
+	}
+	tbl, f = runTable(t, infer, DefaultLimits(), treeEvents(t, `[[1],{"0":2},3]`))
+	if f != nil || labels(tbl) != "[0]" || rows(tbl) != `1 | missing | missing` {
+		t.Fatal(f, labels(tbl), rows(tbl))
+	}
+	tbl, f = runTable(t, infer, DefaultLimits(), treeEvents(t, `[1,{"a":2},[3]]`))
+	if f != nil || labels(tbl) != "[value]" || rows(tbl) != `1 | "{\"a\":2}" | "[3]"` {
+		t.Fatal(f, labels(tbl), rows(tbl))
 	}
 }
 
@@ -505,6 +543,39 @@ func TestTableLimitsAreEnforcedByName(t *testing.T) {
 	}
 	if tbl, f := runTable(t, infer, with(func(l *Limits) { l.MaxMetadataBytes = 50 }), treeEvents(t, `[{"a":1,"b":2}]`)); f != nil || labels(tbl) != "[a b]" {
 		t.Fatal(f)
+	}
+	// Positional labels and the "value" label are measured the same way:
+	// "0" and "1" take 50 bytes too, and "value" 16 + 16 + 5 = 37.
+	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxMetadataBytes = 49 }), treeEvents(t, `[[1,2]]`)); f == nil || f.Limit.Name != "max_metadata_bytes" || f.Path != "[0]" {
+		t.Fatal(f)
+	}
+	if tbl, f := runTable(t, infer, with(func(l *Limits) { l.MaxMetadataBytes = 50 }), treeEvents(t, `[[1,2]]`)); f != nil || labels(tbl) != "[0 1]" {
+		t.Fatal(f)
+	}
+	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxMetadataBytes = 36 }), treeEvents(t, `[1]`)); f == nil || f.Limit.Name != "max_metadata_bytes" {
+		t.Fatal(f)
+	}
+	if tbl, f := runTable(t, infer, with(func(l *Limits) { l.MaxMetadataBytes = 37 }), treeEvents(t, `[1]`)); f != nil || labels(tbl) != "[value]" {
+		t.Fatal(f)
+	}
+	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxColumns = 1 }), treeEvents(t, `[[1,2]]`)); f == nil || f.Limit.Name != "max_columns" || f.Path != "[0]" {
+		t.Fatal(f)
+	}
+	// The bounds are held before a column is built: a first row of a
+	// hundred thousand cells is refused by max_columns from its width,
+	// naming the row, and when both bounds are passed the metadata's is
+	// named, as the labels are counted first.
+	wide := "[[" + strings.Repeat("0,", 99_999) + "0]]"
+	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxColumns = 1 }), treeEvents(t, wide)); f == nil || f.Limit.Name != "max_columns" || f.Path != "[0]" || !strings.Contains(f.Message, "100000 columns") {
+		t.Fatal(f)
+	}
+	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxColumns = 1; l.MaxMetadataBytes = 49 }), treeEvents(t, `[[1,2]]`)); f == nil || f.Limit.Name != "max_metadata_bytes" {
+		t.Fatal(f)
+	}
+	for i, want := range map[int]int{0: 1, 9: 1, 10: 2, 99_999: 5} {
+		if got := decimalDigits(i); got != want {
+			t.Fatalf("decimalDigits(%d) = %d, want %d", i, got, want)
+		}
 	}
 }
 

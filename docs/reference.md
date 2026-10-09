@@ -231,11 +231,24 @@ gives the table sink back.
   segments). Metadata selected twice, and a row that BEGINS before the
   metadata completed, are `INPUT_ORDER_VIOLATION`, the latter raised at
   the row's start. Metadata that never arrives is `INPUT_INVALID`.
-- `Schema::Infer`: the first row's member names, in its order; a
-  non-object first row is `INPUT_INVALID`. The names are the table's
-  metadata for as long as it lasts, so they are bound under
-  `max_metadata_bytes`, measured as the array of their strings would
-  be, as well as under `max_columns`. No rows gives an empty schema.
+- `Schema::Infer`: the columns are the first row's, by its kind. An
+  object row gives its member names, in its order, each sourced at its
+  key; an array row gives positional columns labelled `0`, `1`, ... up
+  to its length, each sourced at its index (an empty array row gives a
+  table of no columns, as no rows does, whose rows are empty; whether
+  that can be written is the renderer's to say, as it is for the empty
+  table); a scalar row (null, a boolean, a number or a string) gives one
+  column, `value`, sourced at the row itself. A later row of any kind
+  projects through those paths as a static schema's rows do, so a row of
+  another kind than the first lands empty where its paths miss (a key
+  path on an array or a scalar, an index path on an object or a scalar),
+  under the column's missing policy; a mixed table is not refused, and
+  the `value` column's empty path finds every row, a container as its
+  compact JSON text. The labels are the table's metadata for as long as
+  it lasts, so they are bound under `max_metadata_bytes`, measured as
+  the array of their strings would be, positional labels and `value`
+  included, as well as under `max_columns`. No rows gives an empty
+  schema.
 
 Rows are one `Materialize` capture under `max_record_bytes`, projected
 by `Datum::get_path` into schema order, `Cell::from_datum` per column
@@ -358,10 +371,10 @@ returned (`"continue"` or `"stop"`).
 |---|---|---|
 | `events.tsv` | 84 | `JsonEvents/1` from every mode and the verified grammars, lexemes, string decoding, repeated members, the refusals and their prefixes, the gate on unverified grammars, pruning |
 | `route.tsv` | 38 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
-| `table.tsv` | 30 | `TableFromJson`: metadata, static and inferred schemas, `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
+| `table.tsv` | 38 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
 | `lines.tsv` | 50 | `LinesSource`: JSON Lines and CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR, blank JSON Lines records, a line character inside a string) |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
-| `limits.tsv` | 66 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
+| `limits.tsv` | 71 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
 
 ### What a port must reproduce exactly
 

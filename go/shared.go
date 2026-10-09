@@ -132,7 +132,9 @@ func MetadataSchema(columns Selector, column ColumnMapper) Schema {
 	return shared.MetadataSchema(columns, column)
 }
 
-// InferSchema is a schema taken from the first row's member names.
+// InferSchema is a schema taken from the first row, by its kind: an
+// object's member names, an array's positions ("0", "1", ...) or, for a
+// scalar, the one column "value".
 func InferSchema() Schema { return shared.InferSchema() }
 
 // ColumnFromMeta is the standard mapping from a metadata descriptor to a

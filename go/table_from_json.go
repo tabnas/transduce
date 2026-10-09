@@ -91,26 +91,9 @@ func (c *tableCore) row(s Selected) (Flow, *Fail) {
 	}
 	if !c.schemaSent {
 		if c.schema.Kind == SchemaInfer && !c.boundSet {
-			if row.Kind != DatumObject {
-				return Continue, InputFail(fmt.Sprintf(
-					"the first row at %s is not an object, so no columns can be inferred from it", s.Path)).
-					AtPath(s.Path.String())
-			}
-			// The names are the table's metadata for as long as it lasts,
-			// so they are held to the bound a metadata capture is:
-			// measured as the array of their strings would be.
-			bytes := NodeBytes
-			for _, m := range row.Members {
-				bytes += NodeBytes + len(m.Key)
-			}
-			if bytes > c.maxMetadataBytes {
-				return Continue, LimitFail("max_metadata_bytes", uint64(c.maxMetadataBytes), fmt.Sprintf(
-					"the first row's %d member names take %d bytes as the table's columns, more than %d",
-					len(row.Members), bytes, c.maxMetadataBytes)).AtPath(s.Path.String())
-			}
-			columns := make([]BoundColumn, len(row.Members))
-			for i, m := range row.Members {
-				columns[i] = NewBoundColumn(m.Key, []Segment{KeySegment(m.Key)})
+			columns, f := inferColumns(&row, c.maxColumns, c.maxMetadataBytes)
+			if f != nil {
+				return Continue, f.AtPath(s.Path.String())
 			}
 			if f := c.bind(columns, "the first row"); f != nil {
 				return Continue, f
@@ -203,7 +186,10 @@ func (c *tableCore) End() (Flow, *Fail) {
 // arrives twice is the same failure; a document with no rows is a valid
 // empty table. Rows are projected into schema order by path, so the
 // order of members inside a row never matters, and a number keeps the
-// lexeme the source events carried.
+// lexeme the source events carried. An inferred schema is the first row's,
+// by its kind: an object's member names, an array's positions, or the one
+// column "value" of a scalar; a later row of another kind projects through
+// those paths and lands empty where they miss.
 type TableFromJSON struct {
 	router *Router
 	core   *tableCore
@@ -255,6 +241,75 @@ func (t *TableFromJSON) Ended() bool { return t.router.Ended() }
 
 // Event takes one source event.
 func (t *TableFromJSON) Event(ev Event) (Flow, *Fail) { return t.router.Event(ev) }
+
+// inferColumns is the columns the first row implies, by its kind: an
+// object's member names, in its order, each sourced at its key; an
+// array's positions, labelled "0", "1", ... up to its length, each
+// sourced at its index; and for a scalar one column, "value", sourced at
+// the row itself. A later row of any kind projects through these paths,
+// and lands empty where they miss.
+func inferColumns(row *Datum, maxColumns, maxMetadataBytes int) ([]BoundColumn, *Fail) {
+	// The bounds are checked before a column is built: the labels are the
+	// table's metadata for as long as it lasts, so they are held to the
+	// bound a metadata capture is, measured as the array of their strings
+	// would be, and counted from the row itself, so a first row wider than
+	// either bound costs a walk of what it already holds and allocates
+	// nothing.
+	count, labels := 1, len("value")
+	switch row.Kind {
+	case DatumObject:
+		count, labels = len(row.Members), 0
+		for _, m := range row.Members {
+			labels += len(m.Key)
+		}
+	case DatumArray:
+		count, labels = len(row.Items), 0
+		for i := 0; i < count; i++ {
+			labels += decimalDigits(i)
+		}
+	}
+	bytes := (count+1)*NodeBytes + labels
+	if bytes > maxMetadataBytes {
+		return nil, LimitFail("max_metadata_bytes", uint64(maxMetadataBytes), fmt.Sprintf(
+			"the first row's %d column labels take %d bytes as the table's metadata, more than %d",
+			count, bytes, maxMetadataBytes))
+	}
+	if count > maxColumns {
+		return nil, LimitFail("max_columns", uint64(maxColumns), fmt.Sprintf(
+			"the first row declares %d columns, more than %d", count, maxColumns))
+	}
+	return buildInferredColumns(row), nil
+}
+
+// decimalDigits is the length of i written in decimal: the bytes of an
+// array row's label.
+func decimalDigits(i int) int {
+	digits := 1
+	for n := i; n >= 10; n /= 10 {
+		digits++
+	}
+	return digits
+}
+
+// buildInferredColumns is the columns inferColumns has bounded.
+func buildInferredColumns(row *Datum) []BoundColumn {
+	switch row.Kind {
+	case DatumObject:
+		columns := make([]BoundColumn, len(row.Members))
+		for i, m := range row.Members {
+			columns[i] = NewBoundColumn(m.Key, []Segment{KeySegment(m.Key)})
+		}
+		return columns
+	case DatumArray:
+		columns := make([]BoundColumn, len(row.Items))
+		for i := range row.Items {
+			columns[i] = NewBoundColumn(strconv.Itoa(i), []Segment{IndexSegment(i)})
+		}
+		return columns
+	default:
+		return []BoundColumn{NewBoundColumn("value", nil)}
+	}
+}
 
 // pathsAreDisjoint reports whether every column's path can be moved out
 // of a row without robbing another column: no path is another's prefix,

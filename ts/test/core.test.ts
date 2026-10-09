@@ -763,9 +763,42 @@ describe('table', () => {
     const t = run({ schema: Schema.infer(), rows: root().eachIndex() }, doc('[{"b":1,"a":"x"},{"a":"y","c":true},{"b":3}]'))
     assert.deepEqual(labels(t), ['b', 'a'])
     assert.deepEqual(rows(t), [['1', '"x"'], ['missing', '"y"'], ['3', 'missing']])
-    const f = failOf(() => run({ schema: Schema.infer(), rows: root().eachIndex() }, doc('[1,2]')))
-    assert.equal(f.code, 'INPUT_INVALID')
-    assert.equal(f.path, '[0]')
+  })
+
+  it('infer labels an array row by position', () => {
+    const infer = (): TableBinding => ({ schema: Schema.infer(), rows: root().eachIndex() })
+    const t = run(infer(), doc('[[1,"x"],["y",true,3],[2]]'))
+    assert.deepEqual(labels(t), ['0', '1'])
+    assert.deepEqual(rows(t), [['1', '"x"'], ['"y"', 'true'], ['2', 'missing']])
+    // An empty array row is a table of no columns, as no rows is.
+    const e = run(infer(), doc('[[],[1]]'))
+    assert.deepEqual(labels(e), [])
+    assert.deepEqual(rows(e), [[], []])
+    assert.ok(e.ended)
+  })
+
+  it('infer gives a scalar row one value column', () => {
+    const t = run({ schema: Schema.infer(), rows: root().eachIndex() }, doc('[1,"s",true,null]'))
+    assert.deepEqual(labels(t), ['value'])
+    assert.deepEqual(rows(t), [['1'], ['"s"'], ['true'], ['null']])
+  })
+
+  // A later row of another kind than the first projects through the first
+  // row's paths: a key path on an array or a scalar, and an index path on an
+  // object or a scalar, miss, so the cell is missing under the column's
+  // policy; the empty path of a `value` column finds every row, a container
+  // as its compact JSON text.
+  it("infer projects a later row of another kind through the first row's paths", () => {
+    const infer = (): TableBinding => ({ schema: Schema.infer(), rows: root().eachIndex() })
+    const o = run(infer(), doc('[{"a":1},[2],3]'))
+    assert.deepEqual(labels(o), ['a'])
+    assert.deepEqual(rows(o), [['1'], ['missing'], ['missing']])
+    const a = run(infer(), doc('[[1],{"0":2},3]'))
+    assert.deepEqual(labels(a), ['0'])
+    assert.deepEqual(rows(a), [['1'], ['missing'], ['missing']])
+    const s = run(infer(), doc('[1,{"a":2},[3]]'))
+    assert.deepEqual(labels(s), ['value'])
+    assert.deepEqual(rows(s), [['1'], ['"{\\"a\\":2}"'], ['"[3]"']])
   })
 
   it('projects nested and overlapping paths whatever the member order', () => {
@@ -800,6 +833,28 @@ describe('table', () => {
     assert.equal(m.limit?.name, 'max_metadata_bytes')
     assert.equal(m.path, '[0]')
     assert.deepEqual(labels(run(infer(), doc('[{"a":1,"b":2}]'), Limits.with({ max_metadata_bytes: 50 }))), ['a', 'b'])
+    // Positional labels and the `value` label are measured the same way:
+    // "0" and "1" take 50 bytes too, and "value" 16 + 16 + 5 = 37.
+    const p = failOf(() => run(infer(), doc('[[1,2]]'), Limits.with({ max_metadata_bytes: 49 })))
+    assert.equal(p.limit?.name, 'max_metadata_bytes')
+    assert.equal(p.path, '[0]')
+    assert.deepEqual(labels(run(infer(), doc('[[1,2]]'), Limits.with({ max_metadata_bytes: 50 }))), ['0', '1'])
+    assert.equal(failOf(() => run(infer(), doc('[1]'), Limits.with({ max_metadata_bytes: 36 }))).limit?.name, 'max_metadata_bytes')
+    assert.deepEqual(labels(run(infer(), doc('[1]'), Limits.with({ max_metadata_bytes: 37 }))), ['value'])
+    const c = failOf(() => run(infer(), doc('[[1,2]]'), Limits.with({ max_columns: 1 })))
+    assert.equal(c.limit?.name, 'max_columns')
+    assert.equal(c.path, '[0]')
+    // The bounds are held before a column is built: a first row of a
+    // hundred thousand cells is refused by max_columns from its width,
+    // naming the row, and when both bounds are passed the metadata's is
+    // named, as the labels are counted first.
+    const wide = '[[' + '0,'.repeat(99_999) + '0]]'
+    const w = failOf(() => run(infer(), doc(wide), Limits.with({ max_columns: 1 })))
+    assert.equal(w.limit?.name, 'max_columns')
+    assert.equal(w.path, '[0]')
+    assert.ok(w.message.includes('100000 columns'), w.message)
+    const both = failOf(() => run(infer(), doc('[[1,2]]'), Limits.with({ max_columns: 1, max_metadata_bytes: 49 })))
+    assert.equal(both.limit?.name, 'max_metadata_bytes')
   })
 
   it('a bad descriptor names its position', () => {
