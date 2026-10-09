@@ -67,12 +67,19 @@ a\nxé\n	csv	lines	events				{"max_scalar_bytes":2}	ERROR:RESOURCE_LIMIT_EXCEEDE
 [{"a":1,"b":2}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":50}	[["schema",["a","b"]],["row",[["number",1,"1"],["number",2,"2"]]],["end"]]
 [{"é":1}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":33}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_metadata_bytes	[0]
 [{"é":1}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":34}	[["schema",["é"]],["row",[["number",1,"1"]]],["end"]]
+# Positional labels and the value label are measured the same way:
+# 16 + (16 + 1) * 2 = 50 for "0" and "1", 16 + 16 + 5 = 37 for value.
+[[1,2]]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":49}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_metadata_bytes	[0]
+[[1,2]]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":50}	[["schema",["0","1"]],["row",[["number",1,"1"],["number",2,"2"]]],["end"]]
+[1]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":36}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_metadata_bytes	[0]
+[1]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_metadata_bytes":37}	[["schema",["value"]],["row",[["number",1,"1"]]],["end"]]
 # max_columns: from metadata, a static schema (refused when the table is
 # built), an inferred one.
 {"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	table		{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		{"max_columns":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_columns	.response.metadata.fields
 {"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	table		{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		{"max_columns":3}	[["schema",["Identifier","Full name","Balance"]],["row",[["number",123,"123"],"Alice",["number",50.25,"50.25"]]],["row",[["number",456,"456"],"Bob",["number",72,"72"]]],["end"]]
 []	json	incremental	table		{"schema":{"static":[{"label":"a","source":["a"]},{"label":"b","source":["b"]}]},"rows":[{"each":"index"}]}		{"max_columns":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_columns
 [{"a":1,"b":2}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_columns":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_columns
+[[1,2]]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_columns":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_columns
 # max_record_bytes: a table's row as it is retained, and a line source's
 # record as it is read. The line source counts the record's line ending
 # too, so the same record passes as the last line without one and fails

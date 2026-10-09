@@ -13,7 +13,10 @@
 // document with no rows is a valid empty table, its schema emitted just
 // before `end`. Rows are projected into schema order by path, so the order
 // of members inside a row never matters, and a number keeps the lexeme the
-// source events carried.
+// source events carried. An inferred schema is the first row's, by its kind:
+// an object's member names, an array's positions, or the one column `value`
+// of a scalar; a later row of another kind projects through those paths and
+// lands empty where they miss.
 
 import {
   BoundColumn,
@@ -146,29 +149,22 @@ class Core<S extends TableSink> implements RouteSink {
     const row = selected.value ?? Datum.null
     if (!this.schemaSent) {
       if ('infer' === this.columns.type && null === this.columns.bound) {
-        const at = selected.path.toString()
-        if ('object' !== row.type) {
-          throw Fail.input(
-            `the first row at ${at} is not an object, so no columns can be inferred from it`,
-          ).atPath(at)
-        }
-        // The names are the table's metadata for as long as it lasts, so
+        const columns = inferColumns(row)
+        // The labels are the table's metadata for as long as it lasts, so
         // they are held to the bound a metadata capture is: measured as the
         // array of their strings would be.
         let bytes = NODE_BYTES
-        for (const k of row.members.keys()) bytes += NODE_BYTES + utf8Bytes(k)
+        for (const c of columns) bytes += NODE_BYTES + utf8Bytes(c.label)
         if (bytes > this.maxMetadataBytes) {
+          const at = selected.path.toString()
           throw Fail.limit(
             'max_metadata_bytes',
             this.maxMetadataBytes,
-            `the first row's ${row.members.size} member names take ${bytes} bytes as the ` +
-              `table's columns, more than ${this.maxMetadataBytes}`,
+            `the first row's ${columns.length} column labels take ${bytes} bytes as the ` +
+              `table's metadata, more than ${this.maxMetadataBytes}`,
           ).atPath(at)
         }
-        this.bind(
-          [...row.members.keys()].map((k) => boundColumn(k, [k])),
-          'the first row',
-        )
+        this.bind(columns, 'the first row')
       }
       if ('stop' === this.sendSchema()) return 'stop'
     }
@@ -303,5 +299,21 @@ export class TableFromJson<S extends TableSink> implements Sink {
 
   event(ev: JsonEvent): Flow {
     return this.router.event(ev)
+  }
+}
+
+// The columns the first row implies, by its kind: an object's member names,
+// in its order, each sourced at its key; an array's positions, labelled
+// `0`, `1`, ... up to its length, each sourced at its index; and for a
+// scalar one column, `value`, sourced at the row itself. A later row of any
+// kind projects through these paths, and lands empty where they miss.
+function inferColumns(row: Datum): BoundColumn[] {
+  switch (row.type) {
+    case 'object':
+      return [...row.members.keys()].map((k) => boundColumn(k, [k]))
+    case 'array':
+      return row.items.map((_, i) => boundColumn(String(i), [i]))
+    default:
+      return [boundColumn('value', [])]
   }
 }

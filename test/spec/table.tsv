@@ -35,10 +35,27 @@ input	grammar	mode	binding	duplicates	expected	path
 []	json	incremental	{"schema":{"static":[{"label":"x","source":["x"]}]},"rows":[{"each":"index"}]}		[["schema",["x"]],["end"]]
 []	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",[]],["end"]]
 {}	json	incremental	{"schema":"infer","rows":["rows",{"each":"index"}]}		[["schema",[]],["end"]]
-# Infer: the first row's member names in its order; a later row's extra
-# members are dropped and its absent ones are missing.
+# Infer: the columns are the first row's, by its kind. An object row gives
+# its member names in its order; a later row's extra members are dropped
+# and its absent ones are missing.
 [{"b":1,"a":"x"},{"a":"y","c":true},{"b":3}]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["b","a"]],["row",[["number",1,"1"],"x"]],["row",[["missing"],"y"]],["row",[["number",3,"3"],["missing"]]],["end"]]
-[1,2]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		ERROR:INPUT_INVALID	[0]
+# An array row gives positional columns labelled "0", "1", ... up to its
+# length, each sourced at its index; a later row's extra elements are
+# dropped and its absent ones are missing. An empty array row is a table
+# of no columns, whose rows are empty.
+[[1,"x"],["y",true,3],[2]]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0","1"]],["row",[["number",1,"1"],"x"]],["row",["y",true]],["row",[["number",2,"2"],["missing"]]],["end"]]
+[[1,"x"],["y",true,3],[2]]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0","1"]],["row",[["number",1,null],"x"]],["row",["y",true]],["row",[["number",2,null],["missing"]]],["end"]]
+[[],[1]]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",[]],["row",[]],["row",[]],["end"]]
+# A scalar row (null, a boolean, a number or a string) gives one column,
+# "value", sourced at the row itself.
+[1,"s",true,null]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["value"]],["row",[["number",1,"1"]]],["row",["s"]],["row",[true]],["row",[null]],["end"]]
+# A later row of another kind projects through the first row's paths and
+# lands empty where they miss: a key path on an array or a scalar, an
+# index path on an object or a scalar. The empty path of a value column
+# finds every row, a container as its compact JSON text.
+[{"a":1},[2],3]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a"]],["row",[["number",1,"1"]]],["row",[["missing"]]],["row",[["missing"]]],["end"]]
+[[1],{"0":2},3]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0"]],["row",[["number",1,"1"]]],["row",[["missing"]]],["row",[["missing"]]],["end"]]
+[1,{"a":2},[3]]	json	incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["value"]],["row",[["number",1,"1"]]],["row",["{\"a\":2}"]],["row",["[3]"]],["end"]]
 # A static schema projects nested paths and indexes, in schema order.
 {"rows":[{"p":{"n":"a"},"id":1,"tags":["t0","t1"]},{"tags":["u0"],"id":2,"p":{"n":"b"}}]}	json	incremental	{"schema":{"static":[{"label":"Id","source":["id"]},{"label":"Name","source":["p","n"]},{"label":"First tag","source":["tags",0]},{"label":"Second tag","source":["tags",1]}]},"rows":["rows",{"each":"index"}]}		[["schema",["Id","Name","First tag","Second tag"]],["row",[["number",1,"1"],"a","t0","t1"]],["row",[["number",2,"2"],"b","u0",["missing"]]],["end"]]
 # A container cell is its compact JSON text, lexemes kept; a column whose
@@ -54,5 +71,7 @@ input	grammar	mode	binding	duplicates	expected	path
 # Any source: the line sources, and yaml.
 {"a":1,"b":"x"}\n{"b":"y","a":2.50}\n	jsonl	lines-incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a","b"]],["row",[["number",1,"1"],"x"]],["row",[["number",2.5,"2.50"],"y"]],["end"]]
 {"a":1,"b":"x"}\n{"b":"y","a":2.50}\n	jsonl	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a","b"]],["row",[["number",1,null],"x"]],["row",[["number",2.5,null],"y"]],["end"]]
+[1,"x"]\n["y"]\n	jsonl	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0","1"]],["row",[["number",1,null],"x"]],["row",["y",["missing"]]],["end"]]
+1\n{"value":2}\n	jsonl	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["value"]],["row",[["number",1,null]]],["row",["{\"value\":2}"]],["end"]]
 id,name\n1,"a, b"\n2,c\n	csv	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["id","name"]],["row",["1","a, b"]],["row",["2","c"]],["end"]]
 rows:\n  - id: 1\n    n: x\n  - n: y\n	yaml	incremental	{"schema":{"static":[{"label":"Id","source":["id"]},{"label":"N","source":["n"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["Id","N"]],["row",[["number",1,"1"],"x"]],["row",[["missing"],"y"]],["end"]]
