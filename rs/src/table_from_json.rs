@@ -164,27 +164,8 @@ impl<S: TableSink> Core<S> {
         let mut row = selected.value.unwrap_or(Datum::Null);
         if !self.schema_sent {
             if let Columns::Infer(None) = &self.columns {
-                let columns = infer_columns(&row);
-                // The labels are the table's metadata for as long as it
-                // lasts, so they are held to the bound a metadata capture
-                // is: measured as the array of their strings would be.
-                let bytes = columns
-                    .iter()
-                    .map(|c| NODE_BYTES + c.label.len())
-                    .sum::<usize>()
-                    + NODE_BYTES;
-                if bytes > self.max_metadata_bytes {
-                    return Err(Fail::limit(
-                        "max_metadata_bytes",
-                        self.max_metadata_bytes as u64,
-                        format!(
-                            "the first row's {} column labels take {bytes} bytes as the table's metadata, more than {}",
-                            columns.len(),
-                            self.max_metadata_bytes
-                        ),
-                    )
-                    .at_path(selected.path.to_string()));
-                }
+                let columns = infer_columns(&row, self.max_columns, self.max_metadata_bytes)
+                    .map_err(|f| f.at_path(selected.path.to_string()))?;
                 self.bind(columns, "the first row")?;
             }
             if self.send_schema()? == Flow::Stop {
@@ -398,8 +379,40 @@ fn cell_path(row: &Path, source: &[Segment]) -> Path {
 /// for a scalar one column, `value`, sourced at the row itself. A later
 /// row of any kind projects through these paths, and lands empty where
 /// they miss.
-fn infer_columns(row: &Datum) -> Vec<BoundColumn> {
-    match row {
+fn infer_columns(
+    row: &Datum,
+    max_columns: usize,
+    max_metadata_bytes: usize,
+) -> Result<Vec<BoundColumn>, Fail> {
+    // The bounds are checked before a column is built: the labels are the
+    // table's metadata for as long as it lasts, so they are held to the
+    // bound a metadata capture is, measured as the array of their strings
+    // would be, and counted from the row itself, so a first row wider than
+    // either bound costs a walk of what it already holds and allocates
+    // nothing.
+    let (count, labels) = match row {
+        Datum::Object(members) => (members.len(), members.keys().map(|k| k.len()).sum()),
+        Datum::Array(items) => (items.len(), (0..items.len()).map(decimal_digits).sum()),
+        _ => (1, "value".len()),
+    };
+    let bytes = (count + 1) * NODE_BYTES + labels;
+    if bytes > max_metadata_bytes {
+        return Err(Fail::limit(
+            "max_metadata_bytes",
+            max_metadata_bytes as u64,
+            format!(
+                "the first row's {count} column labels take {bytes} bytes as the table's metadata, more than {max_metadata_bytes}"
+            ),
+        ));
+    }
+    if count > max_columns {
+        return Err(Fail::limit(
+            "max_columns",
+            max_columns as u64,
+            format!("the first row declares {count} columns, more than {max_columns}"),
+        ));
+    }
+    Ok(match row {
         Datum::Object(members) => members
             .keys()
             .map(|k| BoundColumn::new(k.clone(), vec![Segment::Key(k.clone())]))
@@ -408,7 +421,12 @@ fn infer_columns(row: &Datum) -> Vec<BoundColumn> {
             .map(|i| BoundColumn::new(i.to_string(), vec![Segment::Index(i)]))
             .collect(),
         _ => vec![BoundColumn::new("value", Vec::new())],
-    }
+    })
+}
+
+/// The length of `i` written in decimal: the bytes of an array row's label.
+fn decimal_digits(i: usize) -> usize {
+    i.checked_ilog10().map_or(1, |d| d as usize + 1)
 }
 
 #[cfg(test)]
@@ -674,6 +692,54 @@ mod tests {
             rows(&t),
             vec![vec!["1"], vec![r#""{\"a\":2}""#], vec![r#""[3]""#]]
         );
+    }
+
+    /// The bounds are held before a column is built: a first row wider
+    /// than `max_columns`, or whose labels pass `max_metadata_bytes`, is
+    /// refused from its own width and keys, naming the row, whatever its
+    /// kind; the label bytes are counted as the columns would be.
+    #[test]
+    fn infer_holds_the_bounds_before_it_builds_a_column() {
+        let infer = || TableBinding {
+            schema: Schema::Infer,
+            rows: Selector::root().each_index(),
+        };
+        let wide = format!("[[{}]]", vec!["0"; 100_000].join(","));
+        let limits = Limits {
+            max_columns: 1,
+            ..Limits::default()
+        };
+        let fail = run_with(infer(), &limits, &doc(&wide)).unwrap_err();
+        assert_eq!(
+            fail.limit.as_ref().map(|l| l.name),
+            Some("max_columns"),
+            "{fail}"
+        );
+        assert_eq!(fail.path.as_deref(), Some("[0]"), "{fail}");
+        assert!(fail.message.contains("100000 columns"), "{fail}");
+        // Ten labels, "0" to "9", each a node and a byte, in an array of
+        // them: one byte short of what they take is refused.
+        let ten = format!("[[{}]]", ["0"; 10].join(","));
+        let bytes = 11 * NODE_BYTES + 10;
+        let limits = Limits {
+            max_metadata_bytes: bytes - 1,
+            ..Limits::default()
+        };
+        let fail = run_with(infer(), &limits, &doc(&ten)).unwrap_err();
+        assert_eq!(
+            fail.limit.as_ref().map(|l| l.name),
+            Some("max_metadata_bytes"),
+            "{fail}"
+        );
+        let limits = Limits {
+            max_metadata_bytes: bytes,
+            ..Limits::default()
+        };
+        assert!(run_with(infer(), &limits, &doc(&ten)).is_ok());
+        assert_eq!(decimal_digits(0), 1);
+        assert_eq!(decimal_digits(9), 1);
+        assert_eq!(decimal_digits(10), 2);
+        assert_eq!(decimal_digits(99_999), 5);
     }
 
     #[test]

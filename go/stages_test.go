@@ -558,8 +558,24 @@ func TestTableLimitsAreEnforcedByName(t *testing.T) {
 	if tbl, f := runTable(t, infer, with(func(l *Limits) { l.MaxMetadataBytes = 37 }), treeEvents(t, `[1]`)); f != nil || labels(tbl) != "[value]" {
 		t.Fatal(f)
 	}
-	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxColumns = 1 }), treeEvents(t, `[[1,2]]`)); f == nil || f.Limit.Name != "max_columns" {
+	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxColumns = 1 }), treeEvents(t, `[[1,2]]`)); f == nil || f.Limit.Name != "max_columns" || f.Path != "[0]" {
 		t.Fatal(f)
+	}
+	// The bounds are held before a column is built: a first row of a
+	// hundred thousand cells is refused by max_columns from its width,
+	// naming the row, and when both bounds are passed the metadata's is
+	// named, as the labels are counted first.
+	wide := "[[" + strings.Repeat("0,", 99_999) + "0]]"
+	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxColumns = 1 }), treeEvents(t, wide)); f == nil || f.Limit.Name != "max_columns" || f.Path != "[0]" || !strings.Contains(f.Message, "100000 columns") {
+		t.Fatal(f)
+	}
+	if _, f := runTable(t, infer, with(func(l *Limits) { l.MaxColumns = 1; l.MaxMetadataBytes = 49 }), treeEvents(t, `[[1,2]]`)); f == nil || f.Limit.Name != "max_metadata_bytes" {
+		t.Fatal(f)
+	}
+	for i, want := range map[int]int{0: 1, 9: 1, 10: 2, 99_999: 5} {
+		if got := decimalDigits(i); got != want {
+			t.Fatalf("decimalDigits(%d) = %d, want %d", i, got, want)
+		}
 	}
 }
 

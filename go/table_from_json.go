@@ -91,18 +91,9 @@ func (c *tableCore) row(s Selected) (Flow, *Fail) {
 	}
 	if !c.schemaSent {
 		if c.schema.Kind == SchemaInfer && !c.boundSet {
-			columns := inferColumns(&row)
-			// The labels are the table's metadata for as long as it lasts,
-			// so they are held to the bound a metadata capture is:
-			// measured as the array of their strings would be.
-			bytes := NodeBytes
-			for i := range columns {
-				bytes += NodeBytes + len(columns[i].Label)
-			}
-			if bytes > c.maxMetadataBytes {
-				return Continue, LimitFail("max_metadata_bytes", uint64(c.maxMetadataBytes), fmt.Sprintf(
-					"the first row's %d column labels take %d bytes as the table's metadata, more than %d",
-					len(columns), bytes, c.maxMetadataBytes)).AtPath(s.Path.String())
+			columns, f := inferColumns(&row, c.maxColumns, c.maxMetadataBytes)
+			if f != nil {
+				return Continue, f.AtPath(s.Path.String())
 			}
 			if f := c.bind(columns, "the first row"); f != nil {
 				return Continue, f
@@ -257,7 +248,51 @@ func (t *TableFromJSON) Event(ev Event) (Flow, *Fail) { return t.router.Event(ev
 // sourced at its index; and for a scalar one column, "value", sourced at
 // the row itself. A later row of any kind projects through these paths,
 // and lands empty where they miss.
-func inferColumns(row *Datum) []BoundColumn {
+func inferColumns(row *Datum, maxColumns, maxMetadataBytes int) ([]BoundColumn, *Fail) {
+	// The bounds are checked before a column is built: the labels are the
+	// table's metadata for as long as it lasts, so they are held to the
+	// bound a metadata capture is, measured as the array of their strings
+	// would be, and counted from the row itself, so a first row wider than
+	// either bound costs a walk of what it already holds and allocates
+	// nothing.
+	count, labels := 1, len("value")
+	switch row.Kind {
+	case DatumObject:
+		count, labels = len(row.Members), 0
+		for _, m := range row.Members {
+			labels += len(m.Key)
+		}
+	case DatumArray:
+		count, labels = len(row.Items), 0
+		for i := 0; i < count; i++ {
+			labels += decimalDigits(i)
+		}
+	}
+	bytes := (count+1)*NodeBytes + labels
+	if bytes > maxMetadataBytes {
+		return nil, LimitFail("max_metadata_bytes", uint64(maxMetadataBytes), fmt.Sprintf(
+			"the first row's %d column labels take %d bytes as the table's metadata, more than %d",
+			count, bytes, maxMetadataBytes))
+	}
+	if count > maxColumns {
+		return nil, LimitFail("max_columns", uint64(maxColumns), fmt.Sprintf(
+			"the first row declares %d columns, more than %d", count, maxColumns))
+	}
+	return buildInferredColumns(row), nil
+}
+
+// decimalDigits is the length of i written in decimal: the bytes of an
+// array row's label.
+func decimalDigits(i int) int {
+	digits := 1
+	for n := i; n >= 10; n /= 10 {
+		digits++
+	}
+	return digits
+}
+
+// buildInferredColumns is the columns inferColumns has bounded.
+func buildInferredColumns(row *Datum) []BoundColumn {
 	switch row.Kind {
 	case DatumObject:
 		columns := make([]BoundColumn, len(row.Members))

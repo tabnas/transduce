@@ -841,7 +841,20 @@ describe('table', () => {
     assert.deepEqual(labels(run(infer(), doc('[[1,2]]'), Limits.with({ max_metadata_bytes: 50 }))), ['0', '1'])
     assert.equal(failOf(() => run(infer(), doc('[1]'), Limits.with({ max_metadata_bytes: 36 }))).limit?.name, 'max_metadata_bytes')
     assert.deepEqual(labels(run(infer(), doc('[1]'), Limits.with({ max_metadata_bytes: 37 }))), ['value'])
-    assert.equal(failOf(() => run(infer(), doc('[[1,2]]'), Limits.with({ max_columns: 1 }))).limit?.name, 'max_columns')
+    const c = failOf(() => run(infer(), doc('[[1,2]]'), Limits.with({ max_columns: 1 })))
+    assert.equal(c.limit?.name, 'max_columns')
+    assert.equal(c.path, '[0]')
+    // The bounds are held before a column is built: a first row of a
+    // hundred thousand cells is refused by max_columns from its width,
+    // naming the row, and when both bounds are passed the metadata's is
+    // named, as the labels are counted first.
+    const wide = '[[' + '0,'.repeat(99_999) + '0]]'
+    const w = failOf(() => run(infer(), doc(wide), Limits.with({ max_columns: 1 })))
+    assert.equal(w.limit?.name, 'max_columns')
+    assert.equal(w.path, '[0]')
+    assert.ok(w.message.includes('100000 columns'), w.message)
+    const both = failOf(() => run(infer(), doc('[[1,2]]'), Limits.with({ max_columns: 1, max_metadata_bytes: 49 })))
+    assert.equal(both.limit?.name, 'max_metadata_bytes')
   })
 
   it('a bad descriptor names its position', () => {
