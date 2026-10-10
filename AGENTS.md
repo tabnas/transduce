@@ -86,18 +86,22 @@ the two agree (a grammar that merges the two values fails the run with
 list wrapped around a root already streamed, as in a YAML stream of
 several documents, whatever their shapes, or a jsonic top-level implicit
 list; a map rewritten after streaming, as a YAML `<<` merge key does; a
-container opened inside a map before the member's key, as toml, ini, xml
-and feed open a section's or an element's container, and as yaml opened
-the value of the first member of a mapping in a sequence entry until
-tabnas/yaml#107) is refused with `STREAMABILITY_UNKNOWN` before `End`.
-The last is a net, and counts against a grammar: one that opens a
-container before its key on a fixture builds every member so, and is not
-verified. A listed grammar that mismatches, or trips the net,
-fails the test; an unlisted grammar that never does fails too. The
-list today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`,
+container opened inside a map before the member's key, as toml and ini
+open a section's container, as xml opened an element's until its rules
+built each element in document order, and as yaml opened the value of
+the first member of a mapping in a sequence entry until tabnas/yaml#107)
+is refused with `STREAMABILITY_UNKNOWN` before `End`. The last is a net,
+and counts against a grammar: one that opens a container before its key
+on a fixture builds every member so, and is not verified. So does
+streaming no document to the end: a grammar refused on every document it
+reads is not verified, whichever shape the refusal names. A listed
+grammar that mismatches, trips the net or streams nothing fails the
+test; an unlisted grammar that does none of those fails too. The list
+today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `xml`,
 `yaml`, `zon` (`docs/reference.md` has the detail); the imperative
-grammars `toml`, `ini`, `csv`, `xml` and `feed` build values the rule
-events do not show. `ParserSource` checks the list by the grammar's name
+grammars `toml`, `ini` and `csv` build values the rule events do not
+show, and `feed` replaces xml's root element with the feed it makes of
+the tree when the root closes. `ParserSource` checks the list by the grammar's name
 (`ParserSource::grammar`, since the json and jsonl parsers register no
 plugin to read it from): an incremental run of an unverified or unnamed
 grammar fails with `STREAMABILITY_UNKNOWN` before the parse, emitting
@@ -161,7 +165,7 @@ is exactly the grammar's.
 | `rs/src/source/lines.rs` | `LinesSource`: JSON Lines and CSV a record or a chunk at a time |
 | `rs/src/source/capability.rs` | the verified list `capability::incremental` answers from |
 | `rs/tests/incremental_test.rs` | the differential suite that keeps that list honest, both ways |
-| `rs/tests/retention_test.rs` | ten times the rows leave the retained high-water flat |
+| `rs/tests/retention_test.rs` | ten times the rows of a JSON or an XML document leave the retained high-water flat |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
 | `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML), shared with the benches |

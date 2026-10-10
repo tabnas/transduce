@@ -23,10 +23,13 @@
 // value, or fails before `end` with a documented code, never with a wrong
 // stream.
 
-// Measured: the TypeScript grammars earn the same eight as the Rust ones;
-// `toml`, `ini`, `csv`, `xml` and `feed` open a section's, a record's or an
-// element's container before its key, or build a record the stream does not
-// see, and the adapter refuses each on its own samples.
+// Measured: the TypeScript grammars earn the same nine as the Rust ones.
+// `xml` builds each element in document order, in a node of its own made
+// when the start tag is read, with `children` named before its list opens
+// and the list in a node of its own. `toml` and `ini` open a section's
+// container before its key, `csv` builds a record the stream does not see,
+// and `feed` replaces xml's root element with the feed it makes of the tree
+// when the root closes, so the adapter refuses each on its own samples.
 
 // The grammars whose incremental events never contradict the whole-value
 // walk on any fixture, by their package's name (`@tabnas/<name>`).
@@ -37,6 +40,7 @@ export const INCREMENTAL: readonly string[] = Object.freeze([
   'jsonic',
   'jsonl',
   'markdown',
+  'xml',
   'yaml',
   'zon',
 ])

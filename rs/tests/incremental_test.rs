@@ -26,11 +26,16 @@
 //! fixture foresaw (a mapping in a YAML sequence entry whose first
 //! member's value is a collection, tabnas/transduce#7, until
 //! tabnas/yaml#107 named that member before its value; a jsonic pair
-//! inside a list, dropped when `list.pair` is off). A grammar is
-//! listed in `capability::INCREMENTAL` only when no fixture mismatches or
-//! is refused that way, and this suite asserts BOTH directions: a listed
-//! grammar that mismatches anywhere fails, and an unlisted grammar that
-//! never does fails too, so the list can rot in neither. The suite runs the adapter with
+//! inside a list, dropped when `list.pair` is off). A grammar refused on
+//! every document it reads counts against it the same way, whatever shape
+//! the refusal names: feed streams xml's element tree and then replaces
+//! the root with the feed it makes of it, so each of its documents is
+//! refused when the root closes. A grammar is listed in
+//! `capability::INCREMENTAL` only when no fixture mismatches or is refused
+//! for how the grammar builds, and at least one streams to the end, and
+//! this suite asserts BOTH directions: a listed grammar that fails that
+//! anywhere fails, and an unlisted grammar that never does fails too, so
+//! the list can rot in neither. The suite runs the adapter with
 //! `ParserSource::unverified`, since the source itself refuses an unlisted
 //! grammar before parsing; that refusal is tested here as well.
 //!
@@ -40,14 +45,17 @@
 //! and document streams of every shape, scalars, sequences, mappings,
 //! mixed, and empty documents between separators; a YAML merge key;
 //! repeated member names, and the repeated fields zon refuses)
-//! and four generated documents in the spec's worked-example shape: 2000
-//! records as JSON, as JSON Lines, as CSV and as block YAML (the shape
-//! whose large form mismatched under the prototype). The generated ones go
-//! only to the grammars of their own family; the small ones are offered to
-//! every grammar, and a grammar reads whatever parses.
+//! and five generated documents in the spec's worked-example shape: 2000
+//! records as JSON, as JSON Lines, as CSV, as block YAML (the shape whose
+//! large form mismatched under the prototype) and as XML. The generated
+//! ones go only to the grammars of their own family; the small ones are
+//! offered to every grammar, and a grammar reads whatever parses. xml is
+//! held to its own corpus too: every document of the sibling checkout's
+//! `test/spec`, read where this crate builds tabnas-xml from.
 
 mod support;
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 
@@ -115,7 +123,7 @@ const GRAMMARS: &[Grammar] = &[
     Grammar {
         name: "xml",
         make: tabnas_xml::make,
-        generated: &[],
+        generated: &["records.xml"],
     },
     Grammar {
         name: "zon",
@@ -168,6 +176,7 @@ fn generated(name: &str) -> String {
         "records.jsonl" => support::records_jsonl(RECORDS),
         "records.csv" => support::records_csv(RECORDS),
         "records.yaml" => support::records_yaml(RECORDS),
+        "records.xml" => support::records_xml(RECORDS),
         other => panic!("no generator for {other}"),
     }
 }
@@ -391,6 +400,7 @@ fn verify(name: &str) {
     }
     let total = fixtures.len();
     let mut read = 0;
+    let mut streamed = 0;
     let mut mismatches: Vec<String> = Vec::new();
     let mut unfollowed: Vec<String> = Vec::new();
     for (i, (fixture, text)) in fixtures.iter().enumerate() {
@@ -402,10 +412,12 @@ fn verify(name: &str) {
             }
             Outcome::Match { events, lexemes } => {
                 read += 1;
+                streamed += 1;
                 format!("MATCH ({events} events, {lexemes} lexemes)")
             }
             Outcome::MatchLastWins { events } => {
                 read += 1;
+                streamed += 1;
                 format!(
                     "MATCH after LastWins ({events} events; the document repeats a member name)"
                 )
@@ -433,29 +445,39 @@ fn verify(name: &str) {
         );
     }
     assert!(read > 0, "grammar {name} read none of the fixtures");
-    // Verified means: never a wrong stream, and never a member the adapter
-    // could not follow. The second is the grammar's to fix (announce the
-    // key before the value's rule opens, as yaml's pairs do), not the
-    // list's to excuse: a grammar refused on its own documents would be
-    // attempted and refused on every one of them.
-    let verified = mismatches.is_empty() && unfollowed.is_empty();
+    // Verified means: never a wrong stream, never a member the adapter
+    // could not follow, and at least one document streamed to the end. The
+    // second is the grammar's to fix (announce the key before the value's
+    // rule opens, as yaml's pairs do), not the list's to excuse: a grammar
+    // refused on its own documents would be attempted and refused on every
+    // one of them, and so would one refused on every document it reads,
+    // whatever shape the refusal names.
+    let verified = mismatches.is_empty() && unfollowed.is_empty() && streamed > 0;
     let listed = capability::incremental(name);
     let mut problems = mismatches.clone();
     problems.extend(unfollowed.iter().map(|f| {
         format!("{f}: refused for how the grammar builds its values (a container opened in a map before its member's key, or streamed and never stored)")
     }));
+    if streamed == 0 {
+        problems.push(format!(
+            "no document of the {read} it reads streams to the end: each is refused"
+        ));
+    }
     assert_eq!(
         listed,
         verified,
         "capability::incremental({name:?}) is {listed}, but the grammar {} over {read} fixtures it reads{}{}",
         if verified {
             "never mismatched; add it to capability::INCREMENTAL"
-        } else if mismatches.is_empty() {
+        } else if !mismatches.is_empty() {
+            "mismatched; remove it from capability::INCREMENTAL, or fix the adapter"
+        } else if !unfollowed.is_empty() {
             "builds its values in a way the adapter refuses (a container opened in a map before \
              its key, or streamed and never stored); remove it from capability::INCREMENTAL, or \
              fix the grammar"
         } else {
-            "mismatched; remove it from capability::INCREMENTAL, or fix the adapter"
+            "streams no document to the end; remove it from capability::INCREMENTAL, or fix the \
+             grammar"
         },
         if problems.is_empty() { "" } else { ":\n  " },
         problems.join("\n  ")
@@ -1003,8 +1025,9 @@ fn a_yaml_key_that_is_a_mapping_streams_as_the_walk() {
 /// prefix and before `End`, never a completed stream the walk contradicts.
 /// No listed grammar builds a member so since tabnas/yaml#107 (yaml did,
 /// for the first member of a mapping in a sequence entry, the shape
-/// tabnas/transduce#7 found), so this grammar is what keeps the net
-/// tested; toml, ini, xml and feed, which are not listed, trip it on their
+/// tabnas/transduce#7 found, and xml did for every element until its rules
+/// built each element in document order), so this grammar is what keeps
+/// the net tested; toml and ini, which are not listed, trip it on their
 /// own samples.
 #[test]
 fn a_container_opened_in_a_map_before_its_key_is_refused() {
@@ -1194,6 +1217,130 @@ fn markdown_documents_stream_as_the_walk() {
         assert_eq!(result.unwrap(), Flow::Continue, "{text:?}");
         assert_eq!(without_lexemes(&events), walked, "{text:?}");
     }
+}
+
+/// xml's rules build each element in document order, in a cell of its own
+/// made when the start tag is read, with `children` named before its list
+/// opens and the list in a cell of its own; the root is set aside while the
+/// white space after it is read, so the rule that reads it does not open
+/// holding the finished tree. These are the shapes that
+/// order has to hold for: a prolog and Misc on both sides of the root,
+/// namespaces and inherited `xml:space` and `xml:lang`, mixed content,
+/// CDATA, entities, a DOCTYPE's attribute defaults, deep nesting, and a
+/// long run of siblings. Each streams exactly as the walk does. (An element
+/// is two containers, its map and its list of children, so 100 levels stay
+/// inside the default `max_depth` of 256.)
+#[test]
+fn xml_documents_stream_as_the_walk() {
+    let deep = format!("{}x{}", "<d>".repeat(100), "</d>".repeat(100));
+    let mut wide = String::from("<r>");
+    for i in 0..1000 {
+        write!(wide, "<i n=\"{i}\">v{i}</i>t").expect("writing to a string");
+    }
+    wide.push_str("</r>");
+    for text in [
+        "<a/>",
+        "<a></a>",
+        "<a>x</a>",
+        "\n<?xml-stylesheet href=\"s\"?>\n<!-- c -->\n<a>x</a>\n<!-- d -->\n<?pi x?>\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<p:a xmlns:p=\"urn:p\" xmlns=\"urn:d\" xml:lang=\"en\"><b xml:space=\"preserve\"> <p:c p:k=\"v\"/> </b><d xmlns=\"\"/></p:a>",
+        "<a>one <b>two</b> three<c/>four<![CDATA[<five>]]>&amp;&lt;&#65;</a>",
+        "<!DOCTYPE a [<!ATTLIST b k CDATA \"def\"><!ENTITY e \"ee\">]>\n<a><b/><b k=\"own\">&e;</b></a>",
+        "<r>\n  <i id=\"1\">alpha</i>\n  <i id=\"2\"/>\n</r>\n",
+        &deep,
+        &wide,
+    ] {
+        let (whole, walked) = run(tabnas_xml::make, text, SourceMode::Materialize);
+        whole.unwrap_or_else(|fail| panic!("{text:?}: {fail}"));
+        let (result, events) = incremental(tabnas_xml::make, text);
+        assert_eq!(
+            result.unwrap_or_else(|fail| panic!("{text:?}: {fail} after {events:?}")),
+            Flow::Continue,
+            "{text:?}"
+        );
+        assert_eq!(without_lexemes(&events), walked, "{text:?}");
+    }
+}
+
+/// xml is held to its own corpus as well as to the fixtures here: every
+/// document of the `test/spec/*.tsv` rows of the sibling checkout this
+/// crate builds tabnas-xml from, under the options `tabnas_xml::make`
+/// gives (a row's own options are not applied: the suite runs one parser).
+/// Each streams exactly as the walk does, or is refused by the grammar as
+/// the walk is, with the same code at the same position: none mismatches,
+/// and none is refused for how the grammar builds.
+#[test]
+fn every_document_of_xmls_own_corpus_streams_as_the_walk() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../xml/test/spec");
+    let specs = tabnas_support::load_spec_dir(&dir, &tabnas_support::SpecOptions::default())
+        .unwrap_or_else(|e| {
+            panic!("{e}: clone https://github.com/tabnas/xml beside this repository")
+        });
+    let grammar = GRAMMARS
+        .iter()
+        .find(|g| g.name == "xml")
+        .expect("xml is in the suite");
+    let rows: Vec<(String, String)> = specs
+        .iter()
+        .flat_map(|spec| {
+            spec.rows.iter().map(|row| {
+                (
+                    format!("{}:{}", row.file, row.line),
+                    row.unesc_named("input"),
+                )
+            })
+        })
+        .collect();
+    let total = rows.len();
+    let (mut streamed, mut not_read) = (0, 0);
+    let mut problems: Vec<String> = Vec::new();
+    for (i, (name, text)) in rows.iter().enumerate() {
+        let verdict = match compare(grammar, text) {
+            Outcome::Match { events, .. } => {
+                streamed += 1;
+                format!("MATCH ({events} events)")
+            }
+            Outcome::NotRead { walk, incremental } if walk == incremental => {
+                not_read += 1;
+                format!("not read ({walk})")
+            }
+            Outcome::NotRead { walk, incremental } => {
+                format!("the walk failed with {walk}, the incremental run with {incremental}")
+            }
+            Outcome::MatchLastWins { events } => {
+                format!("matched only after LastWins ({events} events)")
+            }
+            Outcome::Refused { code, events } => {
+                format!("REFUSED with {code} after {events} events")
+            }
+            Outcome::Unfollowed { events } => format!("UNFOLLOWED after {events} events"),
+            Outcome::Mismatch(why) => format!("MISMATCH: {why}"),
+        };
+        if !verdict.starts_with("MATCH") && !verdict.starts_with("not read") {
+            problems.push(format!("{name}: {verdict}"));
+        }
+        if (i + 1) % 50 == 0 || i + 1 == total {
+            println!(
+                "xml corpus: {} of {total} ({}%) {name}: {verdict}",
+                i + 1,
+                (i + 1) * 100 / total
+            );
+        }
+    }
+    println!(
+        "xml corpus: {streamed} streamed as the walk, {not_read} refused as the walk, of {total}"
+    );
+    assert!(
+        problems.is_empty(),
+        "{} of {total} documents of xml's corpus did not stream as the walk:\n  {}",
+        problems.len(),
+        problems.join("\n  ")
+    );
+    assert!(
+        streamed > total / 2,
+        "only {streamed} of {total} documents streamed: is {} xml's corpus?",
+        dir.display()
+    );
 }
 
 /// The source consults the list by the grammar's name: an unlisted grammar

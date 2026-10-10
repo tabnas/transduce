@@ -101,6 +101,78 @@ func TestWithoutPruningTheEnginesTreeHoldsEveryRow(t *testing.T) {
 	}
 }
 
+// sameRowsXML is the worked example as XML with rows copies of one record
+// and nothing between them, so every row is one <record> element of the
+// same size, and the records element's children are the rows alone.
+func sameRowsXML(rows int) string {
+	record := `<record id="123456"><person><name>Person number 123456</name></person>` +
+		`<account><balance>864192.56</balance></account></record>`
+	return "<?xml version=\"1.0\"?>\n<response><records>" + strings.Repeat(record, rows) + "</records></response>\n"
+}
+
+// xmlRowsSelector is the records element's children: the root's first
+// child's children.
+func xmlRowsSelector() Selector {
+	return Root().Property("children").Index(0).Property("children").EachIndex()
+}
+
+func retentionRunXML(t *testing.T, rows int, mode SourceMode) left {
+	t.Helper()
+	m := NewMetrics()
+	tbl := &Table{}
+	tf, f := NewTableFromJSON(TableBinding{Schema: InferSchema(), Rows: xmlRowsSelector()},
+		DefaultLimits(), Reject, m, tbl)
+	if f != nil {
+		t.Fatal(f)
+	}
+	_, f, value := NewParserSource(makeGrammar("xml"), sameRowsXML(rows)).Grammar("xml").Mode(mode).Metrics(m).RunWithValue(tf)
+	if f != nil || !tbl.Ended {
+		t.Fatal(f)
+	}
+	tree := DatumFromValue(value)
+	records, ok := tree.GetPath([]Segment{KeySegment("children"), IndexSegment(0), KeySegment("children")})
+	if !ok || records.Kind != DatumArray {
+		t.Fatal("the records element's children are in the tree")
+	}
+	return left{m.CapturedBytesHigh.Load(), m.RetainedBytesHigh.Load(), len(tbl.Rows), len(records.Items), tree.ByteSize()}
+}
+
+// xml streams too: its rules build each element in document order, so the
+// rows of an XML document reach the table one at a time, and with the
+// records element's children pruned the engine's tree holds none of them
+// after the run.
+func TestTenTimesTheRowsOfAnXMLDocumentLeaveTheRetainedHighWaterFlat(t *testing.T) {
+	modes := []SourceMode{MaterializeMode()}
+	if AdapterBuilt() {
+		modes = append(modes, IncrementalMode(PruneUnderSelector(xmlRowsSelector())))
+	}
+	for _, mode := range modes {
+		one := retentionRunXML(t, 200, mode)
+		ten := retentionRunXML(t, 2000, mode)
+		fmt.Printf("retention xml (mode %d): 200 rows, high-water %d bytes, tree %d bytes; 2000 rows, high-water %d bytes, tree %d bytes\n",
+			mode.Kind, one.capturedHigh, one.treeBytes, ten.capturedHigh, ten.treeBytes)
+		if one.rows != 200 || ten.rows != 2000 || one.capturedHigh == 0 {
+			t.Fatal(one, ten)
+		}
+		if ten.capturedHigh != one.capturedHigh || ten.retainedHigh != one.retainedHigh {
+			t.Fatalf("the peak is one row's, not the count's: %v %v", one, ten)
+		}
+		if mode.Kind == ModeIncremental {
+			if one.treeRows != 0 || ten.treeRows != 0 {
+				t.Fatalf("every streamed row was dropped from the engine's tree: %d %d", one.treeRows, ten.treeRows)
+			}
+			if ten.treeBytes != one.treeBytes {
+				t.Fatalf("the tree left behind does not grow with the rows: %d %d", one.treeBytes, ten.treeBytes)
+			}
+			// The control: without pruning the tree keeps every row.
+			kept := retentionRunXML(t, 2000, IncrementalMode(Prune{}))
+			if kept.treeRows != 2000 || kept.capturedHigh != one.capturedHigh {
+				t.Fatal(kept, one)
+			}
+		}
+	}
+}
+
 // A chain sharing one Metrics counts the source events once.
 func TestAChainSharingOneMetricsCountsTheSourceEventsOnce(t *testing.T) {
 	text := `{"meta":[{"title":"Id","path":["id"]}],"rows":[{"id":1},{"id":2}]}`

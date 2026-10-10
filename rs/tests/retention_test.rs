@@ -161,6 +161,108 @@ fn without_pruning_the_engines_tree_holds_every_row() {
     );
 }
 
+/// The worked example as XML with `rows` copies of one record and nothing
+/// between them, so every row is one `<record>` element of the same size,
+/// and the records element's children are the rows alone.
+fn same_rows_xml(rows: usize) -> String {
+    let record = "<record id=\"123456\"><person><name>Person number 123456</name></person>\
+                  <account><balance>864192.56</balance></account></record>";
+    format!(
+        "<?xml version=\"1.0\"?>\n<response><records>{}</records></response>\n",
+        record.repeat(rows)
+    )
+}
+
+/// The records element's children: the root's first child's `children`.
+fn xml_rows() -> Selector {
+    Selector::root()
+        .property("children")
+        .index(0)
+        .property("children")
+        .each_index()
+}
+
+/// One run over the XML worked example, a table inferred from the rows.
+fn run_xml(rows: usize, prune: Prune) -> Left {
+    let text = same_rows_xml(rows);
+    let metrics = Metrics::new();
+    let table = TableFromJson::new(
+        TableBinding {
+            schema: Schema::Infer,
+            rows: xml_rows(),
+        },
+        &Limits::default(),
+        Duplicates::Reject,
+        metrics.clone(),
+        Table::default(),
+    )
+    .expect("the binding is valid");
+    let (outcome, table, value) = ParserSource::new(tabnas_xml::make(), &text)
+        .grammar("xml")
+        .mode(SourceMode::Incremental { prune })
+        .metrics(metrics.clone())
+        .run_owned_with_value(table);
+    outcome.expect("the run succeeds");
+    let table = table.into_inner();
+    assert!(table.ended);
+    let tree = Datum::from_tabnas(&value.expect("the parse returned"));
+    let tree_rows = tree
+        .get_path(&[
+            Segment::key("children"),
+            Segment::Index(0),
+            Segment::key("children"),
+        ])
+        .and_then(Datum::as_array)
+        .expect("the records element's children are in the tree")
+        .len();
+    Left {
+        captured_high: Metrics::get(&metrics.captured_bytes_high),
+        retained_high: Metrics::get(&metrics.retained_bytes_high),
+        rows: table.rows.len(),
+        tree_rows,
+        tree_bytes: tree.byte_size(),
+    }
+}
+
+/// xml streams too: its rules build each element in document order, so
+/// the rows of an XML document reach the table one at a time, and with
+/// the records element's children pruned the engine's tree holds none of
+/// them after the run. Ten times the rows leave the high-water marks and
+/// the tree where they were.
+#[test]
+fn ten_times_the_rows_of_an_xml_document_leave_the_retained_high_water_flat() {
+    let one = run_xml(200, Prune::Under(xml_rows()));
+    println!(
+        "retention xml: 200 rows, captured high-water {} bytes, tree {} bytes",
+        one.captured_high, one.tree_bytes
+    );
+    let ten = run_xml(2000, Prune::Under(xml_rows()));
+    println!(
+        "retention xml: 2000 rows, captured high-water {} bytes, tree {} bytes",
+        ten.captured_high, ten.tree_bytes
+    );
+    assert_eq!((one.rows, ten.rows), (200, 2000));
+    assert!(one.captured_high > 0);
+    assert_eq!(
+        ten.captured_high, one.captured_high,
+        "the peak is one row's, not the count's"
+    );
+    assert_eq!(ten.retained_high, one.retained_high);
+    assert_eq!(
+        (one.tree_rows, ten.tree_rows),
+        (0, 0),
+        "every streamed row was dropped from the engine's tree"
+    );
+    assert_eq!(
+        ten.tree_bytes, one.tree_bytes,
+        "the tree left behind does not grow with the rows"
+    );
+    // The control: without pruning the tree keeps every row.
+    let kept = run_xml(2000, Prune::Never);
+    assert_eq!(kept.tree_rows, 2000);
+    assert_eq!(kept.captured_high, one.captured_high);
+}
+
 /// The README's chain shares one `Metrics` between the source and the
 /// table transducer; the source counts are the source's, once.
 #[test]

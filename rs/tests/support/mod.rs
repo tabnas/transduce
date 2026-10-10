@@ -6,9 +6,10 @@
 //! {"balance":D.CC}}`, the JSON document wraps them under
 //! `response.payload.deep.records` behind `response.metadata.fields`, the
 //! JSON Lines variant is one record per line, the CSV variant is the
-//! flattened columns `id,name,balance`, and the YAML variant is the block
-//! form of the JSON document (a sequence of block mappings, the shape the
-//! prototype's large YAML input had).
+//! flattened columns `id,name,balance`, the YAML variant is the block form
+//! of the JSON document (a sequence of block mappings, the shape the
+//! prototype's large YAML input had), and the XML variant is the same tree
+//! as elements, a record per line.
 
 #![allow(dead_code)]
 
@@ -71,5 +72,24 @@ pub fn records_yaml(records: usize) -> String {
             i % 100
         );
     }
+    s
+}
+
+/// The worked-example document as XML: the metadata's fields as `<field>`
+/// elements and each record a `<record>` element, its id an attribute and
+/// its name and balance child elements, one record per line.
+pub fn records_xml(records: usize) -> String {
+    let mut s = String::from(
+        "<?xml version=\"1.0\"?>\n<response>\n  <metadata>\n    <fields>\n      <field title=\"Identifier\" path=\"id\"/>\n      <field title=\"Full name\" path=\"person name\"/>\n      <field title=\"Balance\" path=\"account balance\"/>\n    </fields>\n  </metadata>\n  <payload><deep><records>\n",
+    );
+    for i in 0..records {
+        let _ = writeln!(
+            s,
+            "    <record id=\"{i}\"><person><name>Person number {i}</name></person><account><balance>{}.{:02}</balance></account></record>",
+            i * 7,
+            i % 100
+        );
+    }
+    s.push_str("  </records></deep></payload>\n</response>\n");
     s
 }

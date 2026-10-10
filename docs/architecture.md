@@ -61,9 +61,14 @@ router, or a documented refusal before `End`) differs from that prototype:
 ends a frame; `jsonic`'s container-first implicit list and yaml's `---`
 document stream are refusals (`STREAMABILITY_UNKNOWN`, a root already
 streamed cannot be re-wrapped), not mismatches; and `markdown`'s events
-equal the walk. The verified list is `json`, `json5`, `jsonc`, `jsonic`,
-`jsonl`, `markdown`, `yaml`, `zon`; `toml`, `ini`, `csv`, `xml` and `feed`
-complete streams the walk contradicts and stay off it.
+equal the walk. `xml` joined them once its rules built each element in
+document order (tabnas/xml, "The order the rules build an element in"):
+each element in a cell of its own made when its start tag is read, its
+members in their order, `children` named before its list opens and the
+list in a cell of its own. The verified list is `json`, `json5`, `jsonc`,
+`jsonic`, `jsonl`, `markdown`, `xml`, `yaml`, `zon`; `toml`, `ini`, `csv`
+and `feed` complete streams the walk contradicts or are refused on every
+document, and stay off it.
 [`reference.md`](reference.md) and `rs/src/source/capability.rs` record the
 contract and each refusal's shape. Every grammar
 still works through the whole-document walker. JSONL and CSV additionally get

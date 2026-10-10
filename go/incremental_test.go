@@ -17,12 +17,17 @@ package tabnastransduce
 // the grammar's position, or with a documented refusal. A completed
 // stream that disagrees with the walk is never accepted, and two
 // refusals count against a grammar: a container opened inside a map
-// before the member's key, and a container streamed and never stored. A
-// grammar is listed only when no fixture mismatches or is refused that
-// way, and the suite asserts BOTH directions.
+// before the member's key, and a container streamed and never stored. So
+// does streaming no document to the end: a grammar refused on every
+// document it reads is refused for how it builds, whichever shape the
+// refusal names (feed streams xml's element tree and then replaces the
+// root with the feed it makes of it, so each of its documents is refused
+// when the root closes). A grammar is listed only when no fixture
+// mismatches or is refused for how it builds, and at least one streams to
+// the end, and the suite asserts BOTH directions.
 //
 // The fixtures are the Rust crate's (../rs/tests/fixtures), shared rather
-// than copied, and four generated documents in the worked-example shape.
+// than copied, and five generated documents in the worked-example shape.
 
 import (
 	"fmt"
@@ -55,7 +60,7 @@ var diffGrammars = []diffGrammar{
 	{"toml", nil},
 	{"ini", nil},
 	{"csv", []string{"records.csv"}},
-	{"xml", nil},
+	{"xml", []string{"records.xml"}},
 	{"zon", nil},
 	{"markdown", nil},
 	{"feed", nil},
@@ -96,6 +101,8 @@ func generatedDoc(name string) string {
 		return recordsCSV(diffRecords)
 	case "records.yaml":
 		return recordsYAML(diffRecords)
+	case "records.xml":
+		return recordsXML(diffRecords)
 	}
 	panic("no generator for " + name)
 }
@@ -280,7 +287,7 @@ func verifyGrammar(t *testing.T, name string) {
 	for _, gen := range g.generated {
 		fixtures = append(fixtures, namedText{fmt.Sprintf("generated %s (%d records)", gen, diffRecords), generatedDoc(gen)})
 	}
-	total, read := len(fixtures), 0
+	total, read, streamed := len(fixtures), 0, 0
 	var mismatches, unfollowedList []string
 	for i, fx := range fixtures {
 		started := time.Now()
@@ -291,9 +298,11 @@ func verifyGrammar(t *testing.T, name string) {
 			verdict = fmt.Sprintf("not read (%v; the incremental run failed with %v)", o.walk, o.code)
 		case outMatch:
 			read++
+			streamed++
 			verdict = fmt.Sprintf("MATCH (%d events, %d lexemes)", o.events, o.lexemes)
 		case outMatchLastWins:
 			read++
+			streamed++
 			verdict = fmt.Sprintf("MATCH after LastWins (%d events; the document repeats a member name)", o.events)
 		case outRefused:
 			read++
@@ -313,16 +322,23 @@ func verifyGrammar(t *testing.T, name string) {
 	if read == 0 {
 		t.Fatalf("grammar %s read none of the fixtures", name)
 	}
-	verified := len(mismatches) == 0 && len(unfollowedList) == 0
+	// Verified means: never a wrong stream, never a member the adapter
+	// could not follow, and at least one document streamed to the end. A
+	// grammar refused on every document it reads would be attempted and
+	// refused on every one of them, whatever shape the refusal names.
+	verified := len(mismatches) == 0 && len(unfollowedList) == 0 && streamed > 0
 	listed := Incremental(name)
 	if listed != verified {
 		problems := append([]string(nil), mismatches...)
 		for _, u := range unfollowedList {
 			problems = append(problems, u+": refused for how the grammar builds its values")
 		}
+		if streamed == 0 {
+			problems = append(problems, fmt.Sprintf("no document of the %d it reads streams to the end: each is refused", read))
+		}
 		advice := "never mismatched; add it to the verified list"
 		if !verified {
-			advice = "mismatched or was refused for how it builds; remove it from the verified list, or fix the adapter or the grammar"
+			advice = "mismatched, was refused for how it builds, or streamed no document to the end; remove it from the verified list, or fix the adapter or the grammar"
 		}
 		t.Fatalf("Incremental(%q) is %v, but the grammar %s over %d fixtures it reads:\n  %s",
 			name, listed, advice, read, strings.Join(problems, "\n  "))
@@ -634,8 +650,9 @@ func TestAYAMLKeyThatIsAMappingStreamsAsTheWalk(t *testing.T) {
 
 // A grammar that builds a member's value in a rule of its own and names
 // the member only when the pair closes is refused when the value opens.
-// No listed grammar builds a member so since tabnas/yaml#107, so this
-// grammar is what keeps the net tested.
+// No listed grammar builds a member so since tabnas/yaml#107 (and xml did
+// for every element until its rules built each element in document
+// order), so this grammar is what keeps the net tested.
 func TestAContainerOpenedInAMapBeforeItsKeyIsRefused(t *testing.T) {
 	lateKey := func() *tabnas.Tabnas {
 		j := tabnas.Make()

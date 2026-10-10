@@ -97,9 +97,11 @@ other way, and every number a walk emits, has `lexeme: None`.
 ### The verified grammars
 
 `capability::INCREMENTAL` lists `json`, `json5`, `jsonc`, `jsonic`,
-`jsonl`, `markdown`, `yaml` and `zon`. `rs/tests/incremental_test.rs` runs
-every fixture each grammar reads through both modes and asserts the list
-in both directions. What the list promises, precisely: for a listed
+`jsonl`, `markdown`, `xml`, `yaml` and `zon`. `rs/tests/incremental_test.rs`
+runs every fixture each grammar reads through both modes and asserts the
+list in both directions; a grammar is listed only when no fixture
+mismatches or is refused for how it builds, and at least one streams to
+the end. What the list promises, precisely: for a listed
 grammar an incremental run either streams exactly what the walk would
 (number lexemes aside), or streams every occurrence of a repeated member
 name so that a `LastWins` router builds the walk's value, or fails before
@@ -156,12 +158,23 @@ a member whose announcing rule closed without growing the map is held
 until the engine's next event, which a pass that failed never sends.
 
 `markdown` builds its nodes imperatively, but each lands whole and is
-walked at its insertion, so its events are the walk's. The other
-imperative grammars (`toml`, `ini`, `csv`, `xml`, `feed`) build their
+walked at its insertion, so its events are the walk's. `xml` builds each
+element in document order, in a cell of its own made when its start tag
+is read, its members in their order, with `children` named in `u.key`
+before its list opens and the list in a cell of its own; an element's
+`attributes`, and a self-closing element's empty `children`, land
+complete and are walked at their insertion, as markdown's nodes are. Its
+own corpus is held to the walk too: every document of xml's
+`test/spec/*.tsv` streams as the walk or is refused by the grammar as the
+walk is (`every_document_of_xmls_own_corpus_streams_as_the_walk`). The
+other imperative grammars (`toml`, `ini`, `csv`, `feed`) build their
 values in ways the rule events do not show (`csv` streams its header and
 raw rows as extra elements, a well-formed stream with the wrong shape;
-the others open a section's or an element's container before its key,
-which the adapter refuses on their own samples) and are walked whole. `ParserSource` refuses to run an unlisted grammar
+`toml` and `ini` open a section's container before its key, which the
+adapter refuses on their own samples; `feed` streams xml's element tree
+and then replaces the root with the feed it makes of it, so each of its
+documents is refused as a rewritten root when the root closes) and are
+walked whole. `ParserSource` refuses to run an unlisted grammar
 incrementally: the grammar's name cannot be read from the `Tabnas` (the
 json and jsonl parsers register no plugin), so `SourceMode::Incremental`
 needs `ParserSource::grammar(name)` and fails with `STREAMABILITY_UNKNOWN`

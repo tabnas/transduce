@@ -14,7 +14,9 @@
 //!   longer container means new entries: the tail of an array, the last
 //!   members of a map (insertion ordered). A new entry that is the
 //!   container which completed last was already streamed; any other is
-//!   walked whole, late. Verified grammars never take that path.
+//!   walked whole, late. A verified grammar takes that path only for a
+//!   container that lands complete: a markdown node, an xml element's
+//!   attributes or a self-closing element's empty children.
 //! - A key is announced early when the rule stashed it in `u["key"]` at
 //!   its OPEN pass (`@key$` and the grammars' own actions do); a key the
 //!   adapter only learns at insertion is announced then.
@@ -913,11 +915,12 @@ pub(crate) fn unstored_container() -> Fail {
 /// The failure for a container the grammar opens inside a map before the
 /// member it belongs to has a key: a value built in a pushed rule and
 /// stored under its key only when the pair closes, or a key the grammar
-/// builds as a container. toml, ini, xml and feed open a section's or an
-/// element's container so; yaml opened the value of the first member of a
-/// mapping in a sequence entry so until tabnas/yaml#107. The value's
-/// events would leave before the key, and a stream no tree's events match
-/// cannot be repaired after the fact.
+/// builds as a container. toml and ini open a section's container so; xml
+/// opened an element's so until its rules built each element in document
+/// order, and yaml the value of the first member of a mapping in a
+/// sequence entry until tabnas/yaml#107. The value's events would leave
+/// before the key, and a stream no tree's events match cannot be repaired
+/// after the fact.
 pub(crate) fn value_before_key() -> Fail {
     Fail::new(
         Code::StreamabilityUnknown,
