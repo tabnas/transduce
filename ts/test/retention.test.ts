@@ -30,6 +30,7 @@ import {
   columnFromMeta,
   isScalar,
 } from '../dist/transduce'
+import { GRAMMARS } from './common'
 import { METADATA, record } from './support'
 
 // The worked example with `rows` copies of one record.
@@ -74,6 +75,49 @@ function run(rows: number, prune: Prune) {
   }
 }
 
+// The worked example as XML with `rows` copies of one record and nothing
+// between them, so every row is one `<record>` element of the same size,
+// and the records element's children are the rows alone.
+function sameRowsXml(rows: number): string {
+  const one =
+    '<record id="123456"><person><name>Person number 123456</name></person>' +
+    '<account><balance>864192.56</balance></account></record>'
+  return `<?xml version="1.0"?>\n<response><records>${one.repeat(rows)}</records></response>\n`
+}
+
+// The records element's children: the root's first child's `children`.
+const xmlRows = () => Selector.root().property('children').index(0).property('children').eachIndex()
+
+// One run over the XML worked example, a table inferred from the rows,
+// with the grammar the differential suite verified (`GRAMMARS.xml`: jsonic,
+// then the xml plugin).
+function runXml(rows: number, prune: Prune) {
+  const metrics = new Metrics()
+  const table = new TableFromJson(
+    { schema: Schema.infer(), rows: xmlRows() },
+    Limits.default(),
+    'reject',
+    metrics,
+    new Table(),
+  )
+  const { value } = new ParserSource(GRAMMARS.xml(), sameRowsXml(rows))
+    .grammar('xml')
+    .mode(SourceMode.incremental(prune))
+    .metrics(metrics)
+    .runWithValue(table)
+  assert.ok(table.sink.ended)
+  const tree = Datum.fromTabnas(value)
+  const records = Datum.getPath(tree, ['children', 0, 'children'])
+  assert.ok(undefined !== records && 'array' === records.type)
+  return {
+    capturedHigh: metrics.captured_bytes_high,
+    retainedHigh: metrics.retained_bytes_high,
+    rows: table.sink.rows.length,
+    treeRows: records.items.length,
+    treeBytes: Datum.byteSize(tree),
+  }
+}
+
 describe('retention', () => {
   it('ten times the rows leave the retained high water flat', () => {
     const prune = () => Prune.under(recordsSelector())
@@ -87,6 +131,27 @@ describe('retention', () => {
     assert.equal(ten.retainedHigh, one.retainedHigh)
     assert.deepEqual([one.treeRows, ten.treeRows], [0, 0], "every streamed row was dropped from the engine's tree")
     assert.equal(ten.treeBytes, one.treeBytes, 'the tree left behind does not grow with the rows')
+  })
+
+  // xml streams too: its rules build each element in document order, so
+  // the rows of an XML document reach the table one at a time, and with the
+  // records element's children pruned the engine's tree holds none of them
+  // after the run.
+  it('ten times the rows of an xml document leave the retained high water flat', () => {
+    const one = runXml(200, Prune.under(xmlRows()))
+    console.log(`retention xml: 200 rows, captured high-water ${one.capturedHigh} bytes, tree ${one.treeBytes} bytes`)
+    const ten = runXml(2000, Prune.under(xmlRows()))
+    console.log(`retention xml: 2000 rows, captured high-water ${ten.capturedHigh} bytes, tree ${ten.treeBytes} bytes`)
+    assert.deepEqual([one.rows, ten.rows], [200, 2000])
+    assert.ok(one.capturedHigh > 0)
+    assert.equal(ten.capturedHigh, one.capturedHigh, "the peak is one row's, not the count's")
+    assert.equal(ten.retainedHigh, one.retainedHigh)
+    assert.deepEqual([one.treeRows, ten.treeRows], [0, 0], "every streamed row was dropped from the engine's tree")
+    assert.equal(ten.treeBytes, one.treeBytes, 'the tree left behind does not grow with the rows')
+    // The control: without pruning the tree keeps every row.
+    const kept = runXml(2000, Prune.never())
+    assert.equal(kept.treeRows, 2000)
+    assert.equal(kept.capturedHigh, one.capturedHigh)
   })
 
   it("without pruning the engine's tree holds every row", () => {

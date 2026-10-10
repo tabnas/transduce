@@ -19,7 +19,12 @@
 // and before `end`. What is never accepted is a completed stream that
 // disagrees with the walk. The adapter's two nets over how a grammar builds
 // its values (a container opened inside a map before the member's key, a
-// container streamed and never stored) count against a grammar.
+// container streamed and never stored) count against a grammar, and so
+// does streaming no document to the end: a grammar refused on every
+// document it reads is refused for how it builds, whichever shape the
+// refusal names (feed streams xml's element tree and then replaces the
+// root with the feed it makes of it, so each of its documents is refused
+// when the root closes).
 //
 // The TypeScript grammars build their values through their own rule
 // events, so the list this suite keeps honest is this runtime's
@@ -28,9 +33,9 @@
 // fails too.
 //
 // The fixtures are the Rust suite's own, read from rs/tests/fixtures, and
-// four generated documents in the spec's worked-example shape (2000
-// records as JSON, JSON Lines, CSV and block YAML), each offered only to
-// the grammars of its family.
+// five generated documents in the spec's worked-example shape (2000
+// records as JSON, JSON Lines, CSV, block YAML and XML), each offered only
+// to the grammars of its family.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -65,7 +70,7 @@ import {
   toText,
 } from '../dist/transduce'
 import { GRAMMARS } from './common'
-import { recordsCsv, recordsJson, recordsJsonl, recordsYaml } from './support'
+import { recordsCsv, recordsJson, recordsJsonl, recordsXml, recordsYaml } from './support'
 
 const RECORDS = 2000
 
@@ -78,6 +83,7 @@ const GENERATED: Record<string, string[]> = {
   json5: ['records.json'],
   yaml: ['records.yaml'],
   csv: ['records.csv'],
+  xml: ['records.xml'],
 }
 
 const FIXTURES_DIR = join(__dirname, '..', '..', 'rs', 'tests', 'fixtures')
@@ -103,6 +109,8 @@ function generated(name: string): string {
       return recordsCsv(RECORDS)
     case 'records.yaml':
       return recordsYaml(RECORDS)
+    case 'records.xml':
+      return recordsXml(RECORDS)
   }
   throw new Error('no generator for ' + name)
 }
@@ -292,6 +300,7 @@ function verify(name: string): void {
   }
   const total = fixtures.length
   let read = 0
+  let streamed = 0
   const mismatches: string[] = []
   const unfollowedList: string[] = []
   fixtures.forEach(([fixtureName, text], i) => {
@@ -304,10 +313,12 @@ function verify(name: string): void {
         break
       case 'match':
         read++
+        streamed++
         verdict = `MATCH (${outcome.events} events, ${outcome.lexemes} lexemes)`
         break
       case 'match_last_wins':
         read++
+        streamed++
         verdict = `MATCH after last_wins (${outcome.events} events; the document repeats a member name)`
         break
       case 'refused':
@@ -331,7 +342,11 @@ function verify(name: string): void {
     )
   })
   assert.ok(read > 0, `grammar ${name} read none of the fixtures`)
-  const verified = 0 === mismatches.length && 0 === unfollowedList.length
+  // Verified means: never a wrong stream, never a member the adapter could
+  // not follow, and at least one document streamed to the end. A grammar
+  // refused on every document it reads would be attempted and refused on
+  // every one of them, whatever shape the refusal names.
+  const verified = 0 === mismatches.length && 0 === unfollowedList.length && 0 < streamed
   const listed = isIncremental(name)
   const problems = [
     ...mismatches,
@@ -340,6 +355,9 @@ function verify(name: string): void {
         `${f}: refused for how the grammar builds its values (a container opened in a map ` +
         'before its key, or streamed and never stored)',
     ),
+    ...(0 === streamed
+      ? [`no document of the ${read} it reads streams to the end: each is refused`]
+      : []),
   ]
   assert.equal(
     listed,
@@ -347,10 +365,12 @@ function verify(name: string): void {
     `capability.incremental(${JSON.stringify(name)}) is ${listed}, but the grammar ` +
       (verified
         ? 'never mismatched; add it to INCREMENTAL in src/capability.ts'
-        : 0 === mismatches.length
-          ? 'builds its values in a way the adapter refuses; remove it from INCREMENTAL, or ' +
-            'fix the grammar'
-          : 'mismatched; remove it from INCREMENTAL, or fix the adapter') +
+        : 0 < mismatches.length
+          ? 'mismatched; remove it from INCREMENTAL, or fix the adapter'
+          : 0 < unfollowedList.length
+            ? 'builds its values in a way the adapter refuses; remove it from INCREMENTAL, or ' +
+              'fix the grammar'
+            : 'streams no document to the end; remove it from INCREMENTAL, or fix the grammar') +
       ` over ${read} fixtures it reads` +
       (0 < problems.length ? ':\n  ' + problems.join('\n  ') : ''),
   )
@@ -631,9 +651,10 @@ describe('incremental: documented shapes', () => {
   // A grammar that builds a member's value in a rule of its own and names
   // the member only when the pair closes, never announcing the key: `[1]`
   // parses to `{"k":[1]}`. Refused when the value opens. No listed grammar
-  // builds a member so since tabnas/yaml#107, so this grammar is what keeps
-  // the net tested; toml, ini, xml and feed, which are not listed, trip it
-  // on their own samples.
+  // builds a member so since tabnas/yaml#107 (and xml did for every element
+  // until its rules built each element in document order), so this grammar
+  // is what keeps the net tested; toml and ini, which are not listed, trip
+  // it on their own samples.
   it('a container opened in a map before its key is refused', () => {
     const lateKey = () => {
       const tn: any = new Tabnas({ grammar$: false } as any)

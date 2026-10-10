@@ -54,6 +54,24 @@ func recordsCSV(n int) string {
 	return b.String()
 }
 
+// recordsXML is the worked-example document as XML: the metadata's fields
+// as <field> elements and each record a <record> element, its id an
+// attribute and its name and balance child elements, one record per line.
+func recordsXML(n int) string {
+	var b strings.Builder
+	b.WriteString("<?xml version=\"1.0\"?>\n<response>\n  <metadata>\n    <fields>\n" +
+		"      <field title=\"Identifier\" path=\"id\"/>\n" +
+		"      <field title=\"Full name\" path=\"person name\"/>\n" +
+		"      <field title=\"Balance\" path=\"account balance\"/>\n" +
+		"    </fields>\n  </metadata>\n  <payload><deep><records>\n")
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "    <record id=\"%d\"><person><name>Person number %d</name></person>"+
+			"<account><balance>%d.%02d</balance></account></record>\n", i, i, i*7, i%100)
+	}
+	b.WriteString("  </records></deep></payload>\n</response>\n")
+	return b.String()
+}
+
 // recordsYAML is the worked-example document as block YAML.
 func recordsYAML(n int) string {
 	var b strings.Builder

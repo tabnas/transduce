@@ -18,7 +18,7 @@ tabnas parse ──rule events──▶ JsonEvents/1 ──▶ router/captures �
   subscribers, so every tabnas grammar (JSON, JSON Lines, jsonic, YAML,
   TOML, CSV, XML, …) feeds the same transducers. Grammars the
   differential suite has verified (`json`, `json5`, `jsonc`, `jsonic`,
-  `jsonl`, `markdown`, `yaml`, `zon`) stream incrementally, with the
+  `jsonl`, `markdown`, `xml`, `yaml`, `zon`) stream incrementally, with the
   streamed rows pruned from the engine's tree on request; the rest are
   walked whole. JSON Lines and
   CSV also have a line source that holds one record or one chunk at a

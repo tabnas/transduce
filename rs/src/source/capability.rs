@@ -22,20 +22,24 @@
 //! the wrapping list; a jsonic top-level implicit list whose first element
 //! is a container), a map the grammar rewrote after it was streamed (a
 //! YAML merge key), and a container the grammar opens inside a map before
-//! the member's key (as the imperative grammars below open a section's or
-//! an element's container, and as yaml opened the value of the first
-//! member of a mapping in a sequence entry until tabnas/yaml#107), all
-//! `STREAMABILITY_UNKNOWN`; and a repeated member whose containers the
-//! grammar merged (jsonic's `map.extend`, on for yaml, json5 and jsonic),
-//! `DUPLICATE_MEMBER`; and a container the adapter streamed as it was
-//! built that the grammar then never stored in the one around it (jsonic
-//! drops a pair inside a list when `list.pair` is off), refused where the
-//! next entry lands, the next container opens or the frame around it
-//! ends, `STREAMABILITY_UNKNOWN`. Those last two are nets, not licences: a
-//! listed grammar trips neither on a fixture, since a grammar that builds
-//! its values so does it for every document, and the suite counts them
-//! against the grammar rather than for it. A document the grammar
-//! itself refuses fails the incremental run with the grammar's
+//! the member's key (as toml and ini open a section's container, as xml
+//! opened an element's until its rules built each element in document
+//! order, and as yaml opened the value of the first member of a mapping in
+//! a sequence entry until tabnas/yaml#107), all `STREAMABILITY_UNKNOWN`;
+//! a repeated member whose containers the grammar merged (jsonic's
+//! `map.extend`, on for yaml, json5 and jsonic), `DUPLICATE_MEMBER`; and a
+//! container the adapter streamed as it was built that the grammar then
+//! never stored in the one around it (jsonic drops a pair inside a list
+//! when `list.pair` is off), refused where the next entry lands, the next
+//! container opens or the frame around it ends, `STREAMABILITY_UNKNOWN`.
+//! Those last two are nets, not licences: a listed grammar trips neither
+//! on a fixture, since a grammar that builds its values so does it for
+//! every document, and the suite counts them against the grammar rather
+//! than for it. It counts one more thing against a grammar: no document it
+//! reads streaming to the end. A grammar refused on every document it
+//! reads is refused for how it builds, whichever shape the refusal names
+//! (feed, below). A document the
+//! grammar itself refuses fails the incremental run with the grammar's
 //! `INPUT_INVALID`, at the same position, after a protocol-valid prefix
 //! (zon's repeated fields: the member the grammar never stored is not
 //! streamed), and the suite checks that for every fixture a grammar does
@@ -43,19 +47,27 @@
 //!
 //! markdown is listed although it builds its nodes imperatively: each
 //! node is inserted whole and walked at its insertion, so the events are
-//! the walk's, only later than a container-by-container stream. The other
-//! imperative grammars (toml, ini, csv, xml, feed) build their values in
-//! ways the rule events do not show: csv builds a record per row that it
-//! does not store as the stream saw it, and the others open a section's or
-//! an element's container before its key; the adapter refuses each on its
-//! own samples. A completed wrong stream is exactly what the list exists
-//! to prevent, and a grammar refused on its own documents would be
-//! attempted and refused on every one, so they are not listed.
+//! the walk's, only later than a container-by-container stream. xml is
+//! listed since its rules build each element in document order, in a cell
+//! of its own made when the start tag is read, members in their order,
+//! `children` named before its list opens and the list in a cell of its
+//! own (tabnas/xml, "The order the rules build an element in"); a
+//! complete container that lands whole, an element's attributes, is walked
+//! at its insertion as markdown's nodes are. The other imperative grammars
+//! (toml, ini, csv, feed) build their values in ways the rule events do not
+//! show: csv builds a record per row that it does not store as the stream
+//! saw it, toml and ini open a section's container before its key, and
+//! feed, which builds on xml's events, replaces the root element with the
+//! feed it makes of the tree when the root closes, so each of its documents
+//! streams the element tree and is then refused as a rewritten root. A
+//! completed wrong stream is exactly what the list exists to prevent, and a
+//! grammar refused on its own documents would be attempted and refused on
+//! every one, so they are not listed.
 
 /// The grammars whose incremental events never contradict the whole-value
 /// walk on any fixture, by the name their crate uses (`tabnas-<name>`).
 pub const INCREMENTAL: &[&str] = &[
-    "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "yaml", "zon",
+    "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "xml", "yaml", "zon",
 ];
 
 /// Whether `grammar` may be run with `SourceMode::Incremental`.
@@ -72,7 +84,9 @@ mod tests {
         assert!(incremental("json"));
         assert!(incremental("yaml"));
         assert!(incremental("jsonic"));
+        assert!(incremental("xml"));
         assert!(!incremental("csv"));
+        assert!(!incremental("feed"));
         assert!(!incremental("Json"), "names are the crates', lowercase");
         assert!(!incremental(""));
         for name in INCREMENTAL {
