@@ -13,9 +13,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
 
-import { Tabnas } from '@tabnas/parser'
 import { make as makeJson } from '@tabnas/json'
-import { Xml } from '@tabnas/xml'
 
 import {
   Datum,
@@ -32,6 +30,7 @@ import {
   columnFromMeta,
   isScalar,
 } from '../dist/transduce'
+import { GRAMMARS } from './common'
 import { METADATA, record } from './support'
 
 // The worked example with `rows` copies of one record.
@@ -89,7 +88,9 @@ function sameRowsXml(rows: number): string {
 // The records element's children: the root's first child's `children`.
 const xmlRows = () => Selector.root().property('children').index(0).property('children').eachIndex()
 
-// One run over the XML worked example, a table inferred from the rows.
+// One run over the XML worked example, a table inferred from the rows,
+// with the grammar the differential suite verified (`GRAMMARS.xml`: jsonic,
+// then the xml plugin).
 function runXml(rows: number, prune: Prune) {
   const metrics = new Metrics()
   const table = new TableFromJson(
@@ -99,7 +100,7 @@ function runXml(rows: number, prune: Prune) {
     metrics,
     new Table(),
   )
-  const { value } = new ParserSource(new Tabnas().use(Xml), sameRowsXml(rows))
+  const { value } = new ParserSource(GRAMMARS.xml(), sameRowsXml(rows))
     .grammar('xml')
     .mode(SourceMode.incremental(prune))
     .metrics(metrics)
