@@ -78,10 +78,12 @@ impl<'s> ParserSource<'s> {
         self
     }
 
-    /// The grammar the parser implements, by the name its crate uses
-    /// (`json` for `tabnas-json`). `SourceMode::Incremental` runs only for
-    /// a name [`capability::incremental`] lists; with no name, or an
-    /// unlisted one, [`ParserSource::run_owned`] fails with
+    /// The grammar the parser implements, by the name of the format it
+    /// reads: the `languageId` its package's manifest declares, which is
+    /// the crate's own name for most (`json` for `tabnas-json`) but `pgn`
+    /// for `tabnas-chess`. `SourceMode::Incremental` runs only for a name
+    /// [`capability::incremental`] lists; with no name, or an unlisted one
+    /// (`chess` among them), [`ParserSource::run_owned`] fails with
     /// `STREAMABILITY_UNKNOWN` before parsing. `Materialize` needs no name.
     pub fn grammar(mut self, name: &str) -> Self {
         self.grammar = Some(name.into());

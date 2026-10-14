@@ -24,6 +24,7 @@ import { Ini } from '@tabnas/ini'
 import { Xml } from '@tabnas/xml'
 import { Markdown } from '@tabnas/markdown'
 import { Feed } from '@tabnas/feed'
+import { Chess } from '@tabnas/chess'
 import { findSpecDir, parseExpect, equalValue, formatValue } from '@tabnas/support'
 
 import {
@@ -83,8 +84,9 @@ export const FIXTURES = [
   'table.tsv',
 ]
 
-// Every grammar the harness and the differential suite can build, by its
-// package's name, as a fresh parser per call (a source owns its parser).
+// Every grammar the harness and the differential suite can build, by the
+// name of the format it reads (its package's, but `pgn` for @tabnas/chess),
+// as a fresh parser per call (a source owns its parser).
 export const GRAMMARS: Record<string, () => any> = {
   json: () => makeJson(),
   jsonl: () => makeJsonl(),
@@ -99,6 +101,7 @@ export const GRAMMARS: Record<string, () => any> = {
   xml: () => new Tabnas().use(jsonic).use(Xml),
   markdown: () => new Tabnas().use(Markdown),
   feed: () => new Tabnas().use(jsonic).use(Feed),
+  pgn: () => new Tabnas().use(Chess),
 }
 
 // The grammar a row names, as a fresh parser.

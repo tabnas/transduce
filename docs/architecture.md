@@ -65,8 +65,11 @@ equal the walk. `xml` joined them once its rules built each element in
 document order (tabnas/xml, "The order the rules build an element in"):
 each element in a cell of its own made when its start tag is read, its
 members in their order, `children` named before its list opens and the
-list in a cell of its own. The verified list is `json`, `json5`, `jsonc`,
-`jsonic`, `jsonl`, `markdown`, `xml`, `yaml`, `zon`; `toml`, `ini`, `csv`
+list in a cell of its own. `pgn` (tabnas-chess) joined them once the
+plugin built each game on a stack in the parse's context and stored it in
+the database only once complete, so a database streams a game at a time.
+The verified list is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`,
+`markdown`, `pgn`, `xml`, `yaml`, `zon`; `toml`, `ini`, `csv`
 and `feed` complete streams the walk contradicts or are refused on every
 document, and stay off it.
 [`reference.md`](reference.md) and `rs/src/source/capability.rs` record the

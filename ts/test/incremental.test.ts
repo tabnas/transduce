@@ -33,9 +33,9 @@
 // fails too.
 //
 // The fixtures are the Rust suite's own, read from rs/tests/fixtures, and
-// five generated documents in the spec's worked-example shape (2000
-// records as JSON, JSON Lines, CSV, block YAML and XML), each offered only
-// to the grammars of its family.
+// six generated documents in the spec's worked-example shape (2000
+// records as JSON, JSON Lines, CSV, block YAML and XML, and a PGN database
+// of 2000 games), each offered only to the grammars of its family.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -70,7 +70,7 @@ import {
   toText,
 } from '../dist/transduce'
 import { GRAMMARS } from './common'
-import { recordsCsv, recordsJson, recordsJsonl, recordsXml, recordsYaml } from './support'
+import { recordsCsv, recordsJson, recordsJsonl, recordsPgn, recordsXml, recordsYaml } from './support'
 
 const RECORDS = 2000
 
@@ -84,6 +84,7 @@ const GENERATED: Record<string, string[]> = {
   yaml: ['records.yaml'],
   csv: ['records.csv'],
   xml: ['records.xml'],
+  pgn: ['records.pgn'],
 }
 
 const FIXTURES_DIR = join(__dirname, '..', '..', 'rs', 'tests', 'fixtures')
@@ -111,6 +112,8 @@ function generated(name: string): string {
       return recordsYaml(RECORDS)
     case 'records.xml':
       return recordsXml(RECORDS)
+    case 'records.pgn':
+      return recordsPgn(RECORDS)
   }
   throw new Error('no generator for ' + name)
 }
@@ -382,7 +385,8 @@ describe('incremental: the differential suite', () => {
   }
 
   // The grammar packages package.json takes as devDependencies, read at test
-  // time so a grammar added there without a GRAMMARS entry fails here. A
+  // time so a grammar added there without a GRAMMARS entry fails here, each
+  // by the name of the format it reads (`pgn` for @tabnas/chess). A
   // grammar is a package that depends on the engine; the engine itself and
   // @tabnas/support, the fixture runner, are not grammars, and neither is
   // @tabnas/alchemy here: this package takes it for its shared types, and
@@ -400,6 +404,7 @@ describe('incremental: the differential suite', () => {
         const needs = { ...dep.peerDependencies, ...dep.dependencies }
         return '@tabnas/parser' in needs
       })
+      .map((name) => ('chess' === name ? 'pgn' : name))
       .sort()
     assert.deepEqual(grammars, Object.keys(GRAMMARS).sort())
     for (const name of INCREMENTAL) {

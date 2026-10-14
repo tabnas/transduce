@@ -331,9 +331,20 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "indexmap",
+ "serde_json",
+ "tabnas-parser",
+]
+
+[[package]]
+name = "tabnas-chess"
+version = "0.1.16"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde",
  "serde_json",
  "tabnas-parser",
 ]
@@ -351,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-feed"
-version = "0.6.16"
+version = "0.6.18"
 dependencies = [
  "indexmap",
  "regex",
@@ -369,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ini"
-version = "0.5.19"
+version = "0.5.20"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -389,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-json5"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "indexmap",
  "regex",
@@ -420,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-jsonl"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "serde_json",
  "tabnas-json",
@@ -456,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-toml"
-version = "0.5.17"
+version = "0.5.18"
 dependencies = [
  "indexmap",
  "regex",
@@ -472,6 +483,7 @@ dependencies = [
  "criterion",
  "serde_json",
  "tabnas-alchemy",
+ "tabnas-chess",
  "tabnas-csv",
  "tabnas-feed",
  "tabnas-ini",
@@ -491,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-xml"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "indexmap",
  "regex",
@@ -501,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.23"
+version = "0.5.24"
 dependencies = [
  "indexmap",
  "regex",
@@ -512,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-zon"
-version = "0.5.16"
+version = "0.5.17"
 dependencies = [
  "indexmap",
  "serde",

@@ -44,7 +44,7 @@ source metrics (`events`, `keys`, `scalars`).
 | Source | Input | Modes | Retains |
 |---|---|---|---|
 | `ValueSource(&Value)` | a parsed engine value | walk | the value (the caller's) |
-| `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists, named with `.grammar("json")`; no name or an unlisted one is `STREAMABILITY_UNKNOWN` before the parse (`.unverified()` lifts the gate, for the differential suite) | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
+| `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists, named by the format's `languageId` with `.grammar("json")` (`pgn` for tabnas-chess, not `chess`); no name or an unlisted one is `STREAMABILITY_UNKNOWN` before the parse (`.unverified()` lifts the gate, for the differential suite) | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
 | `LinesSource::new(BufRead, LineFormat)` | JSON Lines or CSV | one record per line (`Jsonl`) or chunks of whole records (`Csv { header, options }`), each parsed with one reused grammar; a record ends where the grammar ends one, at any of its line characters outside a token | one record, or one chunk (`DEFAULT_CHUNK_BYTES`, 256 KiB, never a fraction of a record) |
 
 `Source::run(self, &mut dyn Sink)` drives a borrowed sink and is always
@@ -97,7 +97,15 @@ other way, and every number a walk emits, has `lexeme: None`.
 ### The verified grammars
 
 `capability::INCREMENTAL` lists `json`, `json5`, `jsonc`, `jsonic`,
-`jsonl`, `markdown`, `xml`, `yaml` and `zon`. `rs/tests/incremental_test.rs`
+`jsonl`, `markdown`, `pgn`, `xml`, `yaml` and `zon`, each by the name of
+the format it reads: its crate's, but `pgn` for tabnas-chess, which
+builds each game on a stack in the parse's context and stores it in the
+database only once complete, so a database streams a game at a time, each
+game walked whole as it is stored. That holds from tabnas-chess 0.1.17
+(earlier releases attached a game's parts after the adapter had sent
+them), and transduce does not depend on chess, so a host that streams PGN
+takes 0.1.17 or later. Go's list omits `pgn`
+([`DIVERGENCE.md`](../DIVERGENCE.md) 5). `rs/tests/incremental_test.rs`
 runs every fixture each grammar reads through both modes and asserts the
 list in both directions; a grammar is listed only when no fixture
 mismatches or is refused for how it builds, and at least one streams to

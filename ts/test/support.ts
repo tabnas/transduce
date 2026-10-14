@@ -9,8 +9,9 @@
 // `response.payload.deep.records` behind `response.metadata.fields`, the
 // JSON Lines variant is one record per line, the CSV variant is the
 // flattened columns `id,name,balance`, the YAML variant is the block form
-// of the JSON document, and the XML variant is the same tree as elements,
-// a record per line.
+// of the JSON document, the XML variant is the same tree as elements, a
+// record per line, and the PGN variant is a database of games, a game per
+// record, its number in the `Round` tag and the record's name in a comment.
 
 // The metadata the worked example carries: three columns by path.
 export const METADATA =
@@ -64,6 +65,17 @@ export function recordsYaml(records: number): string {
     'response:\n  metadata:\n    fields:\n      - title: Identifier\n        path: [id]\n      - title: Full name\n        path: [person, name]\n      - title: Balance\n        path: [account, balance]\n  payload:\n    deep:\n      records:\n'
   for (let i = 0; i < records; i++) {
     s += `        - id: ${i}\n          person:\n            name: Person number ${i}\n          account:\n            balance: ${i * 7}.${cents(i)}\n`
+  }
+  return s
+}
+
+// The PGN variant: a database of `games` games of one shape.
+export function recordsPgn(games: number): string {
+  let s = ''
+  for (let i = 0; i < games; i++) {
+    s +=
+      `[Event "Records"]\n[Round "${i}"]\n[Result "1-0"]\n\n` +
+      `1. e4 e5 2. Nf3 {Person number ${i}} Nc6 $1 (2... d6 3. d4) 3. Bb5 1-0\n\n`
   }
   return s
 }

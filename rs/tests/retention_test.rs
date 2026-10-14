@@ -263,6 +263,90 @@ fn ten_times_the_rows_of_an_xml_document_leave_the_retained_high_water_flat() {
     assert_eq!(kept.captured_high, one.captured_high);
 }
 
+/// A PGN database of `games` copies of one game, so every game is the same
+/// size and the database's elements are the games alone.
+fn same_games_pgn(games: usize) -> String {
+    "[Event \"Records\"]\n[Result \"1-0\"]\n\n\
+     1. e4 e5 2. Nf3 {Person number 123456} Nc6 $1 (2... d6 3. d4) 3. Bb5 1-0\n\n"
+        .repeat(games)
+}
+
+/// One run over a PGN database, a table inferred from its games.
+fn run_pgn(games: usize, prune: Prune) -> Left {
+    let text = same_games_pgn(games);
+    let metrics = Metrics::new();
+    let table = TableFromJson::new(
+        TableBinding {
+            schema: Schema::Infer,
+            rows: Selector::root().each_index(),
+        },
+        &Limits::default(),
+        Duplicates::Reject,
+        metrics.clone(),
+        Table::default(),
+    )
+    .expect("the binding is valid");
+    let pgn = tabnas_chess::make(&tabnas_chess::ChessOptions::default())
+        .expect("the PGN grammar installs");
+    let (outcome, table, value) = ParserSource::new(pgn, &text)
+        .grammar("pgn")
+        .mode(SourceMode::Incremental { prune })
+        .metrics(metrics.clone())
+        .run_owned_with_value(table);
+    outcome.expect("the run succeeds");
+    let table = table.into_inner();
+    assert!(table.ended);
+    let tree = Datum::from_tabnas(&value.expect("the parse returned"));
+    let tree_rows = tree.as_array().expect("the database is in the tree").len();
+    Left {
+        captured_high: Metrics::get(&metrics.captured_bytes_high),
+        retained_high: Metrics::get(&metrics.retained_bytes_high),
+        rows: table.rows.len(),
+        tree_rows,
+        tree_bytes: tree.byte_size(),
+    }
+}
+
+/// pgn streams a game at a time: tabnas-chess stores a game in the database
+/// only once the game is complete, so each game reaches the table whole,
+/// and with the database's games pruned the engine's tree holds none of
+/// them after the run. Ten times the games leave the high-water marks and
+/// the tree where they were.
+#[test]
+fn ten_times_the_games_of_a_pgn_database_leave_the_retained_high_water_flat() {
+    let games = || Prune::Under(Selector::root().each_index());
+    let one = run_pgn(200, games());
+    println!(
+        "retention pgn: 200 games, captured high-water {} bytes, tree {} bytes",
+        one.captured_high, one.tree_bytes
+    );
+    let ten = run_pgn(2000, games());
+    println!(
+        "retention pgn: 2000 games, captured high-water {} bytes, tree {} bytes",
+        ten.captured_high, ten.tree_bytes
+    );
+    assert_eq!((one.rows, ten.rows), (200, 2000));
+    assert!(one.captured_high > 0);
+    assert_eq!(
+        ten.captured_high, one.captured_high,
+        "the peak is one game's, not the count's"
+    );
+    assert_eq!(ten.retained_high, one.retained_high);
+    assert_eq!(
+        (one.tree_rows, ten.tree_rows),
+        (0, 0),
+        "every streamed game was dropped from the engine's tree"
+    );
+    assert_eq!(
+        ten.tree_bytes, one.tree_bytes,
+        "the tree left behind does not grow with the games"
+    );
+    // The control: without pruning the tree keeps every game.
+    let kept = run_pgn(2000, Prune::Never);
+    assert_eq!(kept.tree_rows, 2000);
+    assert_eq!(kept.captured_high, one.captured_high);
+}
+
 /// The README's chain shares one `Metrics` between the source and the
 /// table transducer; the source counts are the source's, once.
 #[test]

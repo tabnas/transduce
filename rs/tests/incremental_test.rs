@@ -45,13 +45,14 @@
 //! and document streams of every shape, scalars, sequences, mappings,
 //! mixed, and empty documents between separators; a YAML merge key;
 //! repeated member names, and the repeated fields zon refuses)
-//! and five generated documents in the spec's worked-example shape: 2000
+//! and six generated documents in the spec's worked-example shape: 2000
 //! records as JSON, as JSON Lines, as CSV, as block YAML (the shape whose
-//! large form mismatched under the prototype) and as XML. The generated
-//! ones go only to the grammars of their own family; the small ones are
-//! offered to every grammar, and a grammar reads whatever parses. xml is
-//! held to its own corpus too: every document of the sibling checkout's
-//! `test/spec`, read where this crate builds tabnas-xml from.
+//! large form mismatched under the prototype), as XML and as a PGN database
+//! of games. The generated ones go only to the grammars of their own
+//! family; the small ones are offered to every grammar, and a grammar reads
+//! whatever parses. xml and pgn are held to their own corpora too: every
+//! document of the sibling checkout's `test/spec`, read where this crate
+//! builds the grammar from (tabnas-xml, and tabnas-chess, which reads PGN).
 
 mod support;
 
@@ -66,6 +67,11 @@ use tabnas_transduce::{
 };
 
 const RECORDS: usize = 2000;
+
+/// tabnas-chess reading a PGN database, as a host reads the `pgn` format.
+fn pgn() -> Tabnas {
+    tabnas_chess::make(&tabnas_chess::ChessOptions::default()).expect("the PGN grammar installs")
+}
 
 struct Grammar {
     name: &'static str,
@@ -140,6 +146,11 @@ const GRAMMARS: &[Grammar] = &[
         make: tabnas_feed::make,
         generated: &[],
     },
+    Grammar {
+        name: "pgn",
+        make: pgn,
+        generated: &["records.pgn"],
+    },
 ];
 
 fn fixtures_dir() -> PathBuf {
@@ -177,6 +188,7 @@ fn generated(name: &str) -> String {
         "records.csv" => support::records_csv(RECORDS),
         "records.yaml" => support::records_yaml(RECORDS),
         "records.xml" => support::records_xml(RECORDS),
+        "records.pgn" => support::records_pgn(RECORDS),
         other => panic!("no generator for {other}"),
     }
 }
@@ -509,15 +521,17 @@ grammar_tests! {
     zon_streams_incrementally_where_the_list_says_so => "zon",
     markdown_streams_incrementally_where_the_list_says_so => "markdown",
     feed_streams_incrementally_where_the_list_says_so => "feed",
+    pgn_streams_incrementally_where_the_list_says_so => "pgn",
 }
 
 /// The grammar crates `Cargo.toml` takes by path (`tabnas-<name>`), read
 /// from the manifest at test time so a grammar added there without a
-/// `GRAMMARS` row fails here. A grammar is a crate that depends on the
-/// engine, which its own manifest says: `tabnas-support`, the fixture
-/// runner, is a path crate too and is not one. Nor is `tabnas-alchemy`,
-/// taken for its shared types alone, without the language and its grammar
-/// (`default-features = false`).
+/// `GRAMMARS` row fails here, each by the name of the format it reads: its
+/// crate's, but `pgn` for tabnas-chess, the name hosts ask the list by. A
+/// grammar is a crate that depends on the engine, which its own manifest
+/// says: `tabnas-support`, the fixture runner, is a path crate too and is
+/// not one. Nor is `tabnas-alchemy`, taken for its shared types alone,
+/// without the language and its grammar (`default-features = false`).
 fn manifest_grammars() -> Vec<String> {
     let mut names: Vec<String> = include_str!("../Cargo.toml")
         .lines()
@@ -534,7 +548,11 @@ fn manifest_grammars() -> Vec<String> {
                 .join("Cargo.toml");
             let text = fs::read_to_string(&manifest)
                 .unwrap_or_else(|e| panic!("{}: {e}", manifest.display()));
-            text.contains("tabnas-parser").then(|| name.to_string())
+            let format = match name {
+                "chess" => "pgn",
+                other => other,
+            };
+            text.contains("tabnas-parser").then(|| format.to_string())
         })
         .collect();
     names.sort();
@@ -1271,15 +1289,29 @@ fn xml_documents_stream_as_the_walk() {
 /// and none is refused for how the grammar builds.
 #[test]
 fn every_document_of_xmls_own_corpus_streams_as_the_walk() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../xml/test/spec");
+    own_corpus("xml", "xml");
+}
+
+/// pgn is held to tabnas-chess's corpus the same way: every document of
+/// its `test/spec/*.tsv` rows, read as a database (a row's own options,
+/// which parse some as one game or one move, are not applied).
+#[test]
+fn every_document_of_pgns_own_corpus_streams_as_the_walk() {
+    own_corpus("pgn", "chess");
+}
+
+/// Every document of the `test/spec/*.tsv` rows of the sibling checkout
+/// `repo`, through the grammar the suite runs as `name`.
+fn own_corpus(name: &str, repo: &str) {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../{repo}/test/spec"));
     let specs = tabnas_support::load_spec_dir(&dir, &tabnas_support::SpecOptions::default())
         .unwrap_or_else(|e| {
-            panic!("{e}: clone https://github.com/tabnas/xml beside this repository")
+            panic!("{e}: clone https://github.com/tabnas/{repo} beside this repository")
         });
     let grammar = GRAMMARS
         .iter()
-        .find(|g| g.name == "xml")
-        .expect("xml is in the suite");
+        .find(|g| g.name == name)
+        .expect("the grammar is in the suite");
     let rows: Vec<(String, String)> = specs
         .iter()
         .flat_map(|spec| {
@@ -1294,7 +1326,7 @@ fn every_document_of_xmls_own_corpus_streams_as_the_walk() {
     let total = rows.len();
     let (mut streamed, mut not_read) = (0, 0);
     let mut problems: Vec<String> = Vec::new();
-    for (i, (name, text)) in rows.iter().enumerate() {
+    for (i, (row, text)) in rows.iter().enumerate() {
         let verdict = match compare(grammar, text) {
             Outcome::Match { events, .. } => {
                 streamed += 1;
@@ -1317,28 +1349,28 @@ fn every_document_of_xmls_own_corpus_streams_as_the_walk() {
             Outcome::Mismatch(why) => format!("MISMATCH: {why}"),
         };
         if !verdict.starts_with("MATCH") && !verdict.starts_with("not read") {
-            problems.push(format!("{name}: {verdict}"));
+            problems.push(format!("{row}: {verdict}"));
         }
         if (i + 1) % 50 == 0 || i + 1 == total {
             println!(
-                "xml corpus: {} of {total} ({}%) {name}: {verdict}",
+                "{name} corpus: {} of {total} ({}%) {row}: {verdict}",
                 i + 1,
                 (i + 1) * 100 / total
             );
         }
     }
     println!(
-        "xml corpus: {streamed} streamed as the walk, {not_read} refused as the walk, of {total}"
+        "{name} corpus: {streamed} streamed as the walk, {not_read} refused as the walk, of {total}"
     );
     assert!(
         problems.is_empty(),
-        "{} of {total} documents of xml's corpus did not stream as the walk:\n  {}",
+        "{} of {total} documents of {name}'s corpus did not stream as the walk:\n  {}",
         problems.len(),
         problems.join("\n  ")
     );
     assert!(
         streamed > total / 2,
-        "only {streamed} of {total} documents streamed: is {} xml's corpus?",
+        "only {streamed} of {total} documents streamed: is {} {name}'s corpus?",
         dir.display()
     );
 }

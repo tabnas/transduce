@@ -32,7 +32,14 @@
 // when the root closes, so the adapter refuses each on its own samples.
 
 // The grammars whose incremental events never contradict the whole-value
-// walk on any fixture, by their package's name (`@tabnas/<name>`).
+// walk on any fixture, by the name of the format each reads: its package's
+// (`@tabnas/<name>`), but `pgn` for @tabnas/chess, the name hosts ask by.
+// @tabnas/chess builds each game on a stack in the parse's context, so
+// the database is the only container in the parse tree and a game is
+// stored in it only once complete: each game is walked at its insertion.
+// That is @tabnas/chess 0.1.17 and later; earlier releases attached a
+// game's parts after the adapter had sent them, and this package does not
+// depend on @tabnas/chess, so a host that streams PGN takes 0.1.17 or later.
 export const INCREMENTAL: readonly string[] = Object.freeze([
   'json',
   'json5',
@@ -40,6 +47,7 @@ export const INCREMENTAL: readonly string[] = Object.freeze([
   'jsonic',
   'jsonl',
   'markdown',
+  'pgn',
   'xml',
   'yaml',
   'zon',
