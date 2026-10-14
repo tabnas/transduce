@@ -11,8 +11,8 @@ grammar module, measured against Rust. Every entry here is re-measured
 by running its input through each runtime, and an entry that closes is
 deleted together with the test that pins it.
 
-Entry 3 is measured: a grammar's difference between runtimes, which
-each runtime's line source follows. The rest is
+Entries 3 and 5 are measured: a grammar's difference between runtimes,
+which each runtime's sources follow. The rest is
 what the shared fixtures deliberately leave out, because it belongs to
 the Rust runtime or is not yet decided, so that a port does not read the
 absence of a row as coverage, or as licence.
@@ -102,3 +102,28 @@ gap:
   (`a_container_opened_in_a_map_before_its_key_is_refused` in
   `rs/tests/incremental_test.rs`), and a port does the same in its own
   suite.
+
+## 5. Go does not stream PGN
+
+A PGN database streams a game at a time in Rust and TypeScript, whose
+lists (`rs/src/source/capability.rs`, `ts/src/capability.ts`) name `pgn`,
+and is read whole and then walked in Go, whose list
+(`go/capability_nodecell.go`) does not: an incremental run of `pgn` in Go
+is refused before the parse with `STREAMABILITY_UNKNOWN`, as for every
+unlisted grammar, and a host reads the database through the walk.
+
+Why: the Go adapter follows the containers a rule holds as generic maps
+and lists (`map[string]any`, `[]any`), which is how every other Go
+grammar builds its values. tabnas-chess's Go port builds typed values
+(`*Database`, `*Game`, `*Line`, `*Move`), which are its public API, so the
+adapter finds no container to follow. Go streams PGN once the adapter
+follows typed values, or the module builds generic ones, which changes
+its API. The Rust and TypeScript sides take tabnas-chess as a
+dev-dependency (on the maintainer's instruction of 2026-10-14), and their
+differential suites verify `pgn`; Go takes none and runs no PGN, so its
+list cannot name it.
+
+Pinned in Rust by `pgn_streams_incrementally_where_the_list_says_so` and
+`every_document_of_pgns_own_corpus_streams_as_the_walk`
+(`rs/tests/incremental_test.rs`), and in TypeScript by the differential
+suite's `pgn` case (`ts/test/incremental.test.ts`).

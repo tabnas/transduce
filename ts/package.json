@@ -50,6 +50,7 @@
   },
   "devDependencies": {
     "@tabnas/alchemy": "*",
+    "@tabnas/chess": "*",
     "@tabnas/csv": "*",
     "@tabnas/feed": "*",
     "@tabnas/ini": "*",

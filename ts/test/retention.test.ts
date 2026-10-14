@@ -118,6 +118,46 @@ function runXml(rows: number, prune: Prune) {
   }
 }
 
+// A PGN database of `games` copies of one game, so every game is the same
+// size and the database's elements are the games alone.
+function sameGamesPgn(games: number): string {
+  return (
+    '[Event "Records"]\n[Result "1-0"]\n\n' +
+    '1. e4 e5 2. Nf3 {Person number 123456} Nc6 $1 (2... d6 3. d4) 3. Bb5 1-0\n\n'
+  ).repeat(games)
+}
+
+// The database's games.
+const pgnGames = () => Selector.root().eachIndex()
+
+// One run over a PGN database, a table inferred from its games, with the
+// grammar the differential suite verified (`GRAMMARS.pgn`: @tabnas/chess).
+function runPgn(games: number, prune: Prune) {
+  const metrics = new Metrics()
+  const table = new TableFromJson(
+    { schema: Schema.infer(), rows: pgnGames() },
+    Limits.default(),
+    'reject',
+    metrics,
+    new Table(),
+  )
+  const { value } = new ParserSource(GRAMMARS.pgn(), sameGamesPgn(games))
+    .grammar('pgn')
+    .mode(SourceMode.incremental(prune))
+    .metrics(metrics)
+    .runWithValue(table)
+  assert.ok(table.sink.ended)
+  const tree = Datum.fromTabnas(value)
+  assert.ok('array' === tree.type)
+  return {
+    capturedHigh: metrics.captured_bytes_high,
+    retainedHigh: metrics.retained_bytes_high,
+    rows: table.sink.rows.length,
+    treeRows: tree.items.length,
+    treeBytes: Datum.byteSize(tree),
+  }
+}
+
 describe('retention', () => {
   it('ten times the rows leave the retained high water flat', () => {
     const prune = () => Prune.under(recordsSelector())
@@ -150,6 +190,27 @@ describe('retention', () => {
     assert.equal(ten.treeBytes, one.treeBytes, 'the tree left behind does not grow with the rows')
     // The control: without pruning the tree keeps every row.
     const kept = runXml(2000, Prune.never())
+    assert.equal(kept.treeRows, 2000)
+    assert.equal(kept.capturedHigh, one.capturedHigh)
+  })
+
+  // pgn streams a game at a time: @tabnas/chess stores a game in the
+  // database only once the game is complete, so each game reaches the table
+  // whole, and with the database's games pruned the engine's tree holds none
+  // of them after the run.
+  it('ten times the games of a pgn database leave the retained high water flat', () => {
+    const one = runPgn(200, Prune.under(pgnGames()))
+    console.log(`retention pgn: 200 games, captured high-water ${one.capturedHigh} bytes, tree ${one.treeBytes} bytes`)
+    const ten = runPgn(2000, Prune.under(pgnGames()))
+    console.log(`retention pgn: 2000 games, captured high-water ${ten.capturedHigh} bytes, tree ${ten.treeBytes} bytes`)
+    assert.deepEqual([one.rows, ten.rows], [200, 2000])
+    assert.ok(one.capturedHigh > 0)
+    assert.equal(ten.capturedHigh, one.capturedHigh, "the peak is one game's, not the count's")
+    assert.equal(ten.retainedHigh, one.retainedHigh)
+    assert.deepEqual([one.treeRows, ten.treeRows], [0, 0], "every streamed game was dropped from the engine's tree")
+    assert.equal(ten.treeBytes, one.treeBytes, 'the tree left behind does not grow with the games')
+    // The control: without pruning the tree keeps every game.
+    const kept = runPgn(2000, Prune.never())
     assert.equal(kept.treeRows, 2000)
     assert.equal(kept.capturedHigh, one.capturedHigh)
   })

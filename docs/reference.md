@@ -97,7 +97,12 @@ other way, and every number a walk emits, has `lexeme: None`.
 ### The verified grammars
 
 `capability::INCREMENTAL` lists `json`, `json5`, `jsonc`, `jsonic`,
-`jsonl`, `markdown`, `xml`, `yaml` and `zon`. `rs/tests/incremental_test.rs`
+`jsonl`, `markdown`, `pgn`, `xml`, `yaml` and `zon`, each by the name of
+the format it reads: its crate's, but `pgn` for tabnas-chess, which
+builds each game on a stack in the parse's context and stores it in the
+database only once complete, so a database streams a game at a time, each
+game walked whole as it is stored. Go's list omits `pgn`
+([`DIVERGENCE.md`](../DIVERGENCE.md) 5). `rs/tests/incremental_test.rs`
 runs every fixture each grammar reads through both modes and asserts the
 list in both directions; a grammar is listed only when no fixture
 mismatches or is refused for how it builds, and at least one streams to

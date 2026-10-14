@@ -53,7 +53,12 @@
 //! `children` named before its list opens and the list in a cell of its
 //! own (tabnas/xml, "The order the rules build an element in"); a
 //! complete container that lands whole, an element's attributes, is walked
-//! at its insertion as markdown's nodes are. The other imperative grammars
+//! at its insertion as markdown's nodes are. pgn (tabnas-chess) is listed
+//! since the plugin builds each game, and each variation inside it, on a
+//! stack in the parse's context, so the database is the only container in
+//! the parse tree and a game is stored in it only once complete: each game
+//! is walked at its insertion, a game at a time, as markdown's nodes are.
+//! The other imperative grammars
 //! (toml, ini, csv, feed) build their values in ways the rule events do not
 //! show: csv builds a record per row that it does not store as the stream
 //! saw it, toml and ini open a section's container before its key, and
@@ -65,9 +70,10 @@
 //! every one, so they are not listed.
 
 /// The grammars whose incremental events never contradict the whole-value
-/// walk on any fixture, by the name their crate uses (`tabnas-<name>`).
+/// walk on any fixture, by the name of the format each reads: its crate's
+/// (`tabnas-<name>`), but `pgn` for tabnas-chess, the name hosts ask by.
 pub const INCREMENTAL: &[&str] = &[
-    "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "xml", "yaml", "zon",
+    "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "pgn", "xml", "yaml", "zon",
 ];
 
 /// Whether `grammar` may be run with `SourceMode::Incremental`.
@@ -85,6 +91,8 @@ mod tests {
         assert!(incremental("yaml"));
         assert!(incremental("jsonic"));
         assert!(incremental("xml"));
+        assert!(incremental("pgn"));
+        assert!(!incremental("chess"), "the format's name, not the crate's");
         assert!(!incremental("csv"));
         assert!(!incremental("feed"));
         assert!(!incremental("Json"), "names are the crates', lowercase");

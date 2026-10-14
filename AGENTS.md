@@ -97,8 +97,10 @@ streaming no document to the end: a grammar refused on every document it
 reads is not verified, whichever shape the refusal names. A listed
 grammar that mismatches, trips the net or streams nothing fails the
 test; an unlisted grammar that does none of those fails too. The list
-today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `xml`,
-`yaml`, `zon` (`docs/reference.md` has the detail); the imperative
+today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `pgn`,
+`xml`, `yaml`, `zon` (`docs/reference.md` has the detail; `pgn` is
+tabnas-chess, a game at a time, in Rust and TypeScript but not Go,
+`DIVERGENCE.md` 5); the imperative
 grammars `toml`, `ini` and `csv` build values the rule events do not
 show, and `feed` replaces xml's root element with the feed it makes of
 the tree when the root closes. `ParserSource` checks the list by the grammar's name

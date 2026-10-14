@@ -8,8 +8,10 @@
 //! JSON Lines variant is one record per line, the CSV variant is the
 //! flattened columns `id,name,balance`, the YAML variant is the block form
 //! of the JSON document (a sequence of block mappings, the shape the
-//! prototype's large YAML input had), and the XML variant is the same tree
-//! as elements, a record per line.
+//! prototype's large YAML input had), the XML variant is the same tree as
+//! elements, a record per line, and the PGN variant is a database of
+//! games, a game per record, its number in the `Round` tag and the
+//! record's name in a comment.
 
 #![allow(dead_code)]
 
@@ -91,5 +93,17 @@ pub fn records_xml(records: usize) -> String {
         );
     }
     s.push_str("  </records></deep></payload>\n</response>\n");
+    s
+}
+
+pub fn records_pgn(games: usize) -> String {
+    let mut s = String::new();
+    for i in 0..games {
+        let _ = write!(
+            s,
+            "[Event \"Records\"]\n[Round \"{i}\"]\n[Result \"1-0\"]\n\n\
+             1. e4 e5 2. Nf3 {{Person number {i}}} Nc6 $1 (2... d6 3. d4) 3. Bb5 1-0\n\n"
+        );
+    }
     s
 }
