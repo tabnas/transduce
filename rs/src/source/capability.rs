@@ -58,6 +58,10 @@
 //! stack in the parse's context, so the database is the only container in
 //! the parse tree and a game is stored in it only once complete: each game
 //! is walked at its insertion, a game at a time, as markdown's nodes are.
+//! That is tabnas-chess 0.1.17 and later. Earlier releases attached a
+//! game's annotations, variations and result after the adapter had sent
+//! them, and this crate does not depend on tabnas-chess, so a host that
+//! streams PGN takes 0.1.17 or later itself.
 //! The other imperative grammars
 //! (toml, ini, csv, feed) build their values in ways the rule events do not
 //! show: csv builds a record per row that it does not store as the stream

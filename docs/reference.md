@@ -101,7 +101,10 @@ other way, and every number a walk emits, has `lexeme: None`.
 the format it reads: its crate's, but `pgn` for tabnas-chess, which
 builds each game on a stack in the parse's context and stores it in the
 database only once complete, so a database streams a game at a time, each
-game walked whole as it is stored. Go's list omits `pgn`
+game walked whole as it is stored. That holds from tabnas-chess 0.1.17
+(earlier releases attached a game's parts after the adapter had sent
+them), and transduce does not depend on chess, so a host that streams PGN
+takes 0.1.17 or later. Go's list omits `pgn`
 ([`DIVERGENCE.md`](../DIVERGENCE.md) 5). `rs/tests/incremental_test.rs`
 runs every fixture each grammar reads through both modes and asserts the
 list in both directions; a grammar is listed only when no fixture

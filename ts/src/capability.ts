@@ -37,6 +37,9 @@
 // @tabnas/chess builds each game on a stack in the parse's context, so
 // the database is the only container in the parse tree and a game is
 // stored in it only once complete: each game is walked at its insertion.
+// That is @tabnas/chess 0.1.17 and later; earlier releases attached a
+// game's parts after the adapter had sent them, and this package does not
+// depend on @tabnas/chess, so a host that streams PGN takes 0.1.17 or later.
 export const INCREMENTAL: readonly string[] = Object.freeze([
   'json',
   'json5',
