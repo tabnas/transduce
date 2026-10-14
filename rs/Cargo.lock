@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-chess"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "indexmap",
  "regex",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-transduce"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "criterion",
  "serde_json",
