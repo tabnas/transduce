@@ -44,7 +44,7 @@ source metrics (`events`, `keys`, `scalars`).
 | Source | Input | Modes | Retains |
 |---|---|---|---|
 | `ValueSource(&Value)` | a parsed engine value | walk | the value (the caller's) |
-| `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists, named with `.grammar("json")`; no name or an unlisted one is `STREAMABILITY_UNKNOWN` before the parse (`.unverified()` lifts the gate, for the differential suite) | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
+| `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists, named by the format's `languageId` with `.grammar("json")` (`pgn` for tabnas-chess, not `chess`); no name or an unlisted one is `STREAMABILITY_UNKNOWN` before the parse (`.unverified()` lifts the gate, for the differential suite) | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
 | `LinesSource::new(BufRead, LineFormat)` | JSON Lines or CSV | one record per line (`Jsonl`) or chunks of whole records (`Csv { header, options }`), each parsed with one reused grammar; a record ends where the grammar ends one, at any of its line characters outside a token | one record, or one chunk (`DEFAULT_CHUNK_BYTES`, 256 KiB, never a fraction of a record) |
 
 `Source::run(self, &mut dyn Sink)` drives a borrowed sink and is always

@@ -64,9 +64,12 @@ func (p *ParserSource) Mode(mode SourceMode) *ParserSource {
 	return p
 }
 
-// Grammar names the grammar the parser implements, by the name its
-// module uses (json for github.com/tabnas/json/go). ModeIncremental runs
-// only for a name IncrementalGrammars lists; ModeMaterialize needs none.
+// Grammar names the grammar the parser implements, by the name of the
+// format it reads: the languageId its package's manifest declares, which
+// is the module's own name for most (json for github.com/tabnas/json/go)
+// but pgn for github.com/tabnas/chess/go (which this port does not list:
+// DIVERGENCE.md 5). ModeIncremental runs only for a name
+// IncrementalGrammars lists; ModeMaterialize needs none.
 func (p *ParserSource) Grammar(name string) *ParserSource {
 	p.grammar = name
 	return p

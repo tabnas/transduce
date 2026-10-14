@@ -62,9 +62,11 @@ export class ParserSource implements Source {
     return this
   }
 
-  // The grammar the parser implements, by its package's name (`json` for
-  // `@tabnas/json`). Incremental mode runs only for a name
-  // `capability.incremental` lists.
+  // The grammar the parser implements, by the name of the format it reads:
+  // the `languageId` its package's manifest declares, which is the
+  // package's own name for most (`json` for `@tabnas/json`) but `pgn` for
+  // `@tabnas/chess`. Incremental mode runs only for a name
+  // `capability.incremental` lists (`chess` is not one).
   grammar(name: string): this {
     this.grammarName = name
     return this
