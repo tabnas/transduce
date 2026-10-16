@@ -13,6 +13,9 @@ input	grammar	spec	limits	expected	limit	prefix
 # A close pass's own value, its number's lexeme from the rule's first
 # token; a rule the spec does not name yields nothing.
 [1,"x"]	json	{"val":{"scalar":"value"}}		[["number",1,"1"],["string","x"],["end"]]
+# A null is a close pass's value as any scalar is.
+[null,true,"x"]	json	{"val":{"scalar":"value"}}		[["null"],["bool",true],["string","x"],["end"]]
+null	json	{"val":{"scalar":"value"}}		[["null"],["end"]]
 # A container rule replaced by a container rule is one container: each
 # element's `elem` hands the array on to the next.
 [1,2]	json	{"list":{"container":"array"},"elem":{"container":"array"},"val":{"scalar":0}}		[["array_start"],["array_start"],["number",1,"1"],["number",2,"2"],["array_end"],["array_end"],["end"]]

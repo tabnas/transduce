@@ -60,8 +60,10 @@ const (
 //     as its lexeme when that text is a JSON number spelling the value (RFC
 //     8259), the rule the incremental source keeps lexemes by;
 //   - on a close pass, the rule's node when that is a scalar (Value), a
-//     number with the lexeme of the rule's first open token as above;
-//     nothing on an open pass, nor for a container.
+//     number with the lexeme of the rule's first open token as above, and
+//     nil as null; nothing on an open pass, for a container, nor for the
+//     engine's Undefined, a rule that has no value, as in Rust and
+//     TypeScript.
 //
 // A pass made while a probe is open is speculative: the grammar parses
 // ahead and rewinds past it (tabnas-bnf's probe, the engine's own for a
@@ -81,13 +83,15 @@ const (
 // caller's AbortFlag is ABORTED; any other engine error is INPUT_INVALID
 // with the engine's code and position. The source takes the parser over,
 // as ParserSource does: it installs its subscriber and parse budget on
-// it, so a parser is given to one source.
+// it, so a parser is given to one source, and a source runs once (a second
+// Run is STREAM_REUSED, as in TypeScript; Rust's run consumes the source).
 type ParserEventSource struct {
 	parser  *tabnas.Tabnas
 	text    string
 	limits  Limits
 	abort   *AbortFlag
 	metrics *Metrics
+	used    bool
 }
 
 // NewParserEventSource is a source with default limits, its own abort flag
@@ -179,8 +183,16 @@ func (r *relay) onDone(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleD
 	}
 }
 
-// Run parses, relaying each pass into sink, then End.
+// Run parses, relaying each pass into sink, then End. A source runs once:
+// a second Run is STREAM_REUSED, before anything is installed on the
+// parser.
 func (p *ParserEventSource) Run(sink ParserSink) (Flow, *Fail) {
+	if p.used {
+		return Continue, NewFail(CodeStreamReused,
+			"a ParserEventSource runs once: its parser carries the run's subscriber and budget; "+
+				"make a new source, with a new parser, for another run")
+	}
+	p.used = true
 	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag()}
 	p.parser.SubRuleDone(func(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleDone) {
 		r.onDone(rule, ctx, done)
@@ -244,7 +256,7 @@ func rulePass(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleDone, open
 	for _, k := range names {
 		pass.N = append(pass.N, PassCounter{Name: k, Value: int64(rule.N[k])})
 	}
-	if !open && rule.Node != nil && !tabnas.IsUndefined(rule.Node) {
+	if !open && !tabnas.IsUndefined(rule.Node) {
 		if _, scalar := scalarEvent(rule.Node); scalar {
 			lexeme, has := "", false
 			if rule.ON > 0 {

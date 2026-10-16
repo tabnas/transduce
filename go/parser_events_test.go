@@ -49,6 +49,25 @@ func TestARootScalarIsItsValRulesTwoPassesThenEnd(t *testing.T) {
 	}
 }
 
+// A source runs once: its parser carries the first run's subscriber and
+// budget, so a second Run is STREAM_REUSED, and the first sink sees no
+// more passes.
+func TestASecondRunIsStreamReused(t *testing.T) {
+	source := NewParserEventSource(tabnasjson.Make(), "[1]")
+	first := &passRecorder{}
+	if _, f := source.Run(first); f != nil {
+		t.Fatal(f)
+	}
+	seen := len(first.seen)
+	_, f := source.Run(&passRecorder{})
+	if f == nil || f.Code != CodeStreamReused {
+		t.Fatalf("a second run: %v", f)
+	}
+	if len(first.seen) != seen {
+		t.Errorf("the first sink saw %d more passes", len(first.seen)-seen)
+	}
+}
+
 // What this runtime's engine reports differently (DIVERGENCE.md 6 and 7):
 // the root rule is instance 0, as in Rust (TypeScript's is 1), and a fixed
 // token has no value, as in TypeScript (Rust's has its text).

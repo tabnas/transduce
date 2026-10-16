@@ -344,8 +344,8 @@ mod tests {
     }
 
     /// The library's refusals, with its codes and texts: a key that is not
-    /// a string, a scalar that is a container, a close with nothing open,
-    /// and passes that end inside a container. A failing pass writes
+    /// a string, a scalar that is a container, a close that ends a
+    /// container with nothing open, and passes that end inside a container. A failing pass writes
     /// nothing, not even the key it would have announced.
     #[test]
     fn the_librarys_refusals() {

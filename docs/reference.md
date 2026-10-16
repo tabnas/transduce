@@ -152,8 +152,11 @@ containers and whether a close handed its container on, so it retains
 the document's nesting and nothing of its width or length. A pass's
 events are worked out before the first is written, and its failures are
 the library's: `DSL_TYPE_ERROR` for a key that is not a string, a scalar
-that is a container and a close with nothing open, `PROTOCOL_ORDER_ERROR`
-for passes that end inside a container. alchemy-cli's differential test
+that is a container and a close that ends a container with nothing open,
+`PROTOCOL_ORDER_ERROR` for passes that end inside a container. A close
+that hands its container on ends none, so it is not held to an open one,
+in the library's text or here; the passes a source delivers always open
+a rule before they close it. alchemy-cli's differential test
 holds it to the library's text.
 
 ### The verified grammars
