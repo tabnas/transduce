@@ -10,15 +10,20 @@
 //!
 //! What each pass carries is alchemy's [`RulePass`]:
 //!
-//! - the rule's `name`, its depth `d` and instance `i`, the alternate that
-//!   matched (`alt`: `p`, `r`, `b`, `g`), whether recovery forced the
+//! - the rule's `name`, its depth `d` and instance `i` (the engine's,
+//!   which counts from 0 here and in Go and from 1 in TypeScript:
+//!   DIVERGENCE.md 6), the alternate that matched (`alt`: `p`, `r`, `b`,
+//!   and its groups `g`, sorted, since they are tags whose order the
+//!   runtimes' engines keep differently), whether recovery forced the
 //!   close, and its named counters `n`, sorted by name;
 //! - the `tokens` the pass consumed: those its alternate matched, less the
 //!   `b` it gave back from their end, which are the next rule's to
 //!   consume, and none when `b` is more than it recorded, since a close
 //!   alternate can back up a token it did not record. A token is its
 //!   name, its value, its source text and its 1-based row and column; a
-//!   token with no value (the end of the source) has `null`, and a number
+//!   token with no value (the end of the source) has `null` (a fixed
+//!   token, such as `[`, has its text as its value in this runtime's
+//!   engine and none in the others': DIVERGENCE.md 7), and a number
 //!   carries its source text as its lexeme when that text is a JSON number
 //!   spelling the value (RFC 8259), the rule the incremental source keeps
 //!   lexemes by, so a renderer can write it as it stands;
@@ -285,11 +290,15 @@ fn pass(rule: &Rule, done: &RuleDone, open: bool, max: usize) -> Result<RulePass
         name: rule.name.as_str().into(),
         d: rule.d as u64,
         i: rule.i as u64,
-        alt: done.alt.as_ref().map(|a| PassAlt {
-            p: a.p.as_str().into(),
-            r: a.r.as_str().into(),
-            b: a.b as u64,
-            g: a.g.iter().map(|g| g.as_str().into()).collect(),
+        alt: done.alt.as_ref().map(|a| {
+            let mut g: Vec<Box<str>> = a.g.iter().map(|g| g.as_str().into()).collect();
+            g.sort();
+            PassAlt {
+                p: a.p.as_str().into(),
+                r: a.r.as_str().into(),
+                b: a.b as u64,
+                g,
+            }
         }),
         tokens,
         forced: done.forced,
@@ -361,7 +370,7 @@ mod tests {
         assert_eq!(
             text,
             [
-                r##"["open",{"name":"val","d":0,"i":0,"alt":{"p":"","r":"","b":0,"g":["val","json"]},"tokens":[["#NR",2.5,"2.50",1,2]],"forced":false,"n":{}}]"##,
+                r##"["open",{"name":"val","d":0,"i":0,"alt":{"p":"","r":"","b":0,"g":["json","val"]},"tokens":[["#NR",2.5,"2.50",1,2]],"forced":false,"n":{}}]"##,
                 r##"["close",{"name":"val","d":0,"i":0,"alt":{"p":"","r":"","b":0,"g":["end","json"]},"tokens":[["#ZZ",null,"",1,7]],"forced":false,"n":{},"value":2.5}]"##,
                 r#"["end"]"#,
             ]
@@ -377,6 +386,26 @@ mod tests {
                 lexeme: Some("2.50".into())
             }
         );
+    }
+
+    /// What the engine of this runtime reports differently from the
+    /// others', which the shared fixtures leave out (DIVERGENCE.md 6 and
+    /// 7): the root rule is instance 0, as in Go (TypeScript's is 1), and
+    /// a fixed token has its text as its value (TypeScript's and Go's
+    /// have none, `null`).
+    #[test]
+    fn the_engines_own_instance_numbers_and_fixed_token_values() {
+        let (r, seen) = passes("[1]");
+        r.unwrap();
+        let ParserEvent::Open(root) = &seen[0] else {
+            panic!("the root's open pass");
+        };
+        assert_eq!(root.i, 0);
+        let ParserEvent::Open(list) = &seen[1] else {
+            panic!("the list's open pass");
+        };
+        assert_eq!(&*list.tokens[0].name, "#OS");
+        assert_eq!(list.tokens[0].val, Datum::String("[".into()));
     }
 
     #[test]

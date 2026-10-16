@@ -42,6 +42,9 @@ import {
   Limits,
   LinesSource,
   Metrics,
+  ParserEvent,
+  ParserEventSource,
+  ParserSink,
   ParserSource,
   Prune,
   RouteSink,
@@ -58,9 +61,14 @@ import {
   TableFromJson,
   TableSink,
   Transition,
+  TransduceTree,
+  TreeRule,
+  TreeSpec,
   ValueSource,
   columnFromMeta,
+  parserEventToJSON,
 } from '../dist/transduce'
+import { AbortFlag, Guarded } from '../dist/transduce'
 
 // A fixture row, as @tabnas/support's loader hands it over.
 export type Row = {
@@ -79,9 +87,11 @@ export const FIXTURES = [
   'events.tsv',
   'limits.tsv',
   'lines.tsv',
+  'parser-events.tsv',
   'route.tsv',
   'scan.tsv',
   'table.tsv',
+  'tree.tsv',
 ]
 
 // Every grammar the harness and the differential suite can build, by the
@@ -537,6 +547,105 @@ export function scan(row: Row, script: string): unknown {
 // and why. A skipped row is reported as skipped, by this reason, never
 // dropped silently; a skip that matches no row fails the run.
 export type Skip = { input: string; mode: string; why: string }
+
+// ---------------------------------------------------------------------
+// The parser's rule passes, and the native transduce-tree over them.
+
+// The parser a row names: a grammar of the harness's, or, for `spec`, the
+// serialized grammar its `document` column holds.
+export function rowParser(row: Row): any {
+  if ('spec' !== row.named('grammar')) return grammar(row.named('grammar'))
+  const parser = new Tabnas()
+  parser.grammar(JSON.parse(row.named('document')))
+  return parser
+}
+
+// What a `ParserEventSource` delivered.
+class Passes implements ParserSink {
+  seen: ParserEvent[] = []
+
+  event(ev: ParserEvent): Flow {
+    this.seen.push(ev)
+    return 'continue'
+  }
+}
+
+// A pass as the `names` stage writes it, `"name:open"` or `"name:close"`,
+// and the end as `"end"`.
+function passName(ev: ParserEvent): string {
+  return 'end' === ev.type ? 'end' : `${ev.pass.name}:${ev.type}`
+}
+
+// A pass in the fixture encoding, its instance number `i` left out: the
+// engines count instances differently (DIVERGENCE.md 6).
+function passEncoded(ev: ParserEvent): unknown {
+  const json: any = parserEventToJSON(ev)
+  if (undefined !== json[1]) delete json[1].i
+  return json
+}
+
+// A pass as the `tokens` stage writes it: `["rule:open", [[name, src, row,
+// col]...]]`, its tokens without their values, which the engines give a
+// fixed token differently (DIVERGENCE.md 7), and the end as `"end"`.
+function passTokens(ev: ParserEvent): unknown {
+  if ('end' === ev.type) return 'end'
+  return [passName(ev), ev.pass.tokens.map((t) => [t.name, t.src, t.row, t.col])]
+}
+
+// `parser-events.tsv`: the passes `ParserEventSource` delivered, in the
+// fixture encoding less `i` (`passes`), by name and tokens (`tokens`) or by
+// name (`names`).
+export function parserEvents(row: Row, input: string): unknown {
+  const stage = row.named('stage')
+  const stages: Record<string, (ev: ParserEvent) => unknown> = {
+    passes: passEncoded,
+    tokens: passTokens,
+    names: passName,
+  }
+  const encode = stages[stage]
+  if (undefined === encode) throw new Error(`${row.where()}: no stage ${JSON.stringify(stage)}`)
+  const passes = new Passes()
+  try {
+    new ParserEventSource(rowParser(row), input).limits(limits(row)).run(passes)
+  } catch (err) {
+    throw new Failed(err, passes.seen.map(encode))
+  }
+  return passes.seen.map(encode)
+}
+
+// The row's `spec`: a JSON object of rules, each of `container` (`"object"`
+// or `"array"`), `key` (a string, or a token's index) and `scalar` (a
+// token's index, or `"value"`).
+export function treeSpec(row: Row): TreeSpec {
+  const json = jsonCell(row, 'spec')
+  if (undefined === json || null === json || 'object' !== typeof json) {
+    throw new Error(`${row.where()}: a tree row has a spec, a JSON object`)
+  }
+  const rules = new Map<string, TreeRule>()
+  for (const [name, rule] of Object.entries(json as Record<string, any>)) {
+    const entry: { container?: 'object' | 'array'; key?: any; scalar?: any } = {}
+    if (undefined !== rule.container) entry.container = rule.container
+    if (undefined !== rule.key) entry.key = 'string' === typeof rule.key ? { name: rule.key } : { token: rule.key }
+    if (undefined !== rule.scalar) entry.scalar = 'value' === rule.scalar ? 'value' : { token: rule.scalar }
+    rules.set(name, entry)
+  }
+  return { rules }
+}
+
+// `tree.tsv`: the events the native `transduce-tree` writes over the passes
+// `ParserEventSource` delivers, through the source's guard, as a program's
+// `transduce-tree` is lowered.
+export function tree(row: Row, input: string): unknown {
+  const recorder = new EventRecorder()
+  const lim = limits(row)
+  const guarded = new Guarded(recorder, lim, new AbortFlag(), new Metrics())
+  try {
+    new ParserEventSource(rowParser(row), input).limits(lim).run(new TransduceTree(treeSpec(row), guarded))
+  } catch (err) {
+    throw new Failed(err, recorder.events.map(event))
+  }
+  return recorder.events.map(event)
+}
 
 // Run one fixture file through @tabnas/support's runner, the input in
 // column `input` and the expected value in `expected`, every row through

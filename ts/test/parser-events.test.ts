@@ -1,0 +1,251 @@
+/* Copyright (c) 2026 tabnas, MIT License */
+
+// `ParserEventSource` and the native `TransduceTree`: the ports of the Rust
+// unit tests in rs/src/source/parser_events.rs and rs/src/transduce_tree.rs
+// that a TSV row cannot carry (a sink that stops or fails, the abort flag,
+// the metrics, a pass built by hand).
+
+import { describe, it } from 'node:test'
+import assert from 'node:assert'
+
+import { make as makeJson } from '@tabnas/json'
+
+import {
+  AbortFlag,
+  Datum,
+  Ev,
+  EventRecorder,
+  Fail,
+  Flow,
+  Limits,
+  Metrics,
+  ParserEvent,
+  ParserEventSource,
+  ParserSink,
+  ParserSource,
+  Prune,
+  RulePass,
+  SourceMode,
+  TransduceTree,
+  TreeSpec,
+  parserEventToJSON,
+} from '../dist/transduce'
+
+class Seen implements ParserSink {
+  events: ParserEvent[] = []
+  event(ev: ParserEvent): Flow {
+    this.events.push(ev)
+    return 'continue'
+  }
+}
+
+function passes(src: string): ParserEvent[] {
+  const seen = new Seen()
+  new ParserEventSource(makeJson(), src).run(seen)
+  return seen.events
+}
+
+function thrown(f: () => unknown): Fail {
+  try {
+    f()
+  } catch (err) {
+    if (err instanceof Fail) return err
+    throw err
+  }
+  throw new Error('no failure')
+}
+
+const JSON_SPEC: TreeSpec = {
+  rules: new Map<string, any>([
+    ['map', { container: 'object' }],
+    ['list', { container: 'array' }],
+    ['pair', { key: { token: 0 } }],
+    ['val', { scalar: { token: 0 } }],
+  ]),
+}
+
+describe('ParserEventSource', () => {
+  // The open pass consumed the number, whose source text is its lexeme; the
+  // close consumed the end of the source, which has no value, and carries
+  // the node's value. The groups are sorted.
+  it("a root scalar is its val rule's two passes, then end", () => {
+    const seen = passes('2.50')
+    assert.deepStrictEqual(seen.map(parserEventToJSON), [
+      ['open', { name: 'val', d: 0, i: 1, alt: { p: '', r: '', b: 0, g: ['json', 'val'] }, tokens: [['#NR', 2.5, '2.50', 1, 1]], forced: false, n: {} }],
+      ['close', { name: 'val', d: 0, i: 1, alt: { p: '', r: '', b: 0, g: ['end', 'json'] }, tokens: [['#ZZ', null, '', 1, 5]], forced: false, n: {}, value: 2.5 }],
+      ['end'],
+    ])
+    const open = seen[0] as any
+    assert.deepStrictEqual(open.pass.tokens[0].val, Datum.number(2.5, '2.50'))
+  })
+
+  // What this runtime's engine reports differently (DIVERGENCE.md 6 and 7):
+  // the root rule is instance 1 (Go's and Rust's is 0), and a fixed token
+  // has no value, as in Go (Rust's has its text).
+  it("the engine's own instance numbers and fixed-token values", () => {
+    const seen = passes('[1]') as any[]
+    assert.equal(seen[0].pass.i, 1)
+    assert.equal(seen[1].pass.tokens[0].name, '#OS')
+    assert.deepStrictEqual(seen[1].pass.tokens[0].val, Datum.null)
+  })
+
+  it('a parse error is INPUT_INVALID after the passes before it', () => {
+    const seen = new Seen()
+    const err = thrown(() => new ParserEventSource(makeJson(), '[1,\n ]').run(seen))
+    assert.equal(err.code, 'INPUT_INVALID')
+    assert.equal(err.row, 2)
+    assert.ok(0 < seen.events.length)
+    assert.ok(!seen.events.some((e) => 'end' === e.type))
+  })
+
+  it('a huge token is refused by name before the sink sees it', () => {
+    const seen = new Seen()
+    const limits = { ...Limits.default(), max_scalar_bytes: 3 }
+    const err = thrown(() => new ParserEventSource(makeJson(), '["abcd"]').limits(limits).run(seen))
+    assert.equal(err.code, 'RESOURCE_LIMIT_EXCEEDED')
+    assert.equal(err.limit?.name, 'max_scalar_bytes')
+    assert.ok(!seen.events.some((e) => JSON.stringify(parserEventToJSON(e)).includes('abcd')))
+  })
+
+  it('a stop stops the parse, and a failure comes back', () => {
+    let n = 0
+    const flow = new ParserEventSource(makeJson(), '[1,2,3]').run({
+      event: () => (2 === ++n ? 'stop' : 'continue'),
+    })
+    assert.equal(flow, 'stop')
+    assert.equal(n, 2)
+    const err = thrown(() =>
+      new ParserEventSource(makeJson(), '[1]').run({
+        event: () => {
+          throw Fail.output('disk full')
+        },
+      }),
+    )
+    assert.equal(err.code, 'OUTPUT_FAILED')
+  })
+
+  it('an aborted flag cancels the parse as ABORTED', () => {
+    const abort = new AbortFlag()
+    abort.abort()
+    const seen = new Seen()
+    assert.equal(thrown(() => new ParserEventSource(makeJson(), '[1]').abort(abort).run(seen)).code, 'ABORTED')
+    assert.deepStrictEqual(seen.events, [])
+  })
+
+  it('metrics count the events delivered', () => {
+    const metrics = new Metrics()
+    const seen = new Seen()
+    new ParserEventSource(makeJson(), '{"a":[1]}').metrics(metrics).run(seen)
+    assert.equal(metrics.events, seen.events.length)
+  })
+
+  it('a source runs once', () => {
+    const source = new ParserEventSource(makeJson(), '1')
+    source.run(new Seen())
+    assert.equal(thrown(() => source.run(new Seen())).code, 'STREAM_REUSED')
+  })
+})
+
+function pass(name: string, tokens: Datum[], r: string, value?: Datum): RulePass {
+  return {
+    name,
+    d: 1,
+    i: 1,
+    alt: { p: '', r, b: 0, g: [] },
+    tokens: tokens.map((val) => ({ name: '#T', val, src: '', row: 1, col: 1 })),
+    forced: false,
+    n: [],
+    ...(undefined === value ? {} : { value }),
+  }
+}
+
+function run(spec: TreeSpec, events: ParserEvent[]): EventRecorder {
+  const out = new EventRecorder()
+  const native = new TransduceTree(spec, out)
+  for (const ev of events) native.event(ev)
+  return out
+}
+
+describe('TransduceTree', () => {
+  // The json part's spec over tabnas-json's own passes makes the document's
+  // events, lexemes kept, as the incremental source makes them.
+  it("the json spec makes the document's events", () => {
+    for (const src of [
+      '{"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}',
+      '[]',
+      '{}',
+      '[[[]],[{}]]',
+      '{"a":{"b":{"c":[1,[2,[3]]]}}}',
+      ' 42 ',
+      '"s"',
+      'null',
+    ]) {
+      const native = new EventRecorder()
+      new ParserEventSource(makeJson(), src).run(new TransduceTree(JSON_SPEC, native))
+      const incremental = new EventRecorder()
+      new ParserSource(makeJson(), src)
+        .grammar('json')
+        .mode(SourceMode.incremental(Prune.never()))
+        .run(incremental)
+      assert.deepStrictEqual(native.events, incremental.events, src)
+    }
+  })
+
+  // A key named by the spec is announced as it stands; a scalar from a
+  // close pass's value; a rule the spec does not name yields nothing.
+  it("a named key, a close's value and an unnamed rule", () => {
+    const spec: TreeSpec = {
+      rules: new Map<string, any>([
+        ['doc', { container: 'object' }],
+        ['v', { key: { name: 'k' }, scalar: 'value' }],
+      ]),
+    }
+    const out = run(spec, [
+      { type: 'open', pass: pass('doc', [], '') },
+      { type: 'open', pass: pass('v', [Datum.number(9)], '') },
+      { type: 'open', pass: pass('other', [Datum.number(8)], '') },
+      { type: 'close', pass: pass('other', [], '', Datum.number(8)) },
+      { type: 'close', pass: pass('v', [], '', Datum.number(7)) },
+      { type: 'close', pass: pass('doc', [], '') },
+      { type: 'end' },
+    ])
+    assert.deepStrictEqual(out.events, [Ev.objectStart, Ev.key('k'), Ev.number(7), Ev.objectEnd, Ev.end])
+  })
+
+  // The library's refusals, with its codes and texts. A failing pass writes
+  // nothing, not even the key it would have announced.
+  it("the library's refusals", () => {
+    const keyed: TreeSpec = { rules: new Map<string, any>([['v', { key: { name: 'k' }, scalar: { token: 0 } }]]) }
+    const out = new EventRecorder()
+    let err = thrown(() => new TransduceTree(keyed, out).event({ type: 'open', pass: pass('v', [Datum.array([])], '') }))
+    assert.equal(err.code, 'DSL_TYPE_ERROR')
+    assert.equal(err.message, 'type_mismatch: scalar: the value must be null, a boolean, a number or a string, not a vector')
+    assert.deepStrictEqual(out.events, [])
+    err = thrown(() => run(JSON_SPEC, [{ type: 'open', pass: pass('pair', [Datum.bool(true)], '') }]))
+    assert.equal(err.message, 'type_mismatch: key: the name must be a string, not a boolean')
+    err = thrown(() => run(JSON_SPEC, [{ type: 'close', pass: pass('map', [], '') }]))
+    assert.equal(err.message, 'type_mismatch: pop: the vector is empty; there is no last item to remove')
+    err = thrown(() => run(JSON_SPEC, [{ type: 'open', pass: pass('list', [], '') }, { type: 'end' }]))
+    assert.equal(err.code, 'PROTOCOL_ORDER_ERROR')
+    assert.equal(err.message, "the rule passes ended inside a container, which a tree's never do")
+  })
+
+  // A close whose alternate replaces its rule with a container rule hands
+  // the container on: one start, one end, across the two rules.
+  it('a replaced container is one container', () => {
+    const spec: TreeSpec = {
+      rules: new Map<string, any>([
+        ['a', { container: 'array' }],
+        ['b', { container: 'array' }],
+      ]),
+    }
+    const out = run(spec, [
+      { type: 'open', pass: pass('a', [], '') },
+      { type: 'close', pass: pass('a', [], 'b') },
+      { type: 'open', pass: pass('b', [], '') },
+      { type: 'close', pass: pass('b', [], '') },
+      { type: 'end' },
+    ])
+    assert.deepStrictEqual(out.events, [Ev.arrayStart, Ev.arrayEnd, Ev.end])
+  })
+})

@@ -106,16 +106,20 @@ once the engine has returned the parse's value. It knows no grammar, and
 it has one mode. `run_owned(self, sink)` and `run_boxed` take the sink by
 value and hand it back, with `ParserSource`'s failure mapping.
 
-A pass is a `RulePass`: the rule's `name`, depth `d` and instance `i`;
-the alternate that matched (`p`, `r`, `b`, `g`), or none when the state
-declared no alternates; whether recovery forced the close; the named
+A pass is a `RulePass`: the rule's `name`, depth `d` and instance `i`
+(the engine's, which TypeScript's counts from 1 and Go's and Rust's from
+0: `DIVERGENCE.md` 6); the alternate that matched (`p`, `r`, `b`, and its
+groups `g`, sorted, since the engines keep them in different orders), or
+none when the state declared no alternates; whether recovery forced the close; the named
 counters `n`, sorted by name; the `tokens` the pass consumed; and, on a
 close pass whose node is a scalar, its `value`. A pass's tokens are those
 its alternate matched, less the `b` it gave back from their end, which
 are the next rule's to consume, and none when `b` is more than it
 recorded, since a close alternate can back up a token it did not record.
 A token is its name, its value (`null` for a token with none, such as the
-end of the source), its source text and its 1-based row and column. A
+end of the source, or a fixed token such as `[`, to which Rust's engine
+gives its text: `DIVERGENCE.md` 7), its source text and its 1-based row
+and column. A
 number token's value carries its source text as its lexeme by the lexeme
 rule above, and so does a close pass's number `value`, from the rule's
 first open token.
@@ -399,7 +403,7 @@ reports.
 | `captures` | a JSON array of `{"tag", "select", "mode"}`, `select` a selector, `mode` `materialize` (the default) or `observe` |
 | `binding` | `{"schema": ..., "rows": selector}`, the schema `"infer"`, `{"metadata": selector}` (each descriptor read by `column_from_meta`) or `{"static": [{"label", "source": segments, "missing"}]}`, `missing` `missing` (the default), `null` or `error` |
 | `duplicates` | `reject` (the default), `last_wins` or `first_wins` |
-| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs. `parser-events.tsv`: `passes`, every event in the encoding below, or `names`, each pass as `"rule:open"` or `"rule:close"` and the end as `"end"` |
+| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs. `parser-events.tsv`: `passes`, every event in the encoding below less the rule's instance number `i` (`DIVERGENCE.md` 6); `tokens`, each pass as `["rule:open", [[name, src, row, col]...]]`, its tokens without their values (`DIVERGENCE.md` 7); or `names`, each pass as `"rule:open"` or `"rule:close"`; the end is `"end"` in the last two |
 | `spec` | `tree.tsv`: a JSON object of rules, each of `container` (`"object"` or `"array"`), `key` (a string, or a token's index) and `scalar` (a token's index, or `"value"`) |
 | `limits` | a JSON object of `Limits` fields over `Limits::default()` |
 | `path` | on an error row, the failure's `path`, in jq syntax |
@@ -443,8 +447,10 @@ encoding (`ParserEvent::to_json`): `["open", rule]`, `["close", rule]`
 and `["end"]`, the rule an object of `name`, `d`, `i`, `alt` (`p`, `r`,
 `b`, `g`; left out when the state declared none), `tokens` (each `[name,
 value, src, row, col]`), `forced`, `n` and, on a close pass with a scalar
-node, `value`. A token's value is written as JSON, so its lexeme is not
-in the encoding; `tree.tsv`, whose events carry it, pins it. `tree.tsv`
+node, `value`. The `passes` stage leaves `i` out, and its rows hold no
+fixed token, since the engines differ on both. A token's value is
+written as JSON, so its lexeme is not in the encoding; `tree.tsv`, whose
+events carry it, pins it. `tree.tsv`
 runs `ParserEventSource` into `TransduceTree` behind `Guarded`, as a
 program's `transduce-tree` is lowered, and expects the event stream.
 
@@ -465,7 +471,7 @@ returned (`"continue"` or `"stop"`).
 | `table.tsv` | 38 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
 | `lines.tsv` | 50 | `LinesSource`: JSON Lines and CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR, blank JSON Lines records, a line character inside a string) |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
-| `parser-events.tsv` | 7 | `ParserEventSource`: every field of a pass, tokens given back by `b`, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
+| `parser-events.tsv` | 7 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
 | `tree.tsv` | 7 | `TransduceTree` over tabnas-json's passes: the json part's spec and its lexemes, a close pass's value, a container handed on through a replaced rule, the library's refusal of a key that is not a string, the guard in front |
 | `limits.tsv` | 71 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
 
