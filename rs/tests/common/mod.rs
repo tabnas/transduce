@@ -21,10 +21,11 @@ use tabnas_csv::CsvOptions;
 use tabnas_support::{find_spec_dir, Failure, Row, Value};
 use tabnas_transduce::source::{LineFormat, LinesSource};
 use tabnas_transduce::{
-    column_from_meta, BoundColumn, CaptureSpec, Cell, Code, Datum, Duplicates, Fail, Flow, Limits,
-    Metrics, MissingPolicy, OwnedJsonEvent, ParserSource, Prune, RouteSink, Router, ScanEmit,
-    Schema, Segment, Selected, Selector, Sink, Source, SourceMode, TableBinding, TableEvent,
-    TableFromJson, TableSink, Transition, ValueSource,
+    column_from_meta, AbortFlag, BoundColumn, CaptureSpec, Cell, Code, Datum, Duplicates, Fail,
+    Flow, Guarded, Limits, Metrics, MissingPolicy, OwnedJsonEvent, ParserEvent, ParserEventSource,
+    ParserSink, ParserSource, Prune, RouteSink, Router, ScanEmit, Schema, Segment, Selected,
+    Selector, Sink, Source, SourceMode, TableBinding, TableEvent, TableFromJson, TableSink,
+    TransduceTree, Transition, TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec, ValueSource,
 };
 
 /// The shared `test/spec` directory, found by walking up from the crate.
@@ -35,13 +36,15 @@ pub fn spec_dir() -> PathBuf {
 
 /// The fixture files and the runner each has: a new file without a runner
 /// fails `every_fixture_has_a_runner` rather than passing unread.
-pub const FIXTURES: [&str; 6] = [
+pub const FIXTURES: [&str; 8] = [
     "events.tsv",
     "limits.tsv",
     "lines.tsv",
+    "parser-events.tsv",
     "route.tsv",
     "scan.tsv",
     "table.tsv",
+    "tree.tsv",
 ];
 
 /// A run that failed: the failure, and for an event stream the events
@@ -614,4 +617,165 @@ pub fn scan(row: &Row, script: &str) -> Result<Value, Failed> {
         ("out".to_string(), Value::Array(out)),
         ("flows".to_string(), Value::Array(flows)),
     ]))
+}
+
+// ---------------------------------------------------------------------
+// The parser's rule passes, and the native transduce-tree over them.
+
+/// The parser a row names: a grammar of the harness's, or, for `spec`, the
+/// serialized grammar its `document` column holds.
+pub fn row_parser(row: &Row) -> Tabnas {
+    match row.named("grammar") {
+        "spec" => {
+            let mut parser = Tabnas::new();
+            parser
+                .grammar_json(row.named("document"))
+                .unwrap_or_else(|e| panic!("{}: the document installs: {e}", row.location()));
+            parser
+        }
+        name => grammar(name)(),
+    }
+}
+
+/// What a `ParserEventSource` delivered.
+#[derive(Default)]
+struct Passes(Vec<ParserEvent>);
+
+impl ParserSink for Passes {
+    fn event(&mut self, ev: &ParserEvent) -> Result<Flow, Fail> {
+        self.0.push(ev.clone());
+        Ok(Flow::Continue)
+    }
+}
+
+/// A pass as the `names` stage writes it, `"name:open"` or
+/// `"name:close"`, and the end as `"end"`.
+fn pass_name(ev: &ParserEvent) -> Value {
+    match ev {
+        ParserEvent::Open(pass) => s(&format!("{}:open", pass.name)),
+        ParserEvent::Close(pass) => s(&format!("{}:close", pass.name)),
+        ParserEvent::End => s("end"),
+    }
+}
+
+/// A pass in the fixture encoding, its instance number `i` left out: the
+/// engines count instances differently (DIVERGENCE.md 6).
+fn pass_encoded(ev: &ParserEvent) -> Value {
+    let mut json = ev.to_json();
+    if let Some(rule) = json.get_mut(1).and_then(|rule| rule.as_object_mut()) {
+        rule.remove("i");
+    }
+    Value::from(json)
+}
+
+/// A pass as the `tokens` stage writes it: `["rule:open", [[name, src,
+/// row, col]...]]`, its tokens without their values, which the engines
+/// give a fixed token differently (DIVERGENCE.md 7), and the end as
+/// `"end"`.
+fn pass_tokens(ev: &ParserEvent) -> Value {
+    let pass = match ev {
+        ParserEvent::Open(pass) | ParserEvent::Close(pass) => pass,
+        ParserEvent::End => return s("end"),
+    };
+    let tokens = pass
+        .tokens
+        .iter()
+        .map(|t| {
+            Value::Array(vec![
+                s(&t.name),
+                s(&t.src),
+                Value::Number(t.row as f64),
+                Value::Number(t.col as f64),
+            ])
+        })
+        .collect();
+    Value::Array(vec![pass_name(ev), Value::Array(tokens)])
+}
+
+/// `parser-events.tsv`: the passes `ParserEventSource` delivered, in the
+/// fixture encoding less `i` (`passes`), by name and tokens (`tokens`) or
+/// by name (`names`).
+pub fn parser_events(row: &Row, input: &str) -> Result<Value, Failed> {
+    let (outcome, seen) = ParserEventSource::new(row_parser(row), input)
+        .limits(limits(row))
+        .run_owned(Passes::default());
+    let encode: fn(&ParserEvent) -> Value = match row.named("stage") {
+        "passes" => pass_encoded,
+        "tokens" => pass_tokens,
+        "names" => pass_name,
+        other => panic!("{}: no stage {other:?}", row.location()),
+    };
+    let recorded = Value::Array(seen.0.iter().map(encode).collect());
+    match outcome {
+        Ok(_) => Ok(recorded),
+        Err(fail) => Err(Failed {
+            fail: Box::new(fail),
+            prefix: Some(recorded),
+        }),
+    }
+}
+
+/// The row's `spec`: a JSON object of rules, each of `container`
+/// (`"object"` or `"array"`), `key` (a string, or a token's index) and
+/// `scalar` (a token's index, or `"value"`).
+pub fn tree_spec(row: &Row) -> TreeSpec {
+    let json = json_cell(row, "spec")
+        .unwrap_or_else(|| panic!("{}: a tree row has a spec", row.location()));
+    let rules = json
+        .as_object()
+        .unwrap_or_else(|| panic!("{}: spec is a JSON object", row.location()));
+    let index = |v: &serde_json::Value| {
+        v.as_u64()
+            .unwrap_or_else(|| panic!("{}: an index is a count: {v}", row.location()))
+            as usize
+    };
+    rules.iter().fold(TreeSpec::new(), |spec, (name, rule)| {
+        let container = match rule.get("container").and_then(|v| v.as_str()) {
+            None => None,
+            Some("object") => Some(TreeContainer::Object),
+            Some("array") => Some(TreeContainer::Array),
+            Some(other) => panic!("{}: no container {other:?}", row.location()),
+        };
+        let key = rule.get("key").map(|v| match v.as_str() {
+            Some(name) => TreeKey::Name(name.into()),
+            None => TreeKey::Token(index(v)),
+        });
+        let scalar = rule.get("scalar").map(|v| match v.as_str() {
+            Some("value") => TreeScalar::Value,
+            Some(other) => panic!("{}: no scalar {other:?}", row.location()),
+            None => TreeScalar::Token(index(v)),
+        });
+        spec.with(
+            name,
+            TreeRule {
+                container,
+                key,
+                scalar,
+            },
+        )
+    })
+}
+
+/// `tree.tsv`: the events the native `transduce-tree` writes over the
+/// passes `ParserEventSource` delivers, through the source's guard, as a
+/// program's `transduce-tree` is lowered.
+pub fn tree(row: &Row, input: &str) -> Result<Value, Failed> {
+    let limits = limits(row);
+    let guarded = Guarded::new(
+        Vec::<OwnedJsonEvent>::new(),
+        &limits,
+        AbortFlag::new(),
+        Metrics::new(),
+    );
+    let (outcome, native) = ParserEventSource::new(row_parser(row), input)
+        .limits(limits.clone())
+        .run_owned(TransduceTree::new(tree_spec(row), guarded));
+    let recorded = Value::Array(native.into_inner().into_inner().iter().map(event).collect());
+    match outcome {
+        Ok(_) => Ok(recorded),
+        Err(fail) => Err(Failed {
+            fail: Box::new(fail),
+            prefix: Some(recorded),
+        }),
+    }
 }

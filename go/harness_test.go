@@ -35,7 +35,7 @@ import (
 // specFixtures is every fixture file and so every runner: a new file
 // without a runner fails TestEveryFixtureHasARunner rather than passing
 // unread.
-var specFixtures = []string{"events.tsv", "limits.tsv", "lines.tsv", "route.tsv", "scan.tsv", "table.tsv"}
+var specFixtures = []string{"events.tsv", "limits.tsv", "lines.tsv", "parser-events.tsv", "route.tsv", "scan.tsv", "table.tsv", "tree.tsv"}
 
 // rustIncremental is the Rust crate's verified list, which the fixtures'
 // incremental rows were written against: a row that streams one of these
@@ -677,4 +677,148 @@ func scanStage(t testing.TB, row *support.Row, script string) (any, *failed) {
 		flows = append(flows, flow.String())
 	}
 	return map[string]any{"out": out, "flows": flows}, nil
+}
+
+// The parser's rule passes, and the native transduce-tree over them.
+
+// rowParser is the parser a row names: a grammar of the harness's, or,
+// for `spec`, the serialized grammar its `document` column holds.
+func rowParser(t testing.TB, row *support.Row) *tabnas.Tabnas {
+	if row.Named("grammar") != "spec" {
+		return makeGrammar(row.Named("grammar"))
+	}
+	spec, err := tabnas.GrammarSpecFromJSON([]byte(row.Named("document")))
+	if err != nil {
+		t.Fatalf("%s: the document is a grammar spec: %v", row.Where(), err)
+	}
+	parser := tabnas.Make()
+	if err := parser.Grammar(spec); err != nil {
+		t.Fatalf("%s: the document installs: %v", row.Where(), err)
+	}
+	return parser
+}
+
+// passRecorder records what a ParserEventSource delivered.
+type passRecorder struct{ seen []ParserEvent }
+
+func (r *passRecorder) ParserEvent(ev ParserEvent) (Flow, *Fail) {
+	r.seen = append(r.seen, ev)
+	return Continue, nil
+}
+
+// passName is a pass as the `names` stage writes it, "name:open" or
+// "name:close", and the end as "end".
+func passName(ev ParserEvent) any {
+	if ev.Kind == ParserEnd {
+		return "end"
+	}
+	return ev.Pass.Name + ":" + ev.Kind.String()
+}
+
+// passEncoded is a pass in the fixture encoding, its instance number `i`
+// left out: the engines count instances differently (DIVERGENCE.md 6).
+func passEncoded(t testing.TB) func(ParserEvent) any {
+	return func(ev ParserEvent) any {
+		v, err := support.ParseExpect(ev.JSON())
+		if err != nil {
+			t.Fatalf("a parser event's encoding is JSON: %v", err)
+		}
+		if items, ok := v.([]any); ok && len(items) == 2 {
+			if rule, ok := items[1].(map[string]any); ok {
+				delete(rule, "i")
+			}
+		}
+		return v
+	}
+}
+
+// passTokens is a pass as the `tokens` stage writes it: ["rule:open",
+// [[name, src, row, col]...]], its tokens without their values, which the
+// engines give a fixed token differently (DIVERGENCE.md 7), and the end
+// as "end".
+func passTokens(ev ParserEvent) any {
+	if ev.Kind == ParserEnd {
+		return "end"
+	}
+	tokens := []any{}
+	for _, tok := range ev.Pass.Tokens {
+		tokens = append(tokens, []any{tok.Name, tok.Src, float64(tok.Row), float64(tok.Col)})
+	}
+	return []any{passName(ev), tokens}
+}
+
+// parserEventsStage is parser-events.tsv: the passes ParserEventSource
+// delivered, in the fixture encoding less `i` (`passes`), by name and
+// tokens (`tokens`) or by name (`names`).
+func parserEventsStage(t testing.TB, row *support.Row, input string) (any, *failed) {
+	var encode func(ParserEvent) any
+	switch row.Named("stage") {
+	case "passes":
+		encode = passEncoded(t)
+	case "tokens":
+		encode = passTokens
+	case "names":
+		encode = passName
+	default:
+		t.Fatalf("%s: no stage %q", row.Where(), row.Named("stage"))
+	}
+	rec := &passRecorder{}
+	_, f := NewParserEventSource(rowParser(t, row), input).Limits(limitsOf(t, row)).Run(rec)
+	out := []any{}
+	for _, ev := range rec.seen {
+		out = append(out, encode(ev))
+	}
+	if f != nil {
+		return nil, &failed{fail: f, prefix: out, hasPre: true}
+	}
+	return out, nil
+}
+
+// treeSpecOf is the row's `spec`: a JSON object of rules, each of
+// `container` ("object" or "array"), `key` (a string, or a token's index)
+// and `scalar` (a token's index, or "value").
+func treeSpecOf(t testing.TB, row *support.Row) TreeSpec {
+	rules, ok := jsonCell(t, row, "spec").(map[string]any)
+	if !ok {
+		t.Fatalf("%s: a tree row's spec is a JSON object", row.Where())
+	}
+	spec := TreeSpec{Rules: map[string]TreeRule{}}
+	for name, v := range rules {
+		entry, _ := v.(map[string]any)
+		var rule TreeRule
+		switch entry["container"] {
+		case "object":
+			rule.Container = TreeObject
+		case "array":
+			rule.Container = TreeArray
+		}
+		switch k := entry["key"].(type) {
+		case string:
+			rule.Key = TreeKey{Set: true, Name: k}
+		case json.Number:
+			rule.Key = TreeKey{Set: true, IsToken: true, Token: asInt(t, k)}
+		}
+		switch sc := entry["scalar"].(type) {
+		case string:
+			rule.Scalar = TreeScalar{Set: true, Value: true}
+		case json.Number:
+			rule.Scalar = TreeScalar{Set: true, Token: asInt(t, sc)}
+		}
+		spec.Rules[name] = rule
+	}
+	return spec
+}
+
+// treeStage is tree.tsv: the events the native transduce-tree writes over
+// the passes ParserEventSource delivers, through the source's guard, as a
+// program's transduce-tree is lowered.
+func treeStage(t testing.TB, row *support.Row, input string) (any, *failed) {
+	var rec Recorder
+	limits := limitsOf(t, row)
+	guarded := NewGuarded(&rec, limits, NewAbortFlag(), NewMetrics())
+	_, f := NewParserEventSource(rowParser(t, row), input).Limits(limits).Run(NewTransduceTree(treeSpecOf(t, row), guarded))
+	if f != nil {
+		return nil, &failed{fail: f, prefix: eventsValue(rec.Events), hasPre: true}
+	}
+	return eventsValue(rec.Events), nil
 }

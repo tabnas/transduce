@@ -1,7 +1,8 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
 // This package's stages as alchemy's `Routers`: what an alchemy program's
-// runtime builds its routes, tables, scans and guards from. Alchemy
+// runtime builds its routes, tables, scans and guards from, and the native
+// `transduce-tree` it runs over the parser's rule passes. Alchemy
 // declares the interface (`@tabnas/alchemy/shared`) and imports no
 // transducer; a host passes `routers` to its `compile`, with render's
 // `renderers`: `compile(src, file, { routers, renderers })`.
@@ -13,6 +14,7 @@ import {
   Flow,
   Limits,
   Metrics,
+  ParserSink,
   RouteSink,
   Routers,
   Scan,
@@ -20,12 +22,14 @@ import {
   TableBinding,
   TableSink,
   Transition,
+  TreeSpec,
 } from '@tabnas/alchemy/shared'
 
 import { Guarded } from './guard'
 import { Router } from './route'
 import { ScanEmit } from './scan'
 import { TableFromJson } from './table-from-json'
+import { TransduceTree } from './transduce-tree'
 
 // Each method constructs the stage it names with the same parameters.
 export const routers: Routers = Object.freeze({
@@ -60,5 +64,9 @@ export const routers: Routers = Object.freeze({
 
   guarded(inner: Sink, limits: Limits, abort: AbortFlag, metrics: Metrics): Sink {
     return new Guarded(inner, limits, abort, metrics)
+  },
+
+  transduceTree(spec: TreeSpec, downstream: Sink): ParserSink {
+    return new TransduceTree(spec, downstream)
   },
 })

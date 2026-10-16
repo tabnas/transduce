@@ -166,6 +166,8 @@ is exactly the grammar's.
 | `rs/src/source/parser.rs` | `ParserSource`: one text, materialized or incremental |
 | `rs/src/source/lines.rs` | `LinesSource`: JSON Lines and CSV a record or a chunk at a time |
 | `rs/src/source/capability.rs` | the verified list `capability::incremental` answers from |
+| `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads; a probe's passes dropped |
+| `rs/src/transduce_tree.rs` | `TransduceTree`: alchemy's `transduce-tree` natively, offered through `Routers::transduce_tree` |
 | `rs/tests/incremental_test.rs` | the differential suite that keeps that list honest, both ways |
 | `rs/tests/retention_test.rs` | ten times the rows of a JSON or an XML document leave the retained high-water flat |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
@@ -173,7 +175,7 @@ is exactly the grammar's.
 | `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML), shared with the benches |
 | `rs/benches/` | criterion throughput benches: parse only, incremental events, walk, router and table |
 | `docs/` | `architecture.md` (the design), `reference.md`, `translation.md` (any format to any other: the parts a format ships and the host composes) |
-| `test/spec/*.tsv` | the shared fixtures every runtime runs: events, routes, tables, the line sources, scan-emit, limits (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
+| `test/spec/*.tsv` | the shared fixtures every runtime runs: events, routes, tables, the line sources, scan-emit, limits, the parser's rule passes and the native transduce-tree over them (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
 | `DIVERGENCE.md` | what a runtime may do differently, and what the fixtures leave out on purpose |
 | `ci/rust/run.sh` | the gate `.github/workflows/rust.yml` runs |
 

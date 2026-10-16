@@ -41,3 +41,9 @@ func (routers) ScanEmit(initial any, step func(any, any) (Transition[any, any], 
 func (routers) Guarded(inner Sink, limits Limits, abort *AbortFlag, metrics *Metrics) Sink {
 	return NewGuarded(inner, limits, abort, metrics)
 }
+
+// TransduceTree is NewTransduceTree: alchemy's optional
+// shared.TreeRouters, the library's transduce-tree run natively.
+func (routers) TransduceTree(spec TreeSpec, downstream Sink) ParserSink {
+	return NewTransduceTree(spec, downstream)
+}

@@ -94,6 +94,71 @@ text of a rule whose node is a `Number` when that text is a JSON number
 the number when it is inserted next. A number the adapter learns of any
 other way, and every number a walk emits, has `lexeme: None`.
 
+### The parser's rule passes
+
+`ParserEventSource::new(Tabnas, &str)` is the source of `ParserEvents/1`,
+alchemy's protocol of the parser's rule passes (`tabnas_alchemy::shared::
+parser_event`), the input a transducer part reads. It installs one
+`rule_done` subscriber and relays each pass the engine completes, on the
+thread that parses, into a `ParserSink`: `ParserEvent::Open` when a
+rule's open pass has run, `Close` when its close pass has, and one `End`
+once the engine has returned the parse's value. It knows no grammar, and
+it has one mode. `run_owned(self, sink)` and `run_boxed` take the sink by
+value and hand it back, with `ParserSource`'s failure mapping.
+
+A pass is a `RulePass`: the rule's `name`, depth `d` and instance `i`
+(the engine's, which TypeScript's counts from 1 and Go's and Rust's from
+0: `DIVERGENCE.md` 6); the alternate that matched (`p`, `r`, `b`, and its
+groups `g`, sorted, since the engines keep them in different orders), or
+none when the state declared no alternates; whether recovery forced the close; the named
+counters `n`, sorted by name; the `tokens` the pass consumed; and, on a
+close pass whose node is a scalar, its `value`. A pass's tokens are those
+its alternate matched, less the `b` it gave back from their end, which
+are the next rule's to consume, and none when `b` is more than it
+recorded, since a close alternate can back up a token it did not record.
+A token is its name, its value (`null` for a token with none, such as the
+end of the source, or a fixed token such as `[`, to which Rust's engine
+gives its text: `DIVERGENCE.md` 7), its source text and its 1-based row
+and column. A
+number token's value carries its source text as its lexeme by the lexeme
+rule above, and so does a close pass's number `value`, from the rule's
+first open token.
+
+A pass made while a probe is open is dropped: the grammar parses ahead
+and rewinds past it (tabnas-bnf's probe, the engine's own for a
+serialized grammar's `pd_` keys), so it is never the document's, and the
+engine flags it (`RuleDone::probe`). The source holds `max_scalar_bytes`
+on each token's value and source text and on a pass's value as it builds
+the pass, so a huge token is refused by name before any sink sees it;
+`max_depth` and `max_key_bytes` hold where a part's outputs become
+`JsonEvents`. It polls the `AbortFlag` per pass and counts the events it
+delivers in `Metrics::events`.
+
+### The native transduce-tree
+
+`TransduceTree::new(TreeSpec, Sink)` is alchemy's `transduce-tree` run
+natively: a `ParserSink` that writes a tree's `JsonEvents/1` to its sink
+as the spec, keyed by rule name, says. `routers()` offers it to alchemy
+(`Routers::transduce_tree`), and alchemy's lowering asks for it where a
+program applies the library's `transduce-tree` to the host's parser
+events with a spec of the standard shape, the source's guard in front of
+what it writes. The library's text, `stdlib/transduce.alc`, is the
+specification, and alchemy's `TreeSpec` documents what the native does
+pass for pass: an open pass announces its `key`, then begins its
+`container` or yields its `scalar` from one of its tokens; a close pass
+ends its container, or yields its own `value`; a container rule replaced
+by a container rule is one container. Its state is the count of open
+containers and whether a close handed its container on, so it retains
+the document's nesting and nothing of its width or length. A pass's
+events are worked out before the first is written, and its failures are
+the library's: `DSL_TYPE_ERROR` for a key that is not a string, a scalar
+that is a container and a close that ends a container with nothing open,
+`PROTOCOL_ORDER_ERROR` for passes that end inside a container. A close
+that hands its container on ends none, so it is not held to an open one,
+in the library's text or here; the passes a source delivers always open
+a rule before they close it. alchemy-cli's differential test
+holds it to the library's text.
+
 ### The verified grammars
 
 `capability::INCREMENTAL` lists `json`, `json5`, `jsonc`, `jsonic`,
@@ -333,14 +398,16 @@ reports.
 | Column | Meaning |
 |---|---|
 | `input` | the source text |
-| `grammar` | `json`, `jsonl`, `json5`, `jsonc`, `jsonic`, `yaml`, `zon`, `csv`, `toml` or `ini` |
+| `grammar` | `json`, `jsonl`, `json5`, `jsonc`, `jsonic`, `yaml`, `zon`, `csv`, `toml` or `ini`; in `parser-events.tsv`, also `spec`, the serialized grammar in `document` |
+| `document` | `parser-events.tsv`, grammar `spec`: a serialized grammar, installed with `Tabnas::grammar_json` |
 | `mode` | `materialize` and `incremental`: `ParserSource` over the grammar, named with `.grammar(name)`, in that `SourceMode`. `value`: the grammar's parse (an engine error is `Fail::from_tabnas`), then `ValueSource` over the value, which applies no limits. `lines`: `LinesSource` (`jsonl` or `csv`) on its walking path, `Source::run`. `lines-incremental`: `LinesSource::run_owned`, where JSON Lines goes through the rule-event adapter and keeps lexemes |
 | `prune` | incremental only: `"all"` for `Prune::AllArrays`, a selector for `Prune::Under`, empty for `Prune::Never` |
 | `options` | the line sources: a JSON object of `header` (default `true`), `object`, `number`, `value`, `trim` and `strict` for the CSV grammar, and `chunk_bytes` for the source |
 | `captures` | a JSON array of `{"tag", "select", "mode"}`, `select` a selector, `mode` `materialize` (the default) or `observe` |
 | `binding` | `{"schema": ..., "rows": selector}`, the schema `"infer"`, `{"metadata": selector}` (each descriptor read by `column_from_meta`) or `{"static": [{"label", "source": segments, "missing"}]}`, `missing` `missing` (the default), `null` or `error` |
 | `duplicates` | `reject` (the default), `last_wins` or `first_wins` |
-| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs |
+| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs. `parser-events.tsv`: `passes`, every event in the encoding below less the rule's instance number `i` (`DIVERGENCE.md` 6); `tokens`, each pass as `["rule:open", [[name, src, row, col]...]]`, its tokens without their values (`DIVERGENCE.md` 7); or `names`, each pass as `"rule:open"` or `"rule:close"`; the end is `"end"` in the last two |
+| `spec` | `tree.tsv`: a JSON object of rules, each of `container` (`"object"` or `"array"`), `key` (a string, or a token's index) and `scalar` (a token's index, or `"value"`) |
 | `limits` | a JSON object of `Limits` fields over `Limits::default()` |
 | `path` | on an error row, the failure's `path`, in jq syntax |
 | `limit` | on an error row, the `Limits` field the failure names |
@@ -378,6 +445,18 @@ in jq syntax, and then the string `"end"` when the router called
 boolean, a string, `["number", value, lexeme]` or `["missing"]`; a
 container projected into a cell is the string of its compact JSON.
 
+`parser-events.tsv` expects **parser events** in alchemy's fixture
+encoding (`ParserEvent::to_json`): `["open", rule]`, `["close", rule]`
+and `["end"]`, the rule an object of `name`, `d`, `i`, `alt` (`p`, `r`,
+`b`, `g`; left out when the state declared none), `tokens` (each `[name,
+value, src, row, col]`), `forced`, `n` and, on a close pass with a scalar
+node, `value`. The `passes` stage leaves `i` out, and its rows hold no
+fixed token, since the engines differ on both. A token's value is
+written as JSON, so its lexeme is not in the encoding; `tree.tsv`, whose
+events carry it, pins it. `tree.tsv`
+runs `ParserEventSource` into `TransduceTree` behind `Guarded`, as a
+program's `transduce-tree` is lowered, and expects the event stream.
+
 `scan.tsv` drives `ScanEmit` with a running sum: an integer item adds
 itself and emits `"+<n>"`, `{"emit": [...]}` emits those strings,
 `{"fail": CODE}` fails the step with that code, and `"finish"` calls
@@ -395,6 +474,8 @@ returned (`"continue"` or `"stop"`).
 | `table.tsv` | 38 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
 | `lines.tsv` | 50 | `LinesSource`: JSON Lines and CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR, blank JSON Lines records, a line character inside a string) |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
+| `parser-events.tsv` | 7 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
+| `tree.tsv` | 7 | `TransduceTree` over tabnas-json's passes: the json part's spec and its lexemes, a close pass's value, a container handed on through a replaced rule, the library's refusal of a key that is not a string, the guard in front |
 | `limits.tsv` | 71 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
 
 ### What a port must reproduce exactly

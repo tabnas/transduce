@@ -12,7 +12,8 @@ by running its input through each runtime, and an entry that closes is
 deleted together with the test that pins it.
 
 Entries 3 and 5 are measured: a grammar's difference between runtimes,
-which each runtime's sources follow. The rest is
+which each runtime's sources follow. Entries 6 and 7 are measured too: an
+engine's difference between runtimes, which `ParserEventSource` relays. The rest is
 what the shared fixtures deliberately leave out, because it belongs to
 the Rust runtime or is not yet decided, so that a port does not read the
 absence of a row as coverage, or as licence.
@@ -127,3 +128,41 @@ Pinned in Rust by `pgn_streams_incrementally_where_the_list_says_so` and
 `every_document_of_pgns_own_corpus_streams_as_the_walk`
 (`rs/tests/incremental_test.rs`), and in TypeScript by the differential
 suite's `pgn` case (`ts/test/incremental.test.ts`).
+
+## 6. The engines count rule instances from different numbers
+
+| input | Rust | Go | TypeScript |
+|---|---|---|---|
+| `2.50`, `json`, the root `val` rule's passes | `i` 0 | `i` 0 | `i` 1 |
+
+**The engine's, not this crate's.** A `RulePass`'s `i` is the instance
+number the engine gives the rule (`rule.i`), which `ParserEventSource`
+relays as it is. TypeScript's engine numbers the first rule 1, Go's and
+Rust's 0, and every later rule one more in each, so a pass's `i` differs
+by one between the runtimes, and a part that pairs a rule's passes by it
+pairs them alike. tabnas/parser's `DIVERGENCE.md` does not record it;
+the repair, whichever engine moves, is the engine's. The shared fixtures
+leave `i` out: `parser-events.tsv`'s `passes` stage writes every field
+of a pass but it. Pinned in Rust by
+`the_engines_own_instance_numbers_and_fixed_token_values`
+(`rs/src/source/parser_events.rs`).
+
+## 7. A fixed token has its text as its value in Rust's engine
+
+| input | Rust | Go | TypeScript |
+|---|---|---|---|
+| `[1]`, `json`, the `list` rule's open pass, its `#OS` token | `:val` `"["` | `:val` `null` | `:val` `null` |
+
+**The engine's, not this crate's.** A token's `:val` is the value the
+engine gave the token. A fixed token (`[`, `,`, `:`, a grammar's own
+punctuation) has none in TypeScript's and Go's engines, which
+`ParserEventSource` relays as `null`, as it does the end of the source.
+Rust's engine gives a fixed token its source text as its value, so a part
+that reads a fixed token's `:val` reads a string in Rust and `null`
+elsewhere. A part reads `:src` for the text, which every engine gives
+alike. tabnas/parser's `DIVERGENCE.md` does not record it; the repair is
+the engine's. The shared fixtures leave a fixed token's value out:
+`parser-events.tsv`'s `tokens` stage writes each token's name, text and
+position, and its `passes` rows hold no fixed token. Pinned in Rust by
+`the_engines_own_instance_numbers_and_fixed_token_values`
+(`rs/src/source/parser_events.rs`).

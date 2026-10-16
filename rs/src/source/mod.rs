@@ -11,19 +11,27 @@
 //!   (or a chunk of records) at a time, bounding memory whatever the
 //!   file's size.
 //!
-//! Every source emits through [`Guarded`], which enforces the source
-//! limits (`max_depth`, `max_key_bytes`, `max_scalar_bytes`), polls the
-//! abort flag and counts the source metrics.
+//! - [`ParserEventSource`] drives a tabnas parse of one text and relays
+//!   its rule passes as `ParserEvents/1`, the input a transducer part
+//!   reads, dropping the passes a probe rewinds.
+//!
+//! Every JSON-events source emits through [`Guarded`], which enforces the
+//! source limits (`max_depth`, `max_key_bytes`, `max_scalar_bytes`), polls
+//! the abort flag and counts the source metrics; [`ParserEventSource`]
+//! holds `max_scalar_bytes` on each pass as it builds it, and polls the
+//! flag and counts its events the same way.
 
 pub mod capability;
 pub mod guard;
 pub mod lines;
 pub mod parser;
+pub mod parser_events;
 pub(crate) mod rule_events;
 
 pub use guard::Guarded;
 pub use lines::{LineFormat, LinesSource, DEFAULT_CHUNK_BYTES};
 pub use parser::ParserSource;
+pub use parser_events::ParserEventSource;
 
 use crate::error::Fail;
 use crate::event::{JsonEvent, Number};
