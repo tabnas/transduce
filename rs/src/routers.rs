@@ -2,23 +2,25 @@
 //! compiled alchemy program makes its routing stages through.
 //!
 //! alchemy's runtime lowers a plan onto a [`Router`] for a program's
-//! captures, the [`TableFromJson`] transducer, the [`ScanEmit`] operator
-//! and the source's [`Guarded`] limits, and constructs none of them: the
+//! captures, the [`TableFromJson`] transducer, the [`ScanEmit`] operator,
+//! the source's [`Guarded`] limits and the native [`TransduceTree`], and
+//! constructs none of them: the
 //! host passes [`routers()`] to `tabnas_alchemy::compile`, and each stage is
 //! made through it, exactly as the constructor named would make it.
 
 use std::sync::Arc;
 
 use tabnas_alchemy::shared::{
-    AbortFlag, CaptureId, CaptureSpec, Duplicates, Fail, Flow, Limits, Metrics, RouteSink, Routers,
-    ScanEmitter, ScanFinish, ScanOut, ScanStep, Selected, Sink, TableBinding, TableSink,
-    Transition,
+    AbortFlag, CaptureId, CaptureSpec, Duplicates, Fail, Flow, Limits, Metrics, ParserSink,
+    RouteSink, Routers, ScanEmitter, ScanFinish, ScanOut, ScanStep, Selected, Sink, TableBinding,
+    TableSink, Transition, TreeSpec,
 };
 
 use crate::route::Router;
 use crate::scan::ScanEmit;
 use crate::source::Guarded;
 use crate::table_from_json::TableFromJson;
+use crate::transduce_tree::TransduceTree;
 
 /// The routers this crate implements, for alchemy's `Routers`: every
 /// method is the constructor of the same name.
@@ -79,6 +81,14 @@ impl<V: Send + 'static> Routers<V> for TransduceRouters {
         metrics: Arc<Metrics>,
     ) -> Box<dyn Sink + Send> {
         Box::new(Guarded::new(inner, limits, abort, metrics))
+    }
+
+    fn transduce_tree(
+        &self,
+        spec: TreeSpec,
+        downstream: Box<dyn Sink + Send>,
+    ) -> Result<Box<dyn ParserSink + Send>, Box<dyn Sink + Send>> {
+        Ok(Box::new(TransduceTree::new(spec, downstream)))
     }
 }
 

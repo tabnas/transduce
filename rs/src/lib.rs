@@ -7,7 +7,12 @@
 //! - the source protocol [`JsonEvent`] (`JsonEvents/1`) and the push
 //!   boundary [`Sink`];
 //! - [`source`]s that produce it from a parsed value, from a live tabnas
-//!   parse through the engine's rule events, or from line-delimited input;
+//!   parse through the engine's rule events, or from line-delimited input,
+//!   and the source of the parser's rule passes themselves
+//!   ([`ParserEventSource`], `ParserEvents/1`), what a transducer part
+//!   reads;
+//! - [`TransduceTree`], alchemy's `transduce-tree` run natively over
+//!   those passes;
 //! - [`Selector`]s and the matcher and router that recognize selected
 //!   scopes in one pass and materialize them under a byte limit;
 //! - the table protocol [`TableEvent`] (`TableRows/1`) and the standard
@@ -40,9 +45,15 @@ pub mod routers;
 pub mod scan;
 pub mod source;
 pub mod table_from_json;
+pub mod transduce_tree;
 
 /// The protocol modules, which are alchemy's shared types.
 pub use tabnas_alchemy::shared::{datum, error, event, limits, selector, sink, table};
+
+pub use tabnas_alchemy::shared::{
+    parser_event, tree, ParserEvent, ParserSink, PassAlt, PassToken, RulePass, TreeContainer,
+    TreeKey, TreeRule, TreeScalar, TreeSpec,
+};
 
 pub use datum::{
     walk_datum, write_json, write_json_number, write_json_string, Datum, DatumBuilder, Duplicates,
@@ -57,13 +68,15 @@ pub use scan::{ScanEmit, Transition};
 pub use selector::{Path, Segment, Selector, Step};
 pub use sink::{replay, CountSink, Flow, FnSink, Sink, TreeContract};
 pub use source::{
-    capability, walk_value, Guarded, ParserSource, Prune, Source, SourceMode, ValueSource,
+    capability, walk_value, Guarded, ParserEventSource, ParserSource, Prune, Source, SourceMode,
+    ValueSource,
 };
 pub use table::{
     column_from_meta, BoundColumn, Cell, ColumnMapper, MissingPolicy, PublicColumn, Schema, Table,
     TableBinding, TableEvent, TableSink,
 };
 pub use table_from_json::TableFromJson;
+pub use transduce_tree::TransduceTree;
 
 /// This crate's version, as `Cargo.toml` declares it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
