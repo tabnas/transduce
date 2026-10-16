@@ -32,7 +32,7 @@
 // stages as alchemy's `Routers`, for a host to pass to alchemy's `compile`.
 
 // This package's version, as package.json declares it.
-export const VERSION = '0.2.8'
+export const VERSION = '0.2.9'
 
 export {
   Datum,
