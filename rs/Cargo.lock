@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-transduce"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "criterion",
  "serde_json",
