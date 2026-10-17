@@ -5,14 +5,14 @@ go 1.24.7
 // The engine, jsonic, and the grammars the line sources parse with.
 require (
 	github.com/tabnas/csv/go v0.6.6
-	github.com/tabnas/json/go v0.5.17
+	github.com/tabnas/json/go v0.5.18
 	github.com/tabnas/jsonic/go v0.7.9
 	github.com/tabnas/parser/go v0.12.12
 )
 
 // The protocol types, declared in alchemy's shared package, which alchemy
 // carries from v0.2.0.
-require github.com/tabnas/alchemy/go v0.2.8
+require github.com/tabnas/alchemy/go v0.2.11
 
 // The grammars the tests run (the differential suite reads this list), and
 // the shared fixture runner.
