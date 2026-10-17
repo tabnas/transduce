@@ -90,6 +90,12 @@ impl<V: Send + 'static> Routers<V> for TransduceRouters {
     ) -> Result<Box<dyn ParserSink + Send>, Box<dyn Sink + Send>> {
         Ok(Box::new(TransduceTree::new(spec, downstream)))
     }
+
+    /// [`TransduceTree`] reads a spec's `:member` and `:text`, and holds a
+    /// text to the spec's `max_text_bytes` as it grows.
+    fn transduce_tree_reads_member_and_text(&self) -> bool {
+        true
+    }
 }
 
 /// The operator, driven through alchemy's `ScanEmitter`.

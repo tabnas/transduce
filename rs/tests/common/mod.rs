@@ -716,8 +716,9 @@ pub fn parser_events(row: &Row, input: &str) -> Result<Value, Failed> {
 }
 
 /// The row's `spec`: a JSON object of rules, each of `container`
-/// (`"object"` or `"array"`), `key` (a string, or a token's index) and
-/// `scalar` (a token's index, or `"value"`).
+/// (`"object"` or `"array"`), `key` and `member` (each a string, or a
+/// token's index), `scalar` (a token's index, or `"value"`) and `text` (a
+/// boolean).
 pub fn tree_spec(row: &Row) -> TreeSpec {
     let json = json_cell(row, "spec")
         .unwrap_or_else(|| panic!("{}: a tree row has a spec", row.location()));
@@ -736,9 +737,17 @@ pub fn tree_spec(row: &Row) -> TreeSpec {
             Some("array") => Some(TreeContainer::Array),
             Some(other) => panic!("{}: no container {other:?}", row.location()),
         };
-        let key = rule.get("key").map(|v| match v.as_str() {
-            Some(name) => TreeKey::Name(name.into()),
-            None => TreeKey::Token(index(v)),
+        let named = |field: &str| {
+            rule.get(field).map(|v| match v.as_str() {
+                Some(name) => TreeKey::Name(name.into()),
+                None => TreeKey::Token(index(v)),
+            })
+        };
+        let key = named("key");
+        let member = named("member");
+        let text = rule.get("text").is_some_and(|v| {
+            v.as_bool()
+                .unwrap_or_else(|| panic!("{}: text is a boolean: {v}", row.location()))
         });
         let scalar = rule.get("scalar").map(|v| match v.as_str() {
             Some("value") => TreeScalar::Value,
@@ -751,6 +760,8 @@ pub fn tree_spec(row: &Row) -> TreeSpec {
                 container,
                 key,
                 scalar,
+                member,
+                text,
             },
         )
     })
@@ -758,7 +769,8 @@ pub fn tree_spec(row: &Row) -> TreeSpec {
 
 /// `tree.tsv`: the events the native `transduce-tree` writes over the
 /// passes `ParserEventSource` delivers, through the source's guard, as a
-/// program's `transduce-tree` is lowered.
+/// program's `transduce-tree` is lowered: its texts held to the row's
+/// `max_scalar_bytes`, as the lowering holds them.
 pub fn tree(row: &Row, input: &str) -> Result<Value, Failed> {
     let limits = limits(row);
     let guarded = Guarded::new(
@@ -769,7 +781,10 @@ pub fn tree(row: &Row, input: &str) -> Result<Value, Failed> {
     );
     let (outcome, native) = ParserEventSource::new(row_parser(row), input)
         .limits(limits.clone())
-        .run_owned(TransduceTree::new(tree_spec(row), guarded));
+        .run_owned(TransduceTree::new(
+            tree_spec(row).with_max_text_bytes(limits.max_scalar_bytes),
+            guarded,
+        ));
     let recorded = Value::Array(native.into_inner().into_inner().iter().map(event).collect());
     match outcome {
         Ok(_) => Ok(recorded),

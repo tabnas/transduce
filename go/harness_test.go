@@ -775,8 +775,9 @@ func parserEventsStage(t testing.TB, row *support.Row, input string) (any, *fail
 }
 
 // treeSpecOf is the row's `spec`: a JSON object of rules, each of
-// `container` ("object" or "array"), `key` (a string, or a token's index)
-// and `scalar` (a token's index, or "value").
+// `container` ("object" or "array"), `key` and `member` (each a string, or
+// a token's index), `scalar` (a token's index, or "value") and `text` (a
+// boolean).
 func treeSpecOf(t testing.TB, row *support.Row) TreeSpec {
 	rules, ok := jsonCell(t, row, "spec").(map[string]any)
 	if !ok {
@@ -792,11 +793,19 @@ func treeSpecOf(t testing.TB, row *support.Row) TreeSpec {
 		case "array":
 			rule.Container = TreeArray
 		}
-		switch k := entry["key"].(type) {
-		case string:
-			rule.Key = TreeKey{Set: true, Name: k}
-		case json.Number:
-			rule.Key = TreeKey{Set: true, IsToken: true, Token: asInt(t, k)}
+		named := func(field string) TreeKey {
+			switch k := entry[field].(type) {
+			case string:
+				return TreeKey{Set: true, Name: k}
+			case json.Number:
+				return TreeKey{Set: true, IsToken: true, Token: asInt(t, k)}
+			}
+			return TreeKey{}
+		}
+		rule.Key = named("key")
+		rule.Member = named("member")
+		if text, ok := entry["text"].(bool); ok {
+			rule.Text = text
 		}
 		switch sc := entry["scalar"].(type) {
 		case string:
@@ -811,12 +820,15 @@ func treeSpecOf(t testing.TB, row *support.Row) TreeSpec {
 
 // treeStage is tree.tsv: the events the native transduce-tree writes over
 // the passes ParserEventSource delivers, through the source's guard, as a
-// program's transduce-tree is lowered.
+// program's transduce-tree is lowered: its texts held to the row's
+// max_scalar_bytes, as the lowering holds them.
 func treeStage(t testing.TB, row *support.Row, input string) (any, *failed) {
 	var rec Recorder
 	limits := limitsOf(t, row)
 	guarded := NewGuarded(&rec, limits, NewAbortFlag(), NewMetrics())
-	_, f := NewParserEventSource(rowParser(t, row), input).Limits(limits).Run(NewTransduceTree(treeSpecOf(t, row), guarded))
+	spec := treeSpecOf(t, row)
+	spec.MaxTextBytes = limits.MaxScalarBytes
+	_, f := NewParserEventSource(rowParser(t, row), input).Limits(limits).Run(NewTransduceTree(spec, guarded))
 	if f != nil {
 		return nil, &failed{fail: f, prefix: eventsValue(rec.Events), hasPre: true}
 	}

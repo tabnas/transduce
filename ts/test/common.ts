@@ -614,8 +614,8 @@ export function parserEvents(row: Row, input: string): unknown {
 }
 
 // The row's `spec`: a JSON object of rules, each of `container` (`"object"`
-// or `"array"`), `key` (a string, or a token's index) and `scalar` (a
-// token's index, or `"value"`).
+// or `"array"`), `key` and `member` (each a string, or a token's index),
+// `scalar` (a token's index, or `"value"`) and `text` (a boolean).
 export function treeSpec(row: Row): TreeSpec {
   const json = jsonCell(row, 'spec')
   if (undefined === json || null === json || 'object' !== typeof json) {
@@ -623,10 +623,14 @@ export function treeSpec(row: Row): TreeSpec {
   }
   const rules = new Map<string, TreeRule>()
   for (const [name, rule] of Object.entries(json as Record<string, any>)) {
-    const entry: { container?: 'object' | 'array'; key?: any; scalar?: any } = {}
+    const entry: { container?: 'object' | 'array'; key?: any; scalar?: any; member?: any; text?: boolean } = {}
     if (undefined !== rule.container) entry.container = rule.container
     if (undefined !== rule.key) entry.key = 'string' === typeof rule.key ? { name: rule.key } : { token: rule.key }
     if (undefined !== rule.scalar) entry.scalar = 'value' === rule.scalar ? 'value' : { token: rule.scalar }
+    if (undefined !== rule.member) {
+      entry.member = 'string' === typeof rule.member ? { name: rule.member } : { token: rule.member }
+    }
+    if (true === rule.text) entry.text = true
     rules.set(name, entry)
   }
   return { rules }
@@ -634,13 +638,15 @@ export function treeSpec(row: Row): TreeSpec {
 
 // `tree.tsv`: the events the native `transduce-tree` writes over the passes
 // `ParserEventSource` delivers, through the source's guard, as a program's
-// `transduce-tree` is lowered.
+// `transduce-tree` is lowered: its texts held to the row's
+// `max_scalar_bytes`, as the lowering holds them.
 export function tree(row: Row, input: string): unknown {
   const recorder = new EventRecorder()
   const lim = limits(row)
   const guarded = new Guarded(recorder, lim, new AbortFlag(), new Metrics())
+  const spec = { ...treeSpec(row), maxTextBytes: lim.max_scalar_bytes }
   try {
-    new ParserEventSource(rowParser(row), input).limits(lim).run(new TransduceTree(treeSpec(row), guarded))
+    new ParserEventSource(rowParser(row), input).limits(lim).run(new TransduceTree(spec, guarded))
   } catch (err) {
     throw new Failed(err, recorder.events.map(event))
   }

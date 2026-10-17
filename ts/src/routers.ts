@@ -69,4 +69,10 @@ export const routers: Routers = Object.freeze({
   transduceTree(spec: TreeSpec, downstream: Sink): ParserSink {
     return new TransduceTree(spec, downstream)
   },
+
+  // TransduceTree reads a spec's `:member` and `:text`, and holds a text to
+  // the spec's `maxTextBytes` as it grows.
+  transduceTreeReadsMemberAndText(): boolean {
+    return true
+  },
 })
