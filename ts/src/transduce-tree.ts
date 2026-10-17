@@ -20,11 +20,22 @@
 // length, as the library's step does. alchemy-cli's differential test
 // holds the two to the same bytes.
 //
+// A text is held to the spec's `maxTextBytes` as it grows, at the joins
+// the library's `string-join` makes and in their order: a pass's tokens
+// together, then the innermost text with them, and a closed text with the
+// text around it, each refused past the bound with alchemy's
+// `treeTextRefusal`. The routers say this native reads `:member` and
+// `:text` (routers.ts), which is what lets the lowering hand it a spec
+// that uses either.
+//
 // A pass's events are worked out before the first of them is written, as
 // the library's step returns them together: a pass that fails writes none.
-// The failures are the library's, with its codes and texts.
+// The failures are the library's, with its codes and texts, and in its
+// order: an open pass's key, then what it begins or yields, then its
+// tokens' text, then its member; a close pass's text, then what it ends or
+// yields.
 
-import { Datum, Ev, Fail, isTreeContainer } from '@tabnas/alchemy/shared'
+import { Datum, Ev, Fail, isTreeContainer, treeTextRefusal, utf8Bytes } from '@tabnas/alchemy/shared'
 import type { Flow, JsonEvent, ParserEvent, ParserSink, RulePass, Sink, TreeKey, TreeSpec } from '@tabnas/alchemy/shared'
 
 // The library's `transduce-tree`, natively, writing to `down`.
@@ -33,8 +44,10 @@ export class TransduceTree implements ParserSink {
   open = 0
   // A close handed its container on to the rule replacing it.
   carry = false
-  // The text each open `:text` rule has gathered, the innermost last.
+  // The text each open `:text` rule has gathered, the innermost last, and
+  // its length in UTF-8 bytes, which the bound is held to.
   readonly texts: string[] = []
+  readonly bytes: number[] = []
 
   constructor(
     readonly spec: TreeSpec,
@@ -55,19 +68,43 @@ export class TransduceTree implements ParserSink {
     }
   }
 
-  // The pass's tokens written to the innermost open text, if one is.
+  // The most bytes a text may hold.
+  private get max(): number {
+    return this.spec.maxTextBytes ?? Infinity
+  }
+
+  // The pass's tokens written to the innermost open text, if one is and the
+  // pass consumed any, as the library's `transduce-spell` writes them: the
+  // tokens' text joined, then written to the innermost, each join held to
+  // the bound.
   private spell(pass: RulePass): void {
+    if (0 === this.texts.length || 0 === pass.tokens.length) return
+    let more = ''
+    let n = 0
+    for (const token of pass.tokens) {
+      more += token.src
+      n += utf8Bytes(token.src)
+    }
+    if (n > this.max) throw treeTextRefusal(n, this.max)
+    this.write(more, n)
+  }
+
+  // `more`, of `n` bytes, written at the end of the innermost open text, as
+  // the library's `transduce-write` joins the two, held to the bound.
+  private write(more: string, n: number): void {
     const last = this.texts.length - 1
-    if (0 > last) return
-    let text = this.texts[last]
-    for (const token of pass.tokens) text += token.src
-    this.texts[last] = text
+    const len = this.bytes[last] + n
+    if (len > this.max) throw treeTextRefusal(len, this.max)
+    this.texts[last] += more
+    this.bytes[last] = len
   }
 
   private openPass(pass: RulePass): Flow {
-    this.spell(pass)
     const rule = this.spec.rules.get(pass.name)
-    if (undefined === rule) return 'continue'
+    if (undefined === rule) {
+      this.spell(pass)
+      return 'continue'
+    }
     const key = named(rule.key, pass)
     let then: JsonEvent | undefined
     let begins = false
@@ -80,12 +117,16 @@ export class TransduceTree implements ParserSink {
       const token = pass.tokens[rule.scalar.token]
       if (undefined !== token) then = scalar(token.val)
     }
+    this.spell(pass)
     const member = named(rule.member, pass)
     if (undefined !== rule.container) {
       if (begins) this.open++
       else this.carry = false
     }
-    if (true === rule.text) this.texts.push('')
+    if (true === rule.text) {
+      this.texts.push('')
+      this.bytes.push(0)
+    }
     for (const ev of [
       undefined === key ? undefined : Ev.key(key),
       then,
@@ -109,8 +150,8 @@ export class TransduceTree implements ParserSink {
     if (true === rule.text) {
       text = this.texts.pop()
       if (undefined === text) throw typeError('top: the vector is empty; there is no last item')
-      const last = this.texts.length - 1
-      if (0 <= last) this.texts[last] += text
+      const n = this.bytes.pop() as number
+      if (0 < this.texts.length) this.write(text, n)
     }
     this.spell(pass)
     let then: JsonEvent | undefined

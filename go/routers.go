@@ -47,3 +47,10 @@ func (routers) Guarded(inner Sink, limits Limits, abort *AbortFlag, metrics *Met
 func (routers) TransduceTree(spec TreeSpec, downstream Sink) ParserSink {
 	return NewTransduceTree(spec, downstream)
 }
+
+// TransduceTreeReadsMemberAndText is alchemy's optional
+// shared.TreeTextRouters: NewTransduceTree reads a spec's :member and
+// :text, and holds a text to the spec's MaxTextBytes as it grows.
+func (routers) TransduceTreeReadsMemberAndText() bool {
+	return true
+}

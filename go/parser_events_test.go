@@ -343,6 +343,58 @@ func TestATextJoinsTheTextAroundIt(t *testing.T) {
 	}
 }
 
+// A text is held to the spec's bound at the library's joins, in its
+// order, and refused as its `string-join` refuses: a pass's tokens
+// together, then the innermost text with them, then a closed text with the
+// text around it; a pass that fails writes nothing, and a text at the
+// bound is not refused (rs/src/transduce_tree.rs).
+func TestATextIsHeldToItsBoundAsTheLibraryHoldsIt(t *testing.T) {
+	spec := TreeSpec{Rules: map[string]TreeRule{"outer": {Text: true}, "inner": {Text: true}}, MaxTextBytes: 3}
+	open := func(name string, srcs ...string) ParserEvent {
+		return ParserEvent{Kind: ParserOpen, Pass: spelledPass(name, "", srcs...)}
+	}
+	closed := func(name string) ParserEvent { return ParserEvent{Kind: ParserClose, Pass: spelledPass(name, "")} }
+	refused := func(what string, n int, events ...ParserEvent) {
+		t.Helper()
+		got, f := runTree(spec, events...)
+		want := shared.TreeTextRefusal(n, 3)
+		if f == nil || f.Code != want.Code || f.Message != want.Message || f.Limit == nil || *f.Limit != *want.Limit || len(got) != 0 {
+			t.Errorf("%s: %v %v", what, got, f)
+		}
+	}
+	refused("a pass's tokens together", 4, open("outer"), open("x", "ab", "cd"))
+	refused("the innermost text with a pass's tokens", 4, open("outer"), open("x", "ab"), closed("x"), open("x", "cd"))
+	refused("a closed text with the text around it", 4,
+		open("outer"), open("x", "ab"), closed("x"), open("inner"), open("x", "cd"), closed("x"), closed("inner"))
+	got, f := runTree(spec,
+		open("outer"), open("x", "a"), closed("x"), open("inner"), open("x", "bc"), closed("x"), closed("inner"), closed("outer"),
+		ParserEvent{Kind: ParserEnd},
+	)
+	want := []Event{EvString("bc"), EvString("abc"), EvEnd()}
+	if f != nil || fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("at the bound: %v %v", got, f)
+	}
+
+	// An open pass's key is refused before its tokens' text, and its
+	// tokens' text before its member.
+	fields := TreeSpec{Rules: map[string]TreeRule{
+		"outer":  {Text: true},
+		"keyed":  {Key: TreeKey{Set: true, IsToken: true, Token: 0}},
+		"member": {Member: TreeKey{Set: true, IsToken: true, Token: 0}},
+	}, MaxTextBytes: 3}
+	wide := func(name string) ParserEvent {
+		p := handPass(name, "", nil, BoolDatum(true))
+		p.Tokens[0].Src = "true"
+		return ParserEvent{Kind: ParserOpen, Pass: p}
+	}
+	if _, f := runTree(fields, open("outer"), wide("keyed")); f == nil || f.Code != CodeDSLTypeError {
+		t.Errorf("keyed: %v", f)
+	}
+	if _, f := runTree(fields, open("outer"), wide("member")); f == nil || f.Message != shared.TreeTextRefusal(4, 3).Message {
+		t.Errorf("member: %v", f)
+	}
+}
+
 // The library's refusals of the two fields, with its codes and texts: a
 // member whose token is not a string, before anything the pass would
 // write, and a :text rule's close with no text open.

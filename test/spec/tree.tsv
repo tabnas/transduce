@@ -38,3 +38,14 @@ null	json	{"val":{"scalar":"value"}}		[["null"],["end"]]
 {"a":{"b":[1]}}	json	{"map":{"container":"object"},"pair":{"key":0,"text":true}}		[["object_start"],["key","a"],["object_start"],["key","b"],["string","[1]"],["object_end"],["string","{\"b\":[1]}"],["object_end"],["end"]]
 # The library's refusal of a member whose token is not a string.
 1	json	{"val":{"member":0}}		ERROR:DSL_TYPE_ERROR		[]
+# A text is held to max_scalar_bytes as it grows, as the library's
+# string-join holds it, and refused where the join past the bound is
+# made: a pass's tokens together (the inner pair's `"ab"` and `:`, 5
+# bytes), the innermost text with a pass's tokens (`{"b":1,` and `"c":`,
+# 11 bytes), a closed text with the text around it (`{"b":` and `123`, 8
+# bytes, whose own text is not yielded); each before the guard would
+# meet the text it makes. A text at the bound is not refused.
+{"a":{"ab":1}}	json	{"map":{"container":"object"},"pair":{"key":0,"text":true}}	{"max_scalar_bytes":4}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes	[["object_start"],["key","a"],["object_start"]]
+{"a":{"b":1,"c":2222}}	json	{"map":{"container":"object"},"pair":{"key":0,"text":true}}	{"max_scalar_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes	[["object_start"],["key","a"],["object_start"],["key","b"],["string","1"]]
+{"a":{"b":123}}	json	{"map":{"container":"object"},"pair":{"key":0,"text":true}}	{"max_scalar_bytes":7}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_scalar_bytes	[["object_start"],["key","a"],["object_start"],["key","b"]]
+{"a":[10,20]}	json	{"map":{"container":"object"},"pair":{"key":0,"text":true}}	{"max_scalar_bytes":7}	[["object_start"],["key","a"],["string","[10,20]"],["object_end"],["end"]]

@@ -820,12 +820,15 @@ func treeSpecOf(t testing.TB, row *support.Row) TreeSpec {
 
 // treeStage is tree.tsv: the events the native transduce-tree writes over
 // the passes ParserEventSource delivers, through the source's guard, as a
-// program's transduce-tree is lowered.
+// program's transduce-tree is lowered: its texts held to the row's
+// max_scalar_bytes, as the lowering holds them.
 func treeStage(t testing.TB, row *support.Row, input string) (any, *failed) {
 	var rec Recorder
 	limits := limitsOf(t, row)
 	guarded := NewGuarded(&rec, limits, NewAbortFlag(), NewMetrics())
-	_, f := NewParserEventSource(rowParser(t, row), input).Limits(limits).Run(NewTransduceTree(treeSpecOf(t, row), guarded))
+	spec := treeSpecOf(t, row)
+	spec.MaxTextBytes = limits.MaxScalarBytes
+	_, f := NewParserEventSource(rowParser(t, row), input).Limits(limits).Run(NewTransduceTree(spec, guarded))
 	if f != nil {
 		return nil, &failed{fail: f, prefix: eventsValue(rec.Events), hasPre: true}
 	}

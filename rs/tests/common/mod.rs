@@ -769,7 +769,8 @@ pub fn tree_spec(row: &Row) -> TreeSpec {
 
 /// `tree.tsv`: the events the native `transduce-tree` writes over the
 /// passes `ParserEventSource` delivers, through the source's guard, as a
-/// program's `transduce-tree` is lowered.
+/// program's `transduce-tree` is lowered: its texts held to the row's
+/// `max_scalar_bytes`, as the lowering holds them.
 pub fn tree(row: &Row, input: &str) -> Result<Value, Failed> {
     let limits = limits(row);
     let guarded = Guarded::new(
@@ -780,7 +781,10 @@ pub fn tree(row: &Row, input: &str) -> Result<Value, Failed> {
     );
     let (outcome, native) = ParserEventSource::new(row_parser(row), input)
         .limits(limits.clone())
-        .run_owned(TransduceTree::new(tree_spec(row), guarded));
+        .run_owned(TransduceTree::new(
+            tree_spec(row).with_max_text_bytes(limits.max_scalar_bytes),
+            guarded,
+        ));
     let recorded = Value::Array(native.into_inner().into_inner().iter().map(event).collect());
     match outcome {
         Ok(_) => Ok(recorded),

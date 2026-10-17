@@ -29,6 +29,7 @@ import {
   TransduceTree,
   TreeSpec,
   parserEventToJSON,
+  treeTextRefusal,
 } from '../dist/transduce'
 
 class Seen implements ParserSink {
@@ -312,6 +313,79 @@ describe('TransduceTree', () => {
       { type: 'end' },
     ])
     assert.deepStrictEqual(out.events, [Ev.string('b'), Ev.string('a(b)'), Ev.end])
+  })
+
+  // A text is held to the spec's bound at the library's joins, in its
+  // order, and refused as its `string-join` refuses: a pass's tokens
+  // together, then the innermost text with them, then a closed text with
+  // the text around it; a pass that fails writes nothing, and a text at the
+  // bound is not refused (rs/src/transduce_tree.rs).
+  it('a text is held to its bound as the library holds it', () => {
+    const spec: TreeSpec = {
+      rules: new Map<string, any>([
+        ['outer', { text: true }],
+        ['inner', { text: true }],
+      ]),
+      maxTextBytes: 3,
+    }
+    const open = (name: string, srcs: string[]): ParserEvent => ({ type: 'open', pass: spelled(name, srcs, '') })
+    const close = (name: string): ParserEvent => ({ type: 'close', pass: spelled(name, [], '') })
+    const refused = (events: ParserEvent[], len: number): EventRecorder => {
+      const out = new EventRecorder()
+      const native = new TransduceTree(spec, out)
+      const err = thrown(() => {
+        for (const ev of events) native.event(ev)
+      })
+      assert.deepStrictEqual(err, treeTextRefusal(len, 3))
+      return out
+    }
+
+    // A pass's tokens together, past the bound.
+    assert.deepStrictEqual(refused([open('outer', []), open('x', ['ab', 'cd'])], 4).events, [])
+    // The innermost text with a pass's tokens, its bytes counted in UTF-8.
+    refused([open('outer', []), open('x', ['ab']), close('x'), open('x', ['cd'])], 4)
+    refused([open('outer', []), open('x', ['é']), close('x'), open('x', ['é'])], 4)
+    // A closed text with the text around it: the inner text, within the
+    // bound, is not yielded when its join fails.
+    const out = refused(
+      [open('outer', []), open('x', ['ab']), close('x'), open('inner', []), open('x', ['cd']), close('x'), close('inner')],
+      4,
+    )
+    assert.deepStrictEqual(out.events, [])
+    // At the bound, nothing is refused.
+    assert.deepStrictEqual(
+      run(spec, [
+        open('outer', []),
+        open('x', ['a']),
+        close('x'),
+        open('inner', []),
+        open('x', ['bc']),
+        close('x'),
+        close('inner'),
+        close('outer'),
+        { type: 'end' },
+      ]).events,
+      [Ev.string('bc'), Ev.string('abc'), Ev.end],
+    )
+
+    // An open pass's key is refused before its tokens' text, and its
+    // tokens' text before its member.
+    const fields: TreeSpec = {
+      rules: new Map<string, any>([
+        ['outer', { text: true }],
+        ['keyed', { key: { token: 0 } }],
+        ['member', { member: { token: 0 } }],
+      ]),
+      maxTextBytes: 3,
+    }
+    const wide = (name: string): ParserEvent => {
+      const p = pass(name, [Datum.bool(true)], '')
+      return { type: 'open', pass: { ...p, tokens: p.tokens.map((t) => ({ ...t, src: 'true' })) } }
+    }
+    let err = thrown(() => run(fields, [open('outer', []), wide('keyed')]))
+    assert.equal(err.code, 'DSL_TYPE_ERROR')
+    err = thrown(() => run(fields, [open('outer', []), wide('member')]))
+    assert.deepStrictEqual(err, treeTextRefusal(4, 3))
   })
 
   // The library's refusals of the two fields, with its codes and texts: a

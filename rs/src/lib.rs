@@ -51,8 +51,8 @@ pub mod transduce_tree;
 pub use tabnas_alchemy::shared::{datum, error, event, limits, selector, sink, table};
 
 pub use tabnas_alchemy::shared::{
-    parser_event, tree, ParserEvent, ParserSink, PassAlt, PassToken, RulePass, TreeContainer,
-    TreeKey, TreeRule, TreeScalar, TreeSpec,
+    parser_event, tree, tree_text_refusal, ParserEvent, ParserSink, PassAlt, PassToken, RulePass,
+    TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec,
 };
 
 pub use datum::{

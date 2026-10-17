@@ -638,13 +638,15 @@ export function treeSpec(row: Row): TreeSpec {
 
 // `tree.tsv`: the events the native `transduce-tree` writes over the passes
 // `ParserEventSource` delivers, through the source's guard, as a program's
-// `transduce-tree` is lowered.
+// `transduce-tree` is lowered: its texts held to the row's
+// `max_scalar_bytes`, as the lowering holds them.
 export function tree(row: Row, input: string): unknown {
   const recorder = new EventRecorder()
   const lim = limits(row)
   const guarded = new Guarded(recorder, lim, new AbortFlag(), new Metrics())
+  const spec = { ...treeSpec(row), maxTextBytes: lim.max_scalar_bytes }
   try {
-    new ParserEventSource(rowParser(row), input).limits(lim).run(new TransduceTree(treeSpec(row), guarded))
+    new ParserEventSource(rowParser(row), input).limits(lim).run(new TransduceTree(spec, guarded))
   } catch (err) {
     throw new Failed(err, recorder.events.map(event))
   }

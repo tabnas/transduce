@@ -3,6 +3,7 @@
 package tabnastransduce
 
 import (
+	"math"
 	"strings"
 
 	"github.com/tabnas/alchemy/go/shared"
@@ -45,9 +46,20 @@ const (
 // length, as the library's step does. alchemy-cli's differential test
 // holds the two to the same bytes.
 //
+// A text is held to the spec's MaxTextBytes as it grows, at the joins the
+// library's `string-join` makes and in their order: a pass's tokens
+// together, then the innermost text with them, and a closed text with the
+// text around it, each refused past the bound with alchemy's
+// TreeTextRefusal. The routers say this native reads :member and :text
+// (routers.go), which is what lets the lowering hand it a spec that uses
+// either.
+//
 // A pass's events are worked out before the first of them is written, as
 // the library's step returns them together: a pass that fails writes
-// none. The failures are the library's, with its codes and texts.
+// none. The failures are the library's, with its codes and texts, and in
+// its order: an open pass's key, then what it begins or yields, then its
+// tokens' text, then its member; a close pass's text, then what it ends
+// or yields.
 type TransduceTree struct {
 	spec  TreeSpec
 	open  int
@@ -82,22 +94,53 @@ func (t *TransduceTree) ParserEvent(ev ParserEvent) (Flow, *Fail) {
 	return Continue, shared.ProtocolFail("a parser event is an open, a close or the end, not " + ev.Kind.String())
 }
 
-// spell writes the pass's tokens to the innermost open text, if one is.
-func (t *TransduceTree) spell(pass *RulePass) {
-	if len(t.texts) == 0 {
-		return
+// max is the most bytes a text may hold: the spec's MaxTextBytes, which
+// zero leaves unbounded.
+func (t *TransduceTree) max() int {
+	if t.spec.MaxTextBytes == 0 {
+		return math.MaxInt
+	}
+	return t.spec.MaxTextBytes
+}
+
+// spell writes the pass's tokens to the innermost open text, if one is and
+// the pass consumed any, as the library's `transduce-spell` writes them:
+// the tokens' text joined, then written to the innermost, each join held
+// to the bound.
+func (t *TransduceTree) spell(pass *RulePass) *Fail {
+	if len(t.texts) == 0 || len(pass.Tokens) == 0 {
+		return nil
+	}
+	more := 0
+	for _, token := range pass.Tokens {
+		more += len(token.Src)
+	}
+	if max := t.max(); more > max {
+		return shared.TreeTextRefusal(more, max)
 	}
 	text := t.texts[len(t.texts)-1]
+	if f := t.fits(text, more); f != nil {
+		return f
+	}
 	for _, token := range pass.Tokens {
 		text.WriteString(token.Src)
 	}
+	return nil
+}
+
+// fits refuses, as the library's `transduce-write` would, a join of more
+// bytes to text past the bound.
+func (t *TransduceTree) fits(text *strings.Builder, more int) *Fail {
+	if max := t.max(); text.Len()+more > max {
+		return shared.TreeTextRefusal(text.Len()+more, max)
+	}
+	return nil
 }
 
 func (t *TransduceTree) openPass(pass *RulePass) (Flow, *Fail) {
-	t.spell(pass)
 	rule, ok := t.spec.Rule(pass.Name)
 	if !ok {
-		return Continue, nil
+		return Continue, t.spell(pass)
 	}
 	key, hasKey, f := named(rule.Key, pass)
 	if f != nil {
@@ -122,6 +165,9 @@ func (t *TransduceTree) openPass(pass *RulePass) (Flow, *Fail) {
 			}
 			then, hasThen = ev, true
 		}
+	}
+	if f := t.spell(pass); f != nil {
+		return Continue, f
 	}
 	member, hasMember, f := named(rule.Member, pass)
 	if f != nil {
@@ -156,8 +202,7 @@ func (t *TransduceTree) openPass(pass *RulePass) (Flow, *Fail) {
 func (t *TransduceTree) closePass(pass *RulePass) (Flow, *Fail) {
 	rule, ok := t.spec.Rule(pass.Name)
 	if !ok {
-		t.spell(pass)
-		return Continue, nil
+		return Continue, t.spell(pass)
 	}
 	// A :text rule's text closes first, and joins the one around it before
 	// this pass's own tokens do; it is yielded before anything else, once
@@ -170,10 +215,16 @@ func (t *TransduceTree) closePass(pass *RulePass) (Flow, *Fail) {
 		text, hasText = t.texts[len(t.texts)-1].String(), true
 		t.texts = t.texts[:len(t.texts)-1]
 		if len(t.texts) > 0 {
-			t.texts[len(t.texts)-1].WriteString(text)
+			around := t.texts[len(t.texts)-1]
+			if f := t.fits(around, len(text)); f != nil {
+				return Continue, f
+			}
+			around.WriteString(text)
 		}
 	}
-	t.spell(pass)
+	if f := t.spell(pass); f != nil {
+		return Continue, f
+	}
 	var then Event
 	hasThen := false
 	switch {

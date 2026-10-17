@@ -78,7 +78,7 @@ export { Guarded } from './guard'
 export { ParserSource } from './parser-source'
 export { ParserEventSource } from './parser-event-source'
 export { TransduceTree } from './transduce-tree'
-export { isTreeContainer, parserEventFromJSON, parserEventToJSON } from '@tabnas/alchemy/shared'
+export { isTreeContainer, parserEventFromJSON, parserEventToJSON, treeTextRefusal } from '@tabnas/alchemy/shared'
 export type {
   ParserEvent,
   ParserSink,

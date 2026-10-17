@@ -145,15 +145,29 @@ events with a spec of the standard shape, the source's guard in front of
 what it writes. The library's text, `stdlib/transduce.alc`, is the
 specification, and alchemy's `TreeSpec` documents what the native does
 pass for pass: an open pass announces its `key`, then begins its
-`container` or yields its `scalar` from one of its tokens; a close pass
-ends its container, or yields its own `value`; a container rule replaced
-by a container rule is one container. Its state is the count of open
-containers and whether a close handed its container on, so it retains
-the document's nesting and nothing of its width or length. A pass's
-events are worked out before the first is written, and its failures are
-the library's: `DSL_TYPE_ERROR` for a key that is not a string, a scalar
-that is a container and a close that ends a container with nothing open,
-`PROTOCOL_ORDER_ERROR` for passes that end inside a container. A close
+`container` or yields its `scalar` from one of its tokens, then announces
+its `member`; a close pass yields its `text`, when its rule is a `:text`
+rule, then ends its container, or yields its own `value`; a container
+rule replaced by a container rule is one container. A `:text` rule's text
+is the source text of the tokens the passes between its open and its
+close consumed, in order, and a text closed inside another joins it.
+Its state is the count of open containers, whether a close handed its
+container on, and the text each open `:text` rule has gathered, so it
+retains the document's nesting and an open rule's text, and nothing else
+of its width or length. A text is held to the spec's `max_text_bytes`,
+which the lowering sets to `max_scalar_bytes`, at the joins the library's
+`string-join` makes and in their order: a pass's tokens together, then
+the innermost text with them, and a closed text with the text around it.
+`routers()` says the native reads `:member` and `:text`
+(`Routers::transduce_tree_reads_member_and_text`), which is what lets the
+lowering hand it a spec that uses either; routers that do not say so get
+the library's text for such a spec. A pass's events are worked out
+before the first is written, and its failures are the library's, in its
+order: `DSL_TYPE_ERROR` for a key or a member that is not a string, a
+scalar that is a container, a close that ends a container with nothing
+open and a `:text` rule's close with no text open,
+`RESOURCE_LIMIT_EXCEEDED` naming `max_scalar_bytes` for a text past the
+bound, `PROTOCOL_ORDER_ERROR` for passes that end inside a container. A close
 that hands its container on ends none, so it is not held to an open one,
 in the library's text or here; the passes a source delivers always open
 a rule before they close it. alchemy-cli's differential test
@@ -475,7 +489,7 @@ returned (`"continue"` or `"stop"`).
 | `lines.tsv` | 50 | `LinesSource`: JSON Lines and CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR, blank JSON Lines records, a line character inside a string) |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
 | `parser-events.tsv` | 7 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
-| `tree.tsv` | 7 | `TransduceTree` over tabnas-json's passes: the json part's spec and its lexemes, a close pass's value, a container handed on through a replaced rule, the library's refusal of a key that is not a string, the guard in front |
+| `tree.tsv` | 18 | `TransduceTree` over tabnas-json's passes: the json part's spec and its lexemes, a close pass's value, a container handed on through a replaced rule, the library's refusal of a key that is not a string, the guard in front, a rule's text and a text joined to the one around it, a member after its container's start, the refusal of a member that is not a string, a text held to `max_scalar_bytes` at each of the library's joins and not refused at the bound |
 | `limits.tsv` | 71 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
 
 ### What a port must reproduce exactly
