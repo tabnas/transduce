@@ -614,8 +614,8 @@ export function parserEvents(row: Row, input: string): unknown {
 }
 
 // The row's `spec`: a JSON object of rules, each of `container` (`"object"`
-// or `"array"`), `key` (a string, or a token's index) and `scalar` (a
-// token's index, or `"value"`).
+// or `"array"`), `key` and `member` (each a string, or a token's index),
+// `scalar` (a token's index, or `"value"`) and `text` (a boolean).
 export function treeSpec(row: Row): TreeSpec {
   const json = jsonCell(row, 'spec')
   if (undefined === json || null === json || 'object' !== typeof json) {
@@ -623,10 +623,14 @@ export function treeSpec(row: Row): TreeSpec {
   }
   const rules = new Map<string, TreeRule>()
   for (const [name, rule] of Object.entries(json as Record<string, any>)) {
-    const entry: { container?: 'object' | 'array'; key?: any; scalar?: any } = {}
+    const entry: { container?: 'object' | 'array'; key?: any; scalar?: any; member?: any; text?: boolean } = {}
     if (undefined !== rule.container) entry.container = rule.container
     if (undefined !== rule.key) entry.key = 'string' === typeof rule.key ? { name: rule.key } : { token: rule.key }
     if (undefined !== rule.scalar) entry.scalar = 'value' === rule.scalar ? 'value' : { token: rule.scalar }
+    if (undefined !== rule.member) {
+      entry.member = 'string' === typeof rule.member ? { name: rule.member } : { token: rule.member }
+    }
+    if (true === rule.text) entry.text = true
     rules.set(name, entry)
   }
   return { rules }

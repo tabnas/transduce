@@ -2,7 +2,11 @@
 
 package tabnastransduce
 
-import "github.com/tabnas/alchemy/go/shared"
+import (
+	"strings"
+
+	"github.com/tabnas/alchemy/go/shared"
+)
 
 // The spec of the library's transduce-tree (alchemy's shared/tree.go),
 // under this package's names.
@@ -29,14 +33,17 @@ const (
 // alchemy's TreeSpec documents what a native must do: each pass is looked
 // up by its rule's name, one lookup per pass whatever the spec's size; an
 // open pass announces its key, then begins its container or yields its
-// scalar from one of its tokens; a close pass ends its container, or
-// yields its own value; and a container whose rule is replaced by a rule
-// the spec names a container is one container, so that close ends nothing
-// and the replacing open begins nothing. The state is the count of open
-// containers and whether a close handed its container on, so the native
-// retains the document's nesting and nothing of its width or length, as
-// the library's step does. alchemy-cli's differential test holds the two
-// to the same bytes.
+// scalar from one of its tokens, then announces its member; a close pass
+// yields its text, when its rule is a :text rule, then ends its
+// container, or yields its own value; and a container whose rule is
+// replaced by a rule the spec names a container is one container, so that
+// close ends nothing and the replacing open begins nothing. The state is
+// the count of open containers, whether a close handed its container on,
+// and the text each open :text rule has gathered, to which every pass
+// writes its tokens' source text, so the native retains the document's
+// nesting and an open rule's text, and nothing else of its width or
+// length, as the library's step does. alchemy-cli's differential test
+// holds the two to the same bytes.
 //
 // A pass's events are worked out before the first of them is written, as
 // the library's step returns them together: a pass that fails writes
@@ -45,6 +52,9 @@ type TransduceTree struct {
 	spec  TreeSpec
 	open  int
 	carry bool
+	// texts is the text each open :text rule has gathered, the innermost
+	// last.
+	texts []*strings.Builder
 	down  Sink
 }
 
@@ -72,31 +82,33 @@ func (t *TransduceTree) ParserEvent(ev ParserEvent) (Flow, *Fail) {
 	return Continue, shared.ProtocolFail("a parser event is an open, a close or the end, not " + ev.Kind.String())
 }
 
+// spell writes the pass's tokens to the innermost open text, if one is.
+func (t *TransduceTree) spell(pass *RulePass) {
+	if len(t.texts) == 0 {
+		return
+	}
+	text := t.texts[len(t.texts)-1]
+	for _, token := range pass.Tokens {
+		text.WriteString(token.Src)
+	}
+}
+
 func (t *TransduceTree) openPass(pass *RulePass) (Flow, *Fail) {
+	t.spell(pass)
 	rule, ok := t.spec.Rule(pass.Name)
 	if !ok {
 		return Continue, nil
 	}
-	key, hasKey := "", false
-	if rule.Key.Set {
-		if !rule.Key.IsToken {
-			key, hasKey = rule.Key.Name, true
-		} else if rule.Key.Token < len(pass.Tokens) {
-			val := pass.Tokens[rule.Key.Token].Val
-			if val.Kind != shared.DatumString {
-				return Continue, typeError("key: the name must be a string, not " + kind(val))
-			}
-			key, hasKey = val.Text, true
-		}
+	key, hasKey, f := named(rule.Key, pass)
+	if f != nil {
+		return Continue, f
 	}
 	var then Event
-	hasThen := false
+	hasThen, begins := false, false
 	switch rule.Container {
 	case TreeObject, TreeArray:
-		if t.carry {
-			t.carry = false
-		} else {
-			t.open++
+		if !t.carry {
+			begins = true
 			then, hasThen = EvArrayStart(), true
 			if rule.Container == TreeObject {
 				then = EvObjectStart()
@@ -111,8 +123,83 @@ func (t *TransduceTree) openPass(pass *RulePass) (Flow, *Fail) {
 			then, hasThen = ev, true
 		}
 	}
+	member, hasMember, f := named(rule.Member, pass)
+	if f != nil {
+		return Continue, f
+	}
+	if rule.Container != TreeNoContainer {
+		if begins {
+			t.open++
+		} else {
+			t.carry = false
+		}
+	}
+	if rule.Text {
+		t.texts = append(t.texts, &strings.Builder{})
+	}
 	if hasKey {
 		if flow, f := t.down.Event(EvKey(key)); f != nil || flow == Stop {
+			return flow, f
+		}
+	}
+	if hasThen {
+		if flow, f := t.down.Event(then); f != nil || flow == Stop {
+			return flow, f
+		}
+	}
+	if hasMember {
+		return t.down.Event(EvKey(member))
+	}
+	return Continue, nil
+}
+
+func (t *TransduceTree) closePass(pass *RulePass) (Flow, *Fail) {
+	rule, ok := t.spec.Rule(pass.Name)
+	if !ok {
+		t.spell(pass)
+		return Continue, nil
+	}
+	// A :text rule's text closes first, and joins the one around it before
+	// this pass's own tokens do; it is yielded before anything else, once
+	// the rest of the pass is known not to fail.
+	text, hasText := "", false
+	if rule.Text {
+		if len(t.texts) == 0 {
+			return Continue, typeError("top: the vector is empty; there is no last item")
+		}
+		text, hasText = t.texts[len(t.texts)-1].String(), true
+		t.texts = t.texts[:len(t.texts)-1]
+		if len(t.texts) > 0 {
+			t.texts[len(t.texts)-1].WriteString(text)
+		}
+	}
+	t.spell(pass)
+	var then Event
+	hasThen := false
+	switch {
+	case rule.Container == TreeNoContainer:
+		if rule.Scalar.Set && rule.Scalar.Value && pass.Value != nil {
+			ev, f := scalar(*pass.Value)
+			if f != nil {
+				return Continue, f
+			}
+			then, hasThen = ev, true
+		}
+	case pass.Alt != nil && t.spec.IsContainer(pass.Alt.R):
+		t.carry = true
+	default:
+		if t.open == 0 {
+			return Continue, typeError("pop: the vector is empty; there is no last item to remove")
+		}
+		t.open--
+		t.carry = false
+		then, hasThen = EvArrayEnd(), true
+		if rule.Container == TreeObject {
+			then = EvObjectEnd()
+		}
+	}
+	if hasText {
+		if flow, f := t.down.Event(EvString(text)); f != nil || flow == Stop {
 			return flow, f
 		}
 	}
@@ -122,34 +209,25 @@ func (t *TransduceTree) openPass(pass *RulePass) (Flow, *Fail) {
 	return t.down.Event(then)
 }
 
-func (t *TransduceTree) closePass(pass *RulePass) (Flow, *Fail) {
-	rule, ok := t.spec.Rule(pass.Name)
-	if !ok {
-		return Continue, nil
+// named is the member name a field of a rule's entry names for a pass: the
+// string, or the :val of the pass's token at that index, nothing when the
+// pass consumed no such token; the library's `key` refuses a name that is
+// not a string.
+func named(field TreeKey, pass *RulePass) (string, bool, *Fail) {
+	if !field.Set {
+		return "", false, nil
 	}
-	if rule.Container == TreeNoContainer {
-		if rule.Scalar.Set && rule.Scalar.Value && pass.Value != nil {
-			ev, f := scalar(*pass.Value)
-			if f != nil {
-				return Continue, f
-			}
-			return t.down.Event(ev)
-		}
-		return Continue, nil
+	if !field.IsToken {
+		return field.Name, true, nil
 	}
-	if pass.Alt != nil && t.spec.IsContainer(pass.Alt.R) {
-		t.carry = true
-		return Continue, nil
+	if field.Token >= len(pass.Tokens) {
+		return "", false, nil
 	}
-	if t.open == 0 {
-		return Continue, typeError("pop: the vector is empty; there is no last item to remove")
+	val := pass.Tokens[field.Token].Val
+	if val.Kind != shared.DatumString {
+		return "", false, typeError("key: the name must be a string, not " + kind(val))
 	}
-	t.open--
-	t.carry = false
-	if rule.Container == TreeObject {
-		return t.down.Event(EvObjectEnd())
-	}
-	return t.down.Event(EvArrayEnd())
+	return val.Text, true, nil
 }
 
 // scalar is a value as the library's `scalar` takes it, or its refusal.

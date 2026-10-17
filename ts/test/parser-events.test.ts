@@ -159,6 +159,14 @@ function pass(name: string, tokens: Datum[], r: string, value?: Datum): RulePass
   }
 }
 
+// A pass whose tokens are spelled `srcs`, each one's value its text.
+function spelled(name: string, srcs: string[], r: string): RulePass {
+  return {
+    ...pass(name, [], r),
+    tokens: srcs.map((src) => ({ name: '#T', val: Datum.string(src), src, row: 1, col: 1 })),
+  }
+}
+
 function run(spec: TreeSpec, events: ParserEvent[]): EventRecorder {
   const out = new EventRecorder()
   const native = new TransduceTree(spec, out)
@@ -247,5 +255,82 @@ describe('TransduceTree', () => {
       { type: 'end' },
     ])
     assert.deepStrictEqual(out.events, [Ev.arrayStart, Ev.arrayEnd, Ev.end])
+  })
+
+  // A member is announced after what its rule begins, here a container one
+  // rule begins and a rule it replaces carries on; a `:text` rule's close
+  // yields first the text the passes between its open and it consumed, its
+  // own open's and close's tokens not among them, a rule the spec does not
+  // name writing its tokens too (rs/src/transduce_tree.rs's test).
+  it("a member after the start, and a rule's text", () => {
+    const spec: TreeSpec = {
+      rules: new Map<string, any>([
+        ['row', { container: 'object', member: { name: 'a' }, text: true }],
+        ['next', { container: 'object', member: { token: 0 }, text: true }],
+      ]),
+    }
+    const out = run(spec, [
+      { type: 'open', pass: spelled('row', ['<'], '') },
+      { type: 'open', pass: spelled('cell', ['1', '2'], '') },
+      { type: 'close', pass: spelled('cell', ['3'], '') },
+      { type: 'close', pass: spelled('row', [','], 'next') },
+      { type: 'open', pass: spelled('next', ['b'], '') },
+      { type: 'open', pass: spelled('cell', ['x'], '') },
+      { type: 'close', pass: spelled('cell', [], '') },
+      { type: 'close', pass: spelled('next', ['>'], '') },
+      { type: 'end' },
+    ])
+    assert.deepStrictEqual(out.events, [
+      Ev.objectStart,
+      Ev.key('a'),
+      Ev.string('123'),
+      Ev.key('b'),
+      Ev.string('x'),
+      Ev.objectEnd,
+      Ev.end,
+    ])
+  })
+
+  // A `:text` rule closed inside another joins its text to the one around
+  // it, its own open's tokens before it and its close's after.
+  it('a text joins the text around it', () => {
+    const spec: TreeSpec = {
+      rules: new Map<string, any>([
+        ['outer', { text: true }],
+        ['inner', { text: true }],
+      ]),
+    }
+    const out = run(spec, [
+      { type: 'open', pass: spelled('outer', ['['], '') },
+      { type: 'open', pass: spelled('x', ['a'], '') },
+      { type: 'close', pass: spelled('x', [], '') },
+      { type: 'open', pass: spelled('inner', ['('], '') },
+      { type: 'open', pass: spelled('x', ['b'], '') },
+      { type: 'close', pass: spelled('x', [], '') },
+      { type: 'close', pass: spelled('inner', [')'], '') },
+      { type: 'close', pass: spelled('outer', [']'], '') },
+      { type: 'end' },
+    ])
+    assert.deepStrictEqual(out.events, [Ev.string('b'), Ev.string('a(b)'), Ev.end])
+  })
+
+  // The library's refusals of the two fields, with its codes and texts: a
+  // member whose token is not a string, before anything the pass would
+  // write, and a `:text` rule's close with no text open.
+  it("the library's refusals of a member and a text", () => {
+    const membered: TreeSpec = {
+      rules: new Map<string, any>([['row', { container: 'object', member: { token: 0 } }]]),
+    }
+    const out = new EventRecorder()
+    let err = thrown(() =>
+      new TransduceTree(membered, out).event({ type: 'open', pass: pass('row', [Datum.bool(true)], '') }),
+    )
+    assert.equal(err.code, 'DSL_TYPE_ERROR')
+    assert.equal(err.message, 'type_mismatch: key: the name must be a string, not a boolean')
+    assert.deepStrictEqual(out.events, [])
+    const texted: TreeSpec = { rules: new Map<string, any>([['t', { text: true }]]) }
+    err = thrown(() => run(texted, [{ type: 'close', pass: pass('t', [], '') }]))
+    assert.equal(err.code, 'DSL_TYPE_ERROR')
+    assert.equal(err.message, 'type_mismatch: top: the vector is empty; there is no last item')
   })
 })

@@ -3,9 +3,10 @@ input	grammar	spec	limits	expected	limit	prefix
 # ParserEventSource delivers, through the source's guard, as a program's
 # transduce-tree is lowered. A row is a text, the grammar that reads it and
 # the spec: a JSON object of rules, each of `container` ("object" or
-# "array"), `key` (a string, or a token's index) and `scalar` (a token's
-# index, or "value"). The expected value is the event stream in the
-# encoding docs/reference.md gives, or ERROR:<CODE>.
+# "array"), `key` and `member` (each a string, or a token's index),
+# `scalar` (a token's index, or "value") and `text` (a boolean). The
+# expected value is the event stream in the encoding docs/reference.md
+# gives, or ERROR:<CODE>.
 # The json part's spec makes the document's events, lexemes kept.
 {"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	{"map":{"container":"object"},"list":{"container":"array"},"pair":{"key":0},"val":{"scalar":0}}		[["object_start"],["key","a"],["array_start"],["number",1,"1"],["number",2.5,"2.50"],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e21,"1e21"],["key","f"],["bool",true],["object_end"],["end"]]
 [[[]],[{}]]	json	{"map":{"container":"object"},"list":{"container":"array"},"pair":{"key":0},"val":{"scalar":0}}		[["array_start"],["array_start"],["array_start"],["array_end"],["array_end"],["array_start"],["object_start"],["object_end"],["array_end"],["array_end"],["end"]]
@@ -23,3 +24,17 @@ null	json	{"val":{"scalar":"value"}}		[["null"],["end"]]
 1	json	{"val":{"key":0}}		ERROR:DSL_TYPE_ERROR		[]
 # The source's guard holds on what the native writes.
 [[[1]]]	json	{"map":{"container":"object"},"list":{"container":"array"},"pair":{"key":0},"val":{"scalar":0}}	{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth	[["array_start"],["array_start"]]
+# A :text rule's close yields first the text the passes between its open
+# and its close consumed, each token's source text in order: here a pair's
+# value as it is spelled, spaces aside, which no token holds.
+{"a":[1, 2],"b":"x","d":7}	json	{"map":{"container":"object"},"pair":{"key":0,"text":true}}		[["object_start"],["key","a"],["string","[1,2]"],["key","b"],["string","\"x\""],["key","d"],["string","7"],["object_end"],["end"]]
+# A member is announced after the container its rule begins; with :text,
+# the container's own text is that member's value.
+[1,2]	json	{"list":{"container":"object","member":"items","text":true}}		[["object_start"],["key","items"],["string","1,2"],["object_end"],["end"]]
+[]	json	{"list":{"container":"object","member":"items","text":true}}		[["object_start"],["key","items"],["string",""],["object_end"],["end"]]
+# A :text rule closed inside another joins its text to the one around it,
+# with the tokens of its own open before and of its close after. The
+# spec tests the joining: its events are not one tree's.
+{"a":{"b":[1]}}	json	{"map":{"container":"object"},"pair":{"key":0,"text":true}}		[["object_start"],["key","a"],["object_start"],["key","b"],["string","[1]"],["object_end"],["string","{\"b\":[1]}"],["object_end"],["end"]]
+# The library's refusal of a member whose token is not a string.
+1	json	{"val":{"member":0}}		ERROR:DSL_TYPE_ERROR		[]

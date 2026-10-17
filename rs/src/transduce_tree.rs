@@ -6,14 +6,17 @@
 //! alchemy's `TreeSpec` documents what a native must do: each pass is
 //! looked up by its rule's name, one lookup per pass whatever the spec's
 //! size; an open pass announces its key, then begins its container or
-//! yields its scalar from one of its tokens; a close pass ends its
-//! container, or yields its own value; and a container whose rule is
+//! yields its scalar from one of its tokens, then announces its member; a
+//! close pass yields its text, when its rule is a `:text` rule, then ends
+//! its container, or yields its own value; and a container whose rule is
 //! replaced by a rule the spec names a container is one container, so that
 //! close ends nothing and the replacing open begins nothing. The state is
-//! the count of open containers and whether a close handed its container
-//! on, so the native retains the document's nesting and nothing of its
-//! width or length, as the library's step does. alchemy-cli's differential
-//! test holds the two to the same bytes.
+//! the count of open containers, whether a close handed its container on,
+//! and the text each open `:text` rule has gathered, to which every pass
+//! writes its tokens' source text, so the native retains the document's
+//! nesting and an open rule's text, and nothing else of its width or
+//! length, as the library's step does. alchemy-cli's differential test
+//! holds the two to the same bytes.
 //!
 //! A pass's events are worked out before the first of them is written, as
 //! the library's step returns them together: a pass that fails writes
@@ -33,6 +36,8 @@ pub struct TransduceTree<S> {
     open: usize,
     /// A close handed its container on to the rule replacing it.
     carry: bool,
+    /// The text each open `:text` rule has gathered, the innermost last.
+    texts: Vec<String>,
     down: S,
 }
 
@@ -42,6 +47,7 @@ impl<S: Sink> TransduceTree<S> {
             spec,
             open: 0,
             carry: false,
+            texts: Vec::new(),
             down,
         }
     }
@@ -52,37 +58,22 @@ impl<S: Sink> TransduceTree<S> {
     }
 
     fn open_pass(&mut self, pass: &RulePass) -> Result<Flow, Fail> {
+        spell(&mut self.texts, pass);
         let Some(rule) = self.spec.rule(&pass.name) else {
             return Ok(Flow::Continue);
         };
-        let key: Option<&str> = match &rule.key {
-            None => None,
-            Some(TreeKey::Name(name)) => Some(name),
-            Some(TreeKey::Token(i)) => match pass.tokens.get(*i) {
-                None => None,
-                Some(token) => match &token.val {
-                    Datum::String(name) => Some(name),
-                    other => {
-                        return Err(type_error(format!(
-                            "key: the name must be a string, not {}",
-                            kind(other)
-                        )))
-                    }
-                },
-            },
-        };
+        let key = named(&rule.key, pass, "key")?;
         let start = match rule.container {
             Some(TreeContainer::Object) => Some(JsonEvent::ObjectStart),
             Some(TreeContainer::Array) => Some(JsonEvent::ArrayStart),
             None => None,
         };
         let mut then: Option<JsonEvent<'_>> = None;
+        let mut begins = false;
         match start {
             Some(start) => {
-                if self.carry {
-                    self.carry = false;
-                } else {
-                    self.open += 1;
+                if !self.carry {
+                    begins = true;
                     then = Some(start);
                 }
             }
@@ -94,8 +85,80 @@ impl<S: Sink> TransduceTree<S> {
                 }
             }
         }
-        if let Some(key) = key {
-            if self.down.event(JsonEvent::Key(key))? == Flow::Stop {
+        let member = named(&rule.member, pass, "key")?;
+        if start.is_some() {
+            if begins {
+                self.open += 1;
+            } else {
+                self.carry = false;
+            }
+        }
+        if rule.text {
+            self.texts.push(String::new());
+        }
+        for ev in [key.map(JsonEvent::Key), then, member.map(JsonEvent::Key)]
+            .into_iter()
+            .flatten()
+        {
+            if self.down.event(ev)? == Flow::Stop {
+                return Ok(Flow::Stop);
+            }
+        }
+        Ok(Flow::Continue)
+    }
+
+    fn close_pass(&mut self, pass: &RulePass) -> Result<Flow, Fail> {
+        let Some(rule) = self.spec.rule(&pass.name) else {
+            spell(&mut self.texts, pass);
+            return Ok(Flow::Continue);
+        };
+        // A `:text` rule's text closes first, and joins the one around it
+        // before this pass's own tokens do; it is yielded before anything
+        // else, once the rest of the pass is known not to fail.
+        let text = if rule.text {
+            let Some(text) = self.texts.pop() else {
+                return Err(type_error(
+                    "top: the vector is empty; there is no last item",
+                ));
+            };
+            if let Some(around) = self.texts.last_mut() {
+                around.push_str(&text);
+            }
+            Some(text)
+        } else {
+            None
+        };
+        spell(&mut self.texts, pass);
+        let then: Option<JsonEvent<'_>> = match rule.container {
+            Some(container) => {
+                if pass
+                    .alt
+                    .as_ref()
+                    .is_some_and(|alt| self.spec.is_container(&alt.r))
+                {
+                    self.carry = true;
+                    None
+                } else {
+                    let Some(open) = self.open.checked_sub(1) else {
+                        return Err(type_error(
+                            "pop: the vector is empty; there is no last item to remove",
+                        ));
+                    };
+                    self.open = open;
+                    self.carry = false;
+                    Some(match container {
+                        TreeContainer::Object => JsonEvent::ObjectEnd,
+                        TreeContainer::Array => JsonEvent::ArrayEnd,
+                    })
+                }
+            }
+            None => match (rule.scalar, &pass.value) {
+                (Some(TreeScalar::Value), Some(value)) => Some(scalar(value)?),
+                _ => None,
+            },
+        };
+        if let Some(text) = &text {
+            if self.down.event(JsonEvent::String(text))? == Flow::Stop {
                 return Ok(Flow::Stop);
             }
         }
@@ -104,41 +167,42 @@ impl<S: Sink> TransduceTree<S> {
             None => Ok(Flow::Continue),
         }
     }
+}
 
-    fn close_pass(&mut self, pass: &RulePass) -> Result<Flow, Fail> {
-        let Some(rule) = self.spec.rule(&pass.name) else {
-            return Ok(Flow::Continue);
-        };
-        let end = match rule.container {
-            Some(TreeContainer::Object) => JsonEvent::ObjectEnd,
-            Some(TreeContainer::Array) => JsonEvent::ArrayEnd,
-            None => {
-                return match (rule.scalar, &pass.value) {
-                    (Some(TreeScalar::Value), Some(value)) => {
-                        let ev = scalar(value)?;
-                        self.down.event(ev)
-                    }
-                    _ => Ok(Flow::Continue),
-                };
-            }
-        };
-        if pass
-            .alt
-            .as_ref()
-            .is_some_and(|alt| self.spec.is_container(&alt.r))
-        {
-            self.carry = true;
-            return Ok(Flow::Continue);
+/// The pass's tokens written to the innermost open text, if one is.
+fn spell(texts: &mut [String], pass: &RulePass) {
+    if let Some(text) = texts.last_mut() {
+        for token in &pass.tokens {
+            text.push_str(&token.src);
         }
-        let Some(open) = self.open.checked_sub(1) else {
-            return Err(type_error(
-                "pop: the vector is empty; there is no last item to remove",
-            ));
-        };
-        self.open = open;
-        self.carry = false;
-        self.down.event(end)
     }
+}
+
+/// The member name a field of a rule's entry names for a pass: the string,
+/// or the `:val` of the pass's token at that index, nothing when the pass
+/// consumed no such token; the library's `key` refuses a name that is not
+/// a string.
+fn named<'p>(
+    field: &'p Option<TreeKey>,
+    pass: &'p RulePass,
+    native: &str,
+) -> Result<Option<&'p str>, Fail> {
+    Ok(match field {
+        None => None,
+        Some(TreeKey::Name(name)) => Some(name),
+        Some(TreeKey::Token(i)) => match pass.tokens.get(*i) {
+            None => None,
+            Some(token) => match &token.val {
+                Datum::String(name) => Some(name),
+                other => {
+                    return Err(type_error(format!(
+                        "{native}: the name must be a string, not {}",
+                        kind(other)
+                    )))
+                }
+            },
+        },
+    })
 }
 
 impl<S: Sink> ParserSink for TransduceTree<S> {
@@ -210,6 +274,7 @@ mod tests {
             container,
             key,
             scalar,
+            ..TreeRule::default()
         };
         TreeSpec::new()
             .with("map", rule(Some(TreeContainer::Object), None, None))
@@ -278,6 +343,14 @@ mod tests {
             src: "".into(),
             row: 1,
             col: 1,
+        }
+    }
+
+    /// A token whose source text is `src`, its value that text.
+    fn spelled(src: &str) -> PassToken {
+        PassToken {
+            src: src.into(),
+            ..token(Datum::String(src.into()))
         }
     }
 
@@ -443,5 +516,138 @@ mod tests {
         );
         r.unwrap();
         assert_eq!(out, [Ev::ArrayStart, Ev::ArrayEnd, Ev::End]);
+    }
+
+    /// A member is announced after what its rule begins, here a container
+    /// one rule begins and a rule it replaces carries on; a `:text` rule's
+    /// close yields first the text the passes between its open and it
+    /// consumed, its own open's and close's tokens not among them, a rule
+    /// the spec does not name writing its tokens too.
+    #[test]
+    fn a_member_after_the_start_and_a_rules_text() {
+        let spec = TreeSpec::new()
+            .with(
+                "row",
+                TreeRule {
+                    container: Some(TreeContainer::Object),
+                    member: Some(TreeKey::Name("a".into())),
+                    text: true,
+                    ..TreeRule::default()
+                },
+            )
+            .with(
+                "next",
+                TreeRule {
+                    container: Some(TreeContainer::Object),
+                    member: Some(TreeKey::Token(0)),
+                    text: true,
+                    ..TreeRule::default()
+                },
+            );
+        let (r, out) = run(
+            spec,
+            &[
+                ParserEvent::Open(pass("row", vec![spelled("<")], "", None)),
+                ParserEvent::Open(pass("cell", vec![spelled("1"), spelled("2")], "", None)),
+                ParserEvent::Close(pass("cell", vec![spelled("3")], "", None)),
+                ParserEvent::Close(pass("row", vec![spelled(",")], "next", None)),
+                ParserEvent::Open(pass("next", vec![spelled("b")], "", None)),
+                ParserEvent::Open(pass("cell", vec![spelled("x")], "", None)),
+                ParserEvent::Close(pass("cell", vec![], "", None)),
+                ParserEvent::Close(pass("next", vec![spelled(">")], "", None)),
+                ParserEvent::End,
+            ],
+        );
+        r.unwrap();
+        assert_eq!(
+            out,
+            [
+                Ev::ObjectStart,
+                Ev::Key("a".into()),
+                Ev::String("123".into()),
+                Ev::Key("b".into()),
+                Ev::String("x".into()),
+                Ev::ObjectEnd,
+                Ev::End
+            ]
+        );
+    }
+
+    /// A `:text` rule closed inside another joins its text to the one
+    /// around it, its own open's tokens before it and its close's after.
+    #[test]
+    fn a_text_joins_the_text_around_it() {
+        let text = TreeRule {
+            text: true,
+            ..TreeRule::default()
+        };
+        let spec = TreeSpec::new()
+            .with("outer", text.clone())
+            .with("inner", text);
+        let (r, out) = run(
+            spec,
+            &[
+                ParserEvent::Open(pass("outer", vec![spelled("[")], "", None)),
+                ParserEvent::Open(pass("x", vec![spelled("a")], "", None)),
+                ParserEvent::Close(pass("x", vec![], "", None)),
+                ParserEvent::Open(pass("inner", vec![spelled("(")], "", None)),
+                ParserEvent::Open(pass("x", vec![spelled("b")], "", None)),
+                ParserEvent::Close(pass("x", vec![], "", None)),
+                ParserEvent::Close(pass("inner", vec![spelled(")")], "", None)),
+                ParserEvent::Close(pass("outer", vec![spelled("]")], "", None)),
+                ParserEvent::End,
+            ],
+        );
+        r.unwrap();
+        assert_eq!(
+            out,
+            [Ev::String("b".into()), Ev::String("a(b)".into()), Ev::End]
+        );
+    }
+
+    /// The library's refusals of the two fields, with its codes and texts:
+    /// a member whose token is not a string, before anything the pass
+    /// would write, and a `:text` rule's close with no text open.
+    #[test]
+    fn the_librarys_refusals_of_a_member_and_a_text() {
+        let spec = TreeSpec::new().with(
+            "row",
+            TreeRule {
+                container: Some(TreeContainer::Object),
+                member: Some(TreeKey::Token(0)),
+                ..TreeRule::default()
+            },
+        );
+        let (r, out) = run(
+            spec,
+            &[ParserEvent::Open(pass(
+                "row",
+                vec![token(Datum::Bool(true))],
+                "",
+                None,
+            ))],
+        );
+        let err = r.unwrap_err();
+        assert_eq!(err.code, Code::DslTypeError);
+        assert_eq!(
+            err.message,
+            "type_mismatch: key: the name must be a string, not a boolean"
+        );
+        assert!(out.is_empty());
+
+        let spec = TreeSpec::new().with(
+            "t",
+            TreeRule {
+                text: true,
+                ..TreeRule::default()
+            },
+        );
+        let (r, _) = run(spec, &[ParserEvent::Close(pass("t", vec![], "", None))]);
+        let err = r.unwrap_err();
+        assert_eq!(err.code, Code::DslTypeError);
+        assert_eq!(
+            err.message,
+            "type_mismatch: top: the vector is empty; there is no last item"
+        );
     }
 }

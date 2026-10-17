@@ -284,3 +284,79 @@ func TestAReplacedContainerIsOneContainer(t *testing.T) {
 		t.Errorf("%v %v", got, f)
 	}
 }
+
+// spelledPass is a pass whose tokens are spelled srcs, each one's value
+// its text.
+func spelledPass(name string, r string, srcs ...string) *RulePass {
+	p := handPass(name, r, nil)
+	for _, src := range srcs {
+		p.Tokens = append(p.Tokens, PassToken{Name: "#T", Val: StringDatum(src), Src: src, Row: 1, Col: 1})
+	}
+	return p
+}
+
+// A member is announced after what its rule begins, here a container one
+// rule begins and a rule it replaces carries on; a :text rule's close
+// yields first the text the passes between its open and it consumed, its
+// own open's and close's tokens not among them, a rule the spec does not
+// name writing its tokens too (rs/src/transduce_tree.rs's test).
+func TestAMemberAfterTheStartAndARulesText(t *testing.T) {
+	spec := TreeSpec{Rules: map[string]TreeRule{
+		"row":  {Container: TreeObject, Member: TreeKey{Set: true, Name: "a"}, Text: true},
+		"next": {Container: TreeObject, Member: TreeKey{Set: true, IsToken: true, Token: 0}, Text: true},
+	}}
+	got, f := runTree(spec,
+		ParserEvent{Kind: ParserOpen, Pass: spelledPass("row", "", "<")},
+		ParserEvent{Kind: ParserOpen, Pass: spelledPass("cell", "", "1", "2")},
+		ParserEvent{Kind: ParserClose, Pass: spelledPass("cell", "", "3")},
+		ParserEvent{Kind: ParserClose, Pass: spelledPass("row", "next", ",")},
+		ParserEvent{Kind: ParserOpen, Pass: spelledPass("next", "", "b")},
+		ParserEvent{Kind: ParserOpen, Pass: spelledPass("cell", "", "x")},
+		ParserEvent{Kind: ParserClose, Pass: spelledPass("cell", "")},
+		ParserEvent{Kind: ParserClose, Pass: spelledPass("next", "", ">")},
+		ParserEvent{Kind: ParserEnd},
+	)
+	want := []Event{EvObjectStart(), EvKey("a"), EvString("123"), EvKey("b"), EvString("x"), EvObjectEnd(), EvEnd()}
+	if f != nil || fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("%v %v", got, f)
+	}
+}
+
+// A :text rule closed inside another joins its text to the one around it,
+// its own open's tokens before it and its close's after.
+func TestATextJoinsTheTextAroundIt(t *testing.T) {
+	spec := TreeSpec{Rules: map[string]TreeRule{"outer": {Text: true}, "inner": {Text: true}}}
+	got, f := runTree(spec,
+		ParserEvent{Kind: ParserOpen, Pass: spelledPass("outer", "", "[")},
+		ParserEvent{Kind: ParserOpen, Pass: spelledPass("x", "", "a")},
+		ParserEvent{Kind: ParserClose, Pass: spelledPass("x", "")},
+		ParserEvent{Kind: ParserOpen, Pass: spelledPass("inner", "", "(")},
+		ParserEvent{Kind: ParserOpen, Pass: spelledPass("x", "", "b")},
+		ParserEvent{Kind: ParserClose, Pass: spelledPass("x", "")},
+		ParserEvent{Kind: ParserClose, Pass: spelledPass("inner", "", ")")},
+		ParserEvent{Kind: ParserClose, Pass: spelledPass("outer", "", "]")},
+		ParserEvent{Kind: ParserEnd},
+	)
+	want := []Event{EvString("b"), EvString("a(b)"), EvEnd()}
+	if f != nil || fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("%v %v", got, f)
+	}
+}
+
+// The library's refusals of the two fields, with its codes and texts: a
+// member whose token is not a string, before anything the pass would
+// write, and a :text rule's close with no text open.
+func TestTheLibrarysRefusalsOfAMemberAndAText(t *testing.T) {
+	membered := TreeSpec{Rules: map[string]TreeRule{
+		"row": {Container: TreeObject, Member: TreeKey{Set: true, IsToken: true, Token: 0}},
+	}}
+	got, f := runTree(membered, ParserEvent{Kind: ParserOpen, Pass: handPass("row", "", nil, BoolDatum(true))})
+	if f == nil || f.Code != CodeDSLTypeError || f.Message != "type_mismatch: key: the name must be a string, not a boolean" || len(got) != 0 {
+		t.Errorf("%v %v", got, f)
+	}
+	texted := TreeSpec{Rules: map[string]TreeRule{"t": {Text: true}}}
+	_, f = runTree(texted, ParserEvent{Kind: ParserClose, Pass: handPass("t", "", nil)})
+	if f == nil || f.Code != CodeDSLTypeError || f.Message != "type_mismatch: top: the vector is empty; there is no last item" {
+		t.Errorf("%v", f)
+	}
+}
