@@ -265,14 +265,49 @@ func treeElements(v any) int {
 	return 0
 }
 
-// prunedTree is what the tree holds after a run of records records.
+// heldElements is what a tree keeps reachable, as treeElements counts it
+// but each list to its capacity: a truncated slice keeps its backing
+// array, and with it whatever that array still holds.
+func heldElements(v any) int {
+	switch v := v.(type) {
+	case []any:
+		n := 0
+		for _, e := range v[:cap(v)] {
+			if e != nil {
+				n++
+			}
+			n += heldElements(e)
+		}
+		return n
+	case tabnas.ListRef:
+		return heldElements(v.Val)
+	case map[string]any:
+		n := len(v)
+		for _, e := range v {
+			n += heldElements(e)
+		}
+		return n
+	case *tabnas.OrderedMap:
+		n := len(v.Keys)
+		for _, e := range v.Vals {
+			n += heldElements(e)
+		}
+		return n
+	case tabnas.MapRef:
+		return heldElements(v.Val)
+	}
+	return 0
+}
+
+// prunedTree is what the tree keeps reachable after a run of records
+// records (heldElements).
 func prunedTree(t *testing.T, name, doc string, records int, prune bool) int {
 	t.Helper()
 	_, _, _, value := prunedRun(name, pruneGenerated(doc, records), prune)
 	if value == nil {
 		t.Fatalf("%s over %d records returned no value", name, records)
 	}
-	return treeElements(value)
+	return heldElements(value)
 }
 
 // TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas measures pruning for
@@ -351,6 +386,10 @@ func TestPruningEmptiesTheTreesListsAndLeavesThePasses(t *testing.T) {
 	// The three members, each list empty, and d's one member.
 	if n := treeElements(pruned); n != 4 {
 		t.Errorf("the pruned tree holds %d elements: %v", n, pruned)
+	}
+	// Nor does a list's backing array keep what the list held.
+	if n := heldElements(pruned); n != 4 {
+		t.Errorf("the pruned tree keeps %d elements reachable: %v", n, pruned)
 	}
 	if n := treeElements(whole); n != 14 {
 		t.Errorf("the tree without pruning holds %d elements: %v", n, whole)

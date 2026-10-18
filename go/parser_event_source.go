@@ -262,15 +262,20 @@ func (r *relay) onDone(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleD
 // element in it was built by passes the sink has seen, the last of them
 // the close pass just sent, and what those passes carry is the sink's, so
 // nothing sent so far changes. Truncating in place keeps the list's
-// identity, so the rules still building into it go on doing so.
+// identity, so the rules still building into it go on doing so. The
+// elements are cleared first: a truncated slice keeps its backing array,
+// and that would otherwise keep every element it held reachable until a
+// later append wrote over it.
 func emptyList(rule *tabnas.Rule) {
 	switch v := rule.NodeCell().Node.(type) {
 	case []any:
 		if len(v) > 0 {
+			clear(v)
 			rule.SetNode(v[:0])
 		}
 	case tabnas.ListRef:
 		if len(v.Val) > 0 {
+			clear(v.Val)
 			v.Val = v.Val[:0]
 			rule.SetNode(v)
 		}

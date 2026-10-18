@@ -144,8 +144,9 @@ scalar or nothing) and nothing reads the value the parse returns.
 `ParserEventSource::prune()` empties each array behind the stream: once
 the sink has seen a close pass whose rule's node is an array, the source
 empties that array in place (in Go, in every rule that builds into it,
-by `tabnas.Rule.SetNode`), so the tree holds the elements of the passes
-since the last close on it and no more. Rust leaves an array also held
+by `tabnas.Rule.SetNode`, its elements cleared first, since a truncated
+slice keeps its backing array), so the tree holds the elements of the
+passes since the last close on it and no more. Rust leaves an array also held
 elsewhere as it is, since emptying the node's copy would free nothing and
 would copy it. `run_owned_with_value` (`RunWithValue`, `runWithValue`)
 hands back the tree the run left, which exists for a test to measure.
