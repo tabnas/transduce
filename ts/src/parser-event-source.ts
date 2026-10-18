@@ -51,6 +51,23 @@
 // `AbortFlag` is `ABORTED`; any other engine error is `INPUT_INVALID` with
 // the engine's code and position. A source runs once, as `ParserSource`
 // does: its parser carries the run's subscriber and budget.
+//
+// The engine builds its value as it parses, so a long document's tree
+// holds every record, though nothing reads the value the parse returns.
+// `prune()` empties each array behind the stream: once the sink has seen a
+// close pass whose rule's node is an array, the source empties that array
+// in place, so the tree holds the elements of the passes since the last
+// close on it. That alters the value the engine returns, which this source
+// never reads, and it is sound for a grammar whose passes do not depend on
+// what its arrays hold, so it is a verified capability, as the incremental
+// source is: `test/prune.test.ts` runs every document of every grammar in
+// the devDependencies pruned and not, and `capability.prunable` lists the
+// grammars whose passes and outcomes never differed
+// (rs/src/source/parser_events.rs has the contract's one difference, a
+// token whose value is a container of the tree). A run that prunes is
+// gated on the list, by the grammar's name (`grammar`), and without a
+// listed name it fails with `STREAMABILITY_UNKNOWN` before the parse,
+// having sent nothing; `unverified()` lifts the gate for the suite.
 
 import {
   AbortFlag,
@@ -66,6 +83,7 @@ import {
 import type { Flow, ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
 import type { Rule, RuleDone, Tabnas } from '@tabnas/parser'
 
+import { isPrunable } from './capability'
 import { prepare } from './rule-events'
 import { engineFailure } from './source'
 
@@ -76,13 +94,63 @@ export class ParserEventSource {
   private sourceLimits: Limits = Limits.default()
   private abortFlag: AbortFlag = new AbortFlag()
   private sourceMetrics: Metrics = new Metrics()
+  private grammarName: string | null = null
+  private pruning = false
+  private isUnverified = false
   private used = false
 
-  // A source with default limits, its own abort flag and fresh metrics; the
-  // builder methods change each.
+  // A source with default limits, its own abort flag and fresh metrics,
+  // that prunes nothing; the builder methods change each.
   constructor(parser: Tabnas, text: string) {
     this.parser = parser
     this.text = text
+  }
+
+  // The grammar the parser implements, by the name of the format it reads,
+  // as `ParserSource.grammar` takes it. A run that prunes needs a name
+  // `capability.prunable` lists; one that does not prune needs no name.
+  grammar(name: string): this {
+    this.grammarName = name
+    return this
+  }
+
+  // Empty each array in the engine's tree once the sink has seen a close
+  // pass on it, so the tree does not hold the whole document. The passes
+  // are unchanged for a grammar `capability.prunable` lists, and `run`
+  // refuses to prune any other, with `STREAMABILITY_UNKNOWN` before the
+  // parse.
+  prune(): this {
+    this.pruning = true
+    return this
+  }
+
+  // Prune whatever the verified list says. This exists for the
+  // differential suite that maintains the list and for nothing else: a
+  // grammar that reads its arrays back may make other passes once they are
+  // emptied, and the run still returns.
+  unverified(): this {
+    this.isUnverified = true
+    return this
+  }
+
+  // Why the run may not prune, when it may not.
+  private gate(): Fail | null {
+    if (!this.pruning || this.isUnverified) return null
+    const name = this.grammarName
+    if (null !== name && isPrunable(name)) return null
+    if (null !== name) {
+      return new Fail(
+        'STREAMABILITY_UNKNOWN',
+        `grammar ${JSON.stringify(name)} is not in capability.prunable: the differential suite ` +
+          'has not verified that its passes are the same when its arrays are emptied behind ' +
+          'the stream; run it without ParserEventSource.prune',
+      )
+    }
+    return new Fail(
+      'STREAMABILITY_UNKNOWN',
+      "ParserEventSource.prune needs the grammar's name (ParserEventSource.grammar) to check " +
+        'capability.prunable; without one, run it without pruning',
+    )
   }
 
   limits(limits: Limits): this {
@@ -102,6 +170,14 @@ export class ParserEventSource {
 
   // Parse, relaying each pass into `sink`, then `end`.
   run(sink: ParserSink): Flow {
+    return this.runWithValue(sink).flow
+  }
+
+  // `run`, also handing back the value the engine returned: the engine's
+  // tree after pruning, when the run prunes. It is not the run's result
+  // (the passes are): it exists so a test can measure what pruning left in
+  // the tree, and nothing else should read it.
+  runWithValue(sink: ParserSink): { flow: Flow; value: unknown } {
     if (this.used) {
       throw new Fail(
         'STREAM_REUSED',
@@ -110,27 +186,28 @@ export class ParserEventSource {
       )
     }
     this.used = true
+    const refused = this.gate()
+    if (null !== refused) throw refused
     const abort = this.abortFlag
     const stop = new AbortFlag()
-    const relay = new Relay(sink, this.sourceLimits.max_scalar_bytes, abort, stop)
+    const relay = new Relay(sink, this.sourceLimits.max_scalar_bytes, abort, stop, this.pruning)
     prepare(
       this.parser,
       () => !abort.isAborted() && !stop.isAborted(),
       (rule, done) => relay.onDone(rule, done),
     )
-    let parsed: { ok: true } | { ok: false; error: unknown }
+    let parsed: { ok: true; value: unknown } | { ok: false; error: unknown }
     try {
-      this.parser.parse(this.text)
-      parsed = { ok: true }
+      parsed = { ok: true, value: this.parser.parse(this.text) }
     } catch (error) {
       parsed = { ok: false, error }
     }
     try {
       const status = relay.status
       if ('failed' === status.type) throw status.error
-      if ('stopped' === status.type) return 'stop'
+      if ('stopped' === status.type) return { flow: 'stop', value: undefined }
       if (!parsed.ok) throw engineFailure(parsed.error, abort)
-      return relay.send({ type: 'end' })
+      return { flow: relay.send({ type: 'end' }), value: parsed.value }
     } finally {
       this.sourceMetrics.events += relay.events
     }
@@ -150,6 +227,8 @@ class Relay {
     readonly abort: AbortFlag,
     // Set to make the parse guard cancel the parse.
     readonly stop: AbortFlag,
+    // Empty the array a close pass's rule builds, once the sink has seen it.
+    readonly prune: boolean,
   ) {}
 
   send(ev: ParserEvent): Flow {
@@ -182,11 +261,22 @@ class Relay {
       if ('stop' === this.send(ev)) {
         this.status = { type: 'stopped' }
         this.stop.abort()
+      } else if (this.prune && !open) {
+        emptyArray(rule)
       }
     } catch (error) {
       this.fail(error)
     }
   }
+}
+
+// Empty the array `rule`'s node is, in place, so every holder of it sees
+// it emptied. Every element in it was built by passes the sink has seen,
+// the last of them the close pass just sent, and what those passes carry
+// is the sink's, so nothing sent so far changes.
+function emptyArray(rule: Rule): void {
+  const node: unknown = (rule as any).node
+  if (Array.isArray(node) && 0 < node.length) node.length = 0
 }
 
 // The pass as alchemy's `RulePass`, its sizes held to `max_scalar_bytes`.

@@ -93,7 +93,7 @@ export type {
 } from '@tabnas/alchemy/shared'
 export { DEFAULT_CHUNK_BYTES, LineFormat, LinesSource } from './lines'
 export type { LinesChunk, LinesInput, LinesWriter } from './lines'
-export { INCREMENTAL, capability, isIncremental } from './capability'
+export { INCREMENTAL, PRUNABLE, capability, isIncremental, isPrunable } from './capability'
 export { Cell, Schema, Table, boundColumn, columnFromMeta } from '@tabnas/alchemy/shared'
 export type {
   BoundColumn,

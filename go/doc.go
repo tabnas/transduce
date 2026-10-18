@@ -39,10 +39,11 @@
 //
 // ParserSource's SourceMode Incremental (and LinesSource's JSON Lines
 // RunIncremental) turns the engine's rule events into source events as
-// the parse proceeds. It needs the engine's node-cell identity
-// (tabnas.Rule.NodeCell and SetNode), which a released Go engine does not
-// have yet, so the adapter is compiled only with the build tag
-// `tabnas_nodecell`. Without the tag the verified list
+// the parse proceeds, over the engine's node-cell identity
+// (tabnas.Rule.NodeCell and SetNode). The adapter is compiled only with
+// the build tag `tabnas_nodecell`; the identity itself is in every build
+// of the engine since v0.12.10, and ParserEventSource's pruning uses it
+// in either build. Without the tag the verified list
 // ([IncrementalGrammars]) is empty and every incremental run is refused
 // with STREAMABILITY_UNKNOWN before the parse, exactly as an unlisted
 // grammar is refused; Materialize, ValueSource and the walking line

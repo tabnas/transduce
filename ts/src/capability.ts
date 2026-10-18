@@ -58,7 +58,36 @@ export function isIncremental(grammar: string): boolean {
   return INCREMENTAL.includes(grammar)
 }
 
+// The grammars whose passes a `ParserEventSource` relays alike whether it
+// prunes or not, on every document `test/prune.test.ts` reads them, by the
+// name of the format each reads, as `INCREMENTAL` names them. The suite
+// asserts the list in both directions; `toml` is not on it, since its
+// message for a key defined twice quotes the value, which pruning empties.
+export const PRUNABLE: readonly string[] = Object.freeze([
+  'csv',
+  'feed',
+  'ini',
+  'json',
+  'json5',
+  'jsonc',
+  'jsonic',
+  'jsonl',
+  'markdown',
+  'pgn',
+  'xml',
+  'yaml',
+  'zon',
+])
+
+// Whether a `ParserEventSource` may empty `grammar`'s arrays behind its
+// stream (`ParserEventSource.prune`).
+export function isPrunable(grammar: string): boolean {
+  return PRUNABLE.includes(grammar)
+}
+
 export const capability = Object.freeze({
   INCREMENTAL,
   incremental: isIncremental,
+  PRUNABLE,
+  prunable: isPrunable,
 })
