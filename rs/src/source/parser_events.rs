@@ -11,9 +11,8 @@
 //! What each pass carries is alchemy's [`RulePass`]:
 //!
 //! - the rule's `name`, its depth `d` and instance `i` (the engine's,
-//!   which counts from 1 in TypeScript, and here and in Go from 0 before
-//!   tabnas/parser#311 and from 1 after it: DIVERGENCE.md 6), the
-//!   alternate that matched (`alt`: `p`, `r`, `b`, and its groups `g`,
+//!   which numbers rules from 1, the start rule's, in the order it makes
+//!   them), the alternate that matched (`alt`: `p`, `r`, `b`, and its groups `g`,
 //!   sorted, since they are tags whose order the runtimes' engines keep
 //!   differently), whether recovery forced the close, and its named
 //!   counters `n`, sorted by name;
@@ -22,10 +21,8 @@
 //!   consume, and none when `b` is more than it recorded, since a close
 //!   alternate can back up a token it did not record. A token is its
 //!   name, its value, its source text and its 1-based row and column; a
-//!   token with no value (the end of the source) has `null` (a fixed
-//!   token, such as `[`, has none in TypeScript's and Go's engines, nor in
-//!   this runtime's after tabnas/parser#311, before which it has its text:
-//!   DIVERGENCE.md 7), and a number carries its source text as its lexeme
+//!   token with no value (the end of the source, or a fixed token such as
+//!   `[`) has `null`, and a number carries its source text as its lexeme
 //!   when that text is a JSON number spelling the value (RFC 8259), the
 //!   rule the incremental source keeps lexemes by, so a renderer can write
 //!   it as it stands;
@@ -497,18 +494,16 @@ mod tests {
         let (r, seen) = passes(" 2.50 ");
         assert_eq!(r.unwrap(), Flow::Continue);
         let text = encoded(&seen);
-        let i = start_instance(&seen);
         // The open pass consumed the number, whose source text is its
         // lexeme; the close consumed the end of the source, which has no
         // value, and carries the node's value.
         assert_eq!(
             text,
             [
-                r##"["open",{"name":"val","d":0,"i":0,"alt":{"p":"","r":"","b":0,"g":["json","val"]},"tokens":[["#NR",2.5,"2.50",1,2]],"forced":false,"n":{}}]"##,
-                r##"["close",{"name":"val","d":0,"i":0,"alt":{"p":"","r":"","b":0,"g":["end","json"]},"tokens":[["#ZZ",null,"",1,7]],"forced":false,"n":{},"value":2.5}]"##,
+                r##"["open",{"name":"val","d":0,"i":1,"alt":{"p":"","r":"","b":0,"g":["json","val"]},"tokens":[["#NR",2.5,"2.50",1,2]],"forced":false,"n":{}}]"##,
+                r##"["close",{"name":"val","d":0,"i":1,"alt":{"p":"","r":"","b":0,"g":["end","json"]},"tokens":[["#ZZ",null,"",1,7]],"forced":false,"n":{},"value":2.5}]"##,
                 r#"["end"]"#,
             ]
-            .map(|pass| pass.replace(r#""i":0"#, &format!(r#""i":{i}"#)))
         );
         // The encoding writes a value as JSON; the lexeme is the event's.
         let ParserEvent::Open(open) = &seen[0] else {
@@ -520,49 +515,6 @@ mod tests {
                 value: 2.5,
                 lexeme: Some("2.50".into())
             }
-        );
-    }
-
-    /// The start rule's instance number, as the engine gives it
-    /// (DIVERGENCE.md 6): 0 in this engine before tabnas/parser#311,
-    /// 1 after it, as in TypeScript. Either passes until the parser
-    /// release that carries it is this crate's floor.
-    fn start_instance(seen: &[ParserEvent]) -> u64 {
-        let ParserEvent::Open(start) = &seen[0] else {
-            panic!("the start rule's open pass");
-        };
-        assert!(
-            matches!(start.i, 0 | 1),
-            "the start rule's instance: {}",
-            start.i
-        );
-        start.i
-    }
-
-    /// What the engine of this runtime reports differently from the
-    /// others', which the shared fixtures leave out (DIVERGENCE.md 6 and
-    /// 7): before tabnas/parser#311 the root rule is instance 0, as
-    /// in Go (TypeScript's is 1), and a fixed token has its text as its
-    /// value (TypeScript's and Go's have none, `null`); after it, both are
-    /// TypeScript's. The two move together, and either state passes until
-    /// the parser release that carries them is this crate's floor.
-    #[test]
-    fn the_engines_own_instance_numbers_and_fixed_token_values() {
-        let (r, seen) = passes("[1]");
-        r.unwrap();
-        let ParserEvent::Open(root) = &seen[0] else {
-            panic!("the root's open pass");
-        };
-        let ParserEvent::Open(list) = &seen[1] else {
-            panic!("the list's open pass");
-        };
-        assert_eq!(&*list.tokens[0].name, "#OS");
-        let bracket = &list.tokens[0].val;
-        assert!(
-            (root.i == 0 && *bracket == Datum::String("[".into()))
-                || (root.i == 1 && *bracket == Datum::Null),
-            "the root's instance {} with the bracket's value {bracket:?}",
-            root.i
         );
     }
 

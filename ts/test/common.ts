@@ -576,25 +576,23 @@ function passName(ev: ParserEvent): string {
   return 'end' === ev.type ? 'end' : `${ev.pass.name}:${ev.type}`
 }
 
-// A pass in the fixture encoding, its instance number `i` left out: the
-// engines count instances differently (DIVERGENCE.md 6).
+// A pass in the fixture encoding.
 function passEncoded(ev: ParserEvent): unknown {
-  const json: any = parserEventToJSON(ev)
-  if (undefined !== json[1]) delete json[1].i
-  return json
+  return parserEventToJSON(ev)
 }
 
-// A pass as the `tokens` stage writes it: `["rule:open", [[name, src, row,
-// col]...]]`, its tokens without their values, which the engines give a
-// fixed token differently (DIVERGENCE.md 7), and the end as `"end"`.
+// A pass as the `tokens` stage writes it: `["rule:open", [[name, val, src,
+// row, col]...]]`, its tokens as the fixture encoding writes them, and the
+// end as `"end"`.
 function passTokens(ev: ParserEvent): unknown {
   if ('end' === ev.type) return 'end'
-  return [passName(ev), ev.pass.tokens.map((t) => [t.name, t.src, t.row, t.col])]
+  const json: any = parserEventToJSON(ev)
+  return [passName(ev), json[1].tokens]
 }
 
 // `parser-events.tsv`: the passes `ParserEventSource` delivered, in the
-// fixture encoding less `i` (`passes`), by name and tokens (`tokens`) or by
-// name (`names`).
+// fixture encoding (`passes`), by name and tokens (`tokens`) or by name
+// (`names`).
 export function parserEvents(row: Row, input: string): unknown {
   const stage = row.named('stage')
   const stages: Record<string, (ev: ParserEvent) => unknown> = {
