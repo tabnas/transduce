@@ -36,10 +36,14 @@ func TestARootScalarIsItsValRulesTwoPassesThenEnd(t *testing.T) {
 	for _, ev := range seen {
 		got = append(got, ev.JSON())
 	}
+	i := startInstance(t, seen)
 	want := []string{
 		`["open",{"name":"val","d":0,"i":0,"alt":{"p":"","r":"","b":0,"g":["json","val"]},"tokens":[["#NR",2.50,"2.50",1,1]],"forced":false,"n":{}}]`,
 		`["close",{"name":"val","d":0,"i":0,"alt":{"p":"","r":"","b":0,"g":["end","json"]},"tokens":[["#ZZ",null,"",1,5]],"forced":false,"n":{},"value":2.50}]`,
 		`["end"]`,
+	}
+	for k := range want {
+		want[k] = strings.Replace(want[k], `"i":0`, fmt.Sprintf(`"i":%d`, i), 1)
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -68,17 +72,29 @@ func TestASecondRunIsStreamReused(t *testing.T) {
 	}
 }
 
+// The start rule's instance number, as the engine gives it (DIVERGENCE.md
+// 6): 0 in this engine before tabnas/parser#311, 1 after it, as in
+// TypeScript. Either passes until the parser release that carries it is
+// this module's floor.
+func startInstance(t *testing.T, seen []ParserEvent) uint64 {
+	t.Helper()
+	i := seen[0].Pass.I
+	if i != 0 && i != 1 {
+		t.Fatalf("the start rule's instance: %d", i)
+	}
+	return i
+}
+
 // What this runtime's engine reports differently (DIVERGENCE.md 6 and 7):
-// the root rule is instance 0, as in Rust (TypeScript's is 1), and a fixed
-// token has no value, as in TypeScript (Rust's has its text).
+// before tabnas/parser#311 the root rule is instance 0, as in Rust
+// (TypeScript's is 1), and 1 after it, as in TypeScript; a fixed token has
+// no value, as in TypeScript (Rust's had its text).
 func TestTheEnginesOwnInstanceNumbersAndFixedTokenValues(t *testing.T) {
 	seen, f := goPasses(t, "[1]")
 	if f != nil {
 		t.Fatal(f)
 	}
-	if seen[0].Pass.I != 0 {
-		t.Errorf("the root's instance: %d", seen[0].Pass.I)
-	}
+	startInstance(t, seen)
 	if tok := seen[1].Pass.Tokens[0]; tok.Name != "#OS" || tok.Val.Kind != shared.DatumNull {
 		t.Errorf("the list's bracket: %+v", tok)
 	}

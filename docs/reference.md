@@ -107,8 +107,9 @@ it has one mode. `run_owned(self, sink)` and `run_boxed` take the sink by
 value and hand it back, with `ParserSource`'s failure mapping.
 
 A pass is a `RulePass`: the rule's `name`, depth `d` and instance `i`
-(the engine's, which TypeScript's counts from 1 and Go's and Rust's from
-0: `DIVERGENCE.md` 6); the alternate that matched (`p`, `r`, `b`, and its
+(the engine's, which TypeScript's counts from 1, and Go's and Rust's from
+0 before tabnas/parser#311 and from 1 after it: `DIVERGENCE.md` 6); the
+alternate that matched (`p`, `r`, `b`, and its
 groups `g`, sorted, since the engines keep them in different orders), or
 none when the state declared no alternates; whether recovery forced the close; the named
 counters `n`, sorted by name; the `tokens` the pass consumed; and, on a
@@ -118,8 +119,8 @@ are the next rule's to consume, and none when `b` is more than it
 recorded, since a close alternate can back up a token it did not record.
 A token is its name, its value (`null` for a token with none, such as the
 end of the source, or a fixed token such as `[`, to which Rust's engine
-gives its text: `DIVERGENCE.md` 7), its source text and its 1-based row
-and column. A
+gives its text before tabnas/parser#311: `DIVERGENCE.md` 7), its source
+text and its 1-based row and column. A
 number token's value carries its source text as its lexeme by the lexeme
 rule above, and so does a close pass's number `value`, from the rule's
 first open token.

@@ -44,11 +44,12 @@ const (
 // What each pass carries is alchemy's RulePass:
 //
 //   - the rule's Name, its depth D and instance I (the engine's, which
-//     counts from 0 here and in Rust and from 1 in TypeScript:
-//     DIVERGENCE.md 6), the alternate that matched (Alt: P, R, B, and its
-//     groups G, sorted, since they are tags whose order the runtimes'
-//     engines keep differently), whether recovery forced the close, and
-//     its named counters N, sorted by name;
+//     counts from 1 in TypeScript, and here and in Rust from 0 before
+//     tabnas/parser#311 and from 1 after it: DIVERGENCE.md 6), the
+//     alternate that matched (Alt: P, R, B, and its groups G, sorted,
+//     since they are tags whose order the runtimes' engines keep
+//     differently), whether recovery forced the close, and its named
+//     counters N, sorted by name;
 //   - the Tokens the pass consumed: those its alternate matched (the
 //     engine's O[:ON] or C[:CN]), less the B it gave back from their end,
 //     which are the next rule's to consume, and none when B is more than it
@@ -56,9 +57,10 @@ const (
 //     record. A token is its name, its value, its source text and its
 //     1-based row and column; a token with no value (the end of the
 //     source, a fixed token such as `[`, which Rust's engine gives its
-//     text: DIVERGENCE.md 7) has null, and a number carries its source text
-//     as its lexeme when that text is a JSON number spelling the value (RFC
-//     8259), the rule the incremental source keeps lexemes by;
+//     text before tabnas/parser#311: DIVERGENCE.md 7) has null, and a
+//     number carries its source text as its lexeme when that text is a
+//     JSON number spelling the value (RFC 8259), the rule the incremental
+//     source keeps lexemes by;
 //   - on a close pass, the rule's node when that is a scalar (Value), a
 //     number with the lexeme of the rule's first open token as above, and
 //     nil as null; nothing on an open pass, for a container, nor for the
