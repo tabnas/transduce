@@ -38,3 +38,29 @@ func Incremental(grammar string) bool {
 // AdapterBuilt reports whether this build has the rule-event adapter
 // (the tabnas_nodecell build tag).
 func AdapterBuilt() bool { return adapterBuilt }
+
+// prunableGrammars are the grammars prune_test.go verified in this
+// runtime: their passes are the same whether ParserEventSource prunes or
+// not, on every document the suite reads them. Pruning needs no adapter,
+// so the list is the same in either build.
+var prunableGrammars = []string{
+	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "xml", "yaml", "zon",
+}
+
+// PrunableGrammars is the grammars a ParserEventSource may prune, by the
+// name of the format each reads: a copy of the list, which the caller may
+// keep.
+func PrunableGrammars() []string {
+	return append([]string(nil), prunableGrammars...)
+}
+
+// Prunable reports whether a ParserEventSource may empty grammar's lists
+// behind its stream (ParserEventSource.Prune).
+func Prunable(grammar string) bool {
+	for _, name := range prunableGrammars {
+		if name == grammar {
+			return true
+		}
+	}
+	return false
+}

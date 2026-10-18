@@ -87,17 +87,38 @@ const (
 // as ParserSource does: it installs its subscriber and parse budget on
 // it, so a parser is given to one source, and a source runs once (a second
 // Run is STREAM_REUSED, as in TypeScript; Rust's run consumes the source).
+//
+// The engine builds its value as it parses, so a long document's tree
+// holds every record, though nothing reads the value the parse returns.
+// Prune empties each list behind the stream: once the sink has seen a
+// close pass whose rule's node is a list, the source truncates that list
+// in place, in every rule that builds into it (tabnas.Rule.SetNode), so
+// the tree holds the elements of the passes since the last close on it.
+// That alters the value the engine returns, which this source never
+// reads, and it is sound for a grammar whose passes do not depend on what
+// its lists hold, so it is a verified capability, as the incremental
+// source is: prune_test.go runs every document of every grammar the tests
+// depend on pruned and not, and PrunableGrammars lists the grammars whose
+// passes and outcomes never differed (rs/src/source/parser_events.rs has
+// the contract's one difference, a token whose value is a container of
+// the tree). A run that prunes is gated on the list, by the grammar's
+// name (Grammar), and without a listed name it fails with
+// STREAMABILITY_UNKNOWN before the parse, having sent nothing; Unverified
+// lifts the gate for the suite.
 type ParserEventSource struct {
-	parser  *tabnas.Tabnas
-	text    string
-	limits  Limits
-	abort   *AbortFlag
-	metrics *Metrics
-	used    bool
+	parser     *tabnas.Tabnas
+	text       string
+	limits     Limits
+	abort      *AbortFlag
+	metrics    *Metrics
+	grammar    string
+	prune      bool
+	unverified bool
+	used       bool
 }
 
 // NewParserEventSource is a source with default limits, its own abort flag
-// and fresh metrics; the builder methods change each.
+// and fresh metrics, that prunes nothing; the builder methods change each.
 func NewParserEventSource(parser *tabnas.Tabnas, text string) *ParserEventSource {
 	return &ParserEventSource{
 		parser:  parser,
@@ -106,6 +127,52 @@ func NewParserEventSource(parser *tabnas.Tabnas, text string) *ParserEventSource
 		abort:   NewAbortFlag(),
 		metrics: NewMetrics(),
 	}
+}
+
+// Grammar names the grammar the parser implements, by the name of the
+// format it reads, as ParserSource.Grammar takes it. A run that prunes
+// needs a name PrunableGrammars lists; one that does not prune needs no
+// name.
+func (p *ParserEventSource) Grammar(name string) *ParserEventSource {
+	p.grammar = name
+	return p
+}
+
+// Prune empties each list in the engine's tree once the sink has seen a
+// close pass on it, so the tree does not hold the whole document. The
+// passes are unchanged for a grammar PrunableGrammars lists, and Run
+// refuses to prune any other, with STREAMABILITY_UNKNOWN before the parse.
+func (p *ParserEventSource) Prune() *ParserEventSource {
+	p.prune = true
+	return p
+}
+
+// Unverified prunes whatever the verified list says. It exists for the
+// differential suite that maintains the list and for nothing else: a
+// grammar that reads its lists back may make other passes once they are
+// emptied, and the run still succeeds.
+func (p *ParserEventSource) Unverified() *ParserEventSource {
+	p.unverified = true
+	return p
+}
+
+// gate is why the run may not prune, when it may not.
+func (p *ParserEventSource) gate() *Fail {
+	if !p.prune || p.unverified {
+		return nil
+	}
+	switch {
+	case p.grammar == "":
+		return NewFail(CodeStreamabilityUnknown,
+			"ParserEventSource.Prune needs the grammar's name (ParserEventSource.Grammar) to check "+
+				"PrunableGrammars; without one, run it without pruning")
+	case !Prunable(p.grammar):
+		return NewFail(CodeStreamabilityUnknown, fmt.Sprintf(
+			"grammar %q is not in PrunableGrammars: the differential suite has not verified that its "+
+				"passes are the same when its lists are emptied behind the stream; run it without "+
+				"ParserEventSource.Prune", p.grammar))
+	}
+	return nil
 }
 
 // Limits sets the run's limits.
@@ -144,6 +211,9 @@ type relay struct {
 	abort    *AbortFlag
 	stop     *AbortFlag
 	events   uint64
+	// prune empties the list a close pass's rule builds, once the sink has
+	// seen it.
+	prune bool
 }
 
 func (r *relay) send(ev ParserEvent) (Flow, *Fail) {
@@ -182,36 +252,73 @@ func (r *relay) onDone(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleD
 	case flow == Stop:
 		r.status = relayStopped
 		r.stop.Abort()
+	case r.prune && !open:
+		emptyList(rule)
+	}
+}
+
+// emptyList truncates the list rule's node belongs to, in place, in the
+// rules that build into it, when it is a list holding anything. Every
+// element in it was built by passes the sink has seen, the last of them
+// the close pass just sent, and what those passes carry is the sink's, so
+// nothing sent so far changes. Truncating in place keeps the list's
+// identity, so the rules still building into it go on doing so.
+func emptyList(rule *tabnas.Rule) {
+	switch v := rule.NodeCell().Node.(type) {
+	case []any:
+		if len(v) > 0 {
+			rule.SetNode(v[:0])
+		}
+	case tabnas.ListRef:
+		if len(v.Val) > 0 {
+			v.Val = v.Val[:0]
+			rule.SetNode(v)
+		}
 	}
 }
 
 // Run parses, relaying each pass into sink, then End. A source runs once:
 // a second Run is STREAM_REUSED, before anything is installed on the
-// parser.
+// parser, and a run that prunes an unverified grammar is refused before
+// anything is installed either.
 func (p *ParserEventSource) Run(sink ParserSink) (Flow, *Fail) {
+	flow, f, _ := p.RunWithValue(sink)
+	return flow, f
+}
+
+// RunWithValue is Run, also handing back the value the engine returned,
+// when the parse returned one: the engine's tree after pruning, when the
+// run prunes. It is not the run's result (the passes are): it exists so a
+// test can measure what pruning left in the tree, and nothing else should
+// read it.
+func (p *ParserEventSource) RunWithValue(sink ParserSink) (Flow, *Fail, any) {
 	if p.used {
 		return Continue, NewFail(CodeStreamReused,
 			"a ParserEventSource runs once: its parser carries the run's subscriber and budget; "+
-				"make a new source, with a new parser, for another run")
+				"make a new source, with a new parser, for another run"), nil
 	}
 	p.used = true
-	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag()}
+	if f := p.gate(); f != nil {
+		return Continue, f, nil
+	}
+	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag(), prune: p.prune}
 	p.parser.SubRuleDone(func(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleDone) {
 		r.onDone(rule, ctx, done)
 	})
 	installGuard(p.parser, func() bool { return !p.abort.IsAborted() && !r.stop.IsAborted() })
-	_, err := p.parser.Parse(p.text)
+	value, err := p.parser.Parse(p.text)
 	defer func() { p.metrics.Events.Add(r.events) }()
 	switch r.status {
 	case relayFailed:
-		return Continue, r.fail
+		return Continue, r.fail, nil
 	case relayStopped:
-		return Stop, nil
+		return Stop, nil, nil
 	}
 	if err != nil {
-		return Continue, engineFailure(err, p.abort)
+		return Continue, engineFailure(err, p.abort), nil
 	}
-	return r.send(ParserEvent{Kind: ParserEnd})
+	flow, f := r.send(ParserEvent{Kind: ParserEnd})
+	return flow, f, value
 }
 
 // rulePass is the pass as alchemy's RulePass, its sizes held to
