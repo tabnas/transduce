@@ -715,48 +715,41 @@ func passName(ev ParserEvent) any {
 	return ev.Pass.Name + ":" + ev.Kind.String()
 }
 
-// passEncoded is a pass in the fixture encoding, its instance number `i`
-// left out: the engines count instances differently (DIVERGENCE.md 6).
+// passEncoded is a pass in the fixture encoding.
 func passEncoded(t testing.TB) func(ParserEvent) any {
 	return func(ev ParserEvent) any {
 		v, err := support.ParseExpect(ev.JSON())
 		if err != nil {
 			t.Fatalf("a parser event's encoding is JSON: %v", err)
 		}
-		if items, ok := v.([]any); ok && len(items) == 2 {
-			if rule, ok := items[1].(map[string]any); ok {
-				delete(rule, "i")
-			}
-		}
 		return v
 	}
 }
 
 // passTokens is a pass as the `tokens` stage writes it: ["rule:open",
-// [[name, src, row, col]...]], its tokens without their values, which the
-// engines give a fixed token differently (DIVERGENCE.md 7), and the end
-// as "end".
-func passTokens(ev ParserEvent) any {
-	if ev.Kind == ParserEnd {
-		return "end"
+// [[name, val, src, row, col]...]], its tokens as the fixture encoding
+// writes them, and the end as "end".
+func passTokens(t testing.TB) func(ParserEvent) any {
+	encoded := passEncoded(t)
+	return func(ev ParserEvent) any {
+		if ev.Kind == ParserEnd {
+			return "end"
+		}
+		rule := encoded(ev).([]any)[1].(map[string]any)
+		return []any{passName(ev), rule["tokens"]}
 	}
-	tokens := []any{}
-	for _, tok := range ev.Pass.Tokens {
-		tokens = append(tokens, []any{tok.Name, tok.Src, float64(tok.Row), float64(tok.Col)})
-	}
-	return []any{passName(ev), tokens}
 }
 
 // parserEventsStage is parser-events.tsv: the passes ParserEventSource
-// delivered, in the fixture encoding less `i` (`passes`), by name and
-// tokens (`tokens`) or by name (`names`).
+// delivered, in the fixture encoding (`passes`), by name and tokens
+// (`tokens`) or by name (`names`).
 func parserEventsStage(t testing.TB, row *support.Row, input string) (any, *failed) {
 	var encode func(ParserEvent) any
 	switch row.Named("stage") {
 	case "passes":
 		encode = passEncoded(t)
 	case "tokens":
-		encode = passTokens
+		encode = passTokens(t)
 	case "names":
 		encode = passName
 	default:

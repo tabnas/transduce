@@ -107,9 +107,8 @@ it has one mode. `run_owned(self, sink)` and `run_boxed` take the sink by
 value and hand it back, with `ParserSource`'s failure mapping.
 
 A pass is a `RulePass`: the rule's `name`, depth `d` and instance `i`
-(the engine's, which TypeScript's counts from 1, and Go's and Rust's from
-0 before tabnas/parser#311 and from 1 after it: `DIVERGENCE.md` 6); the
-alternate that matched (`p`, `r`, `b`, and its
+(the engine's, which numbers rules from 1, the start rule's, in the order
+it makes them); the alternate that matched (`p`, `r`, `b`, and its
 groups `g`, sorted, since the engines keep them in different orders), or
 none when the state declared no alternates; whether recovery forced the close; the named
 counters `n`, sorted by name; the `tokens` the pass consumed; and, on a
@@ -118,9 +117,8 @@ its alternate matched, less the `b` it gave back from their end, which
 are the next rule's to consume, and none when `b` is more than it
 recorded, since a close alternate can back up a token it did not record.
 A token is its name, its value (`null` for a token with none, such as the
-end of the source, or a fixed token such as `[`, to which Rust's engine
-gives its text before tabnas/parser#311: `DIVERGENCE.md` 7), its source
-text and its 1-based row and column. A
+end of the source or a fixed token such as `[`), its source text and its
+1-based row and column. A
 number token's value carries its source text as its lexeme by the lexeme
 rule above, and so does a close pass's number `value`, from the rule's
 first open token.
@@ -421,7 +419,7 @@ reports.
 | `captures` | a JSON array of `{"tag", "select", "mode"}`, `select` a selector, `mode` `materialize` (the default) or `observe` |
 | `binding` | `{"schema": ..., "rows": selector}`, the schema `"infer"`, `{"metadata": selector}` (each descriptor read by `column_from_meta`) or `{"static": [{"label", "source": segments, "missing"}]}`, `missing` `missing` (the default), `null` or `error` |
 | `duplicates` | `reject` (the default), `last_wins` or `first_wins` |
-| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs. `parser-events.tsv`: `passes`, every event in the encoding below less the rule's instance number `i` (`DIVERGENCE.md` 6); `tokens`, each pass as `["rule:open", [[name, src, row, col]...]]`, its tokens without their values (`DIVERGENCE.md` 7); or `names`, each pass as `"rule:open"` or `"rule:close"`; the end is `"end"` in the last two |
+| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs. `parser-events.tsv`: `passes`, every event in the encoding below; `tokens`, each pass as `["rule:open", [[name, val, src, row, col]...]]`, its tokens as that encoding writes them; or `names`, each pass as `"rule:open"` or `"rule:close"`; the end is `"end"` in the last two |
 | `spec` | `tree.tsv`: a JSON object of rules, each of `container` (`"object"` or `"array"`), `key` (a string, or a token's index) and `scalar` (a token's index, or `"value"`) |
 | `limits` | a JSON object of `Limits` fields over `Limits::default()` |
 | `path` | on an error row, the failure's `path`, in jq syntax |

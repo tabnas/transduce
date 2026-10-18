@@ -658,43 +658,25 @@ fn pass_name(ev: &ParserEvent) -> Value {
     }
 }
 
-/// A pass in the fixture encoding, its instance number `i` left out: the
-/// engines count instances differently (DIVERGENCE.md 6).
+/// A pass in the fixture encoding.
 fn pass_encoded(ev: &ParserEvent) -> Value {
-    let mut json = ev.to_json();
-    if let Some(rule) = json.get_mut(1).and_then(|rule| rule.as_object_mut()) {
-        rule.remove("i");
-    }
-    Value::from(json)
+    Value::from(ev.to_json())
 }
 
-/// A pass as the `tokens` stage writes it: `["rule:open", [[name, src,
-/// row, col]...]]`, its tokens without their values, which the engines
-/// give a fixed token differently (DIVERGENCE.md 7), and the end as
-/// `"end"`.
+/// A pass as the `tokens` stage writes it: `["rule:open", [[name, val,
+/// src, row, col]...]]`, its tokens as the fixture encoding writes them,
+/// and the end as `"end"`.
 fn pass_tokens(ev: &ParserEvent) -> Value {
-    let pass = match ev {
-        ParserEvent::Open(pass) | ParserEvent::Close(pass) => pass,
-        ParserEvent::End => return s("end"),
+    let mut json = ev.to_json();
+    let Some(tokens) = json.get_mut(1).and_then(|rule| rule.get_mut("tokens")) else {
+        return s("end");
     };
-    let tokens = pass
-        .tokens
-        .iter()
-        .map(|t| {
-            Value::Array(vec![
-                s(&t.name),
-                s(&t.src),
-                Value::Number(t.row as f64),
-                Value::Number(t.col as f64),
-            ])
-        })
-        .collect();
-    Value::Array(vec![pass_name(ev), Value::Array(tokens)])
+    Value::Array(vec![pass_name(ev), Value::from(tokens.take())])
 }
 
 /// `parser-events.tsv`: the passes `ParserEventSource` delivered, in the
-/// fixture encoding less `i` (`passes`), by name and tokens (`tokens`) or
-/// by name (`names`).
+/// fixture encoding (`passes`), by name and tokens (`tokens`) or by name
+/// (`names`).
 pub fn parser_events(row: &Row, input: &str) -> Result<Value, Failed> {
     let (outcome, seen) = ParserEventSource::new(row_parser(row), input)
         .limits(limits(row))

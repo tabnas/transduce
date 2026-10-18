@@ -13,8 +13,8 @@
 // What each pass carries is alchemy's `RulePass`:
 //
 // - the rule's `name`, its depth `d` and instance `i` (the engine's, which
-//   counts from 1 here, and in Go and Rust from 0 before tabnas/parser#311
-//   and from 1 after it: DIVERGENCE.md 6), the alternate that matched
+//   numbers rules from 1, the start rule's, in the order it makes them),
+//   the alternate that matched
 //   (`alt`: `p`, `r`, `b`, and its groups `g`, sorted, since they are tags
 //   whose order the runtimes' engines keep differently), whether recovery
 //   forced the close, and its named counters `n`, sorted by name;
@@ -24,8 +24,7 @@
 //   than it recorded, since a close alternate can back up a token it did
 //   not record. A token is its name, its value, its source text and its
 //   1-based row and column; a token with no value (the end of the source,
-//   a fixed token such as `[`, which Rust's engine gives its text before
-//   tabnas/parser#311: DIVERGENCE.md 7) has `null`, and a number carries
+//   or a fixed token such as `[`) has `null`, and a number carries
 //   its source text as its lexeme when that text is a JSON number spelling
 //   the value (RFC 8259), the rule the incremental source keeps lexemes by,
 //   so a renderer can write it as it stands;

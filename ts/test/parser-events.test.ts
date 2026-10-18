@@ -80,16 +80,6 @@ describe('ParserEventSource', () => {
     assert.deepStrictEqual(open.pass.tokens[0].val, Datum.number(2.5, '2.50'))
   })
 
-  // What this runtime's engine reports differently (DIVERGENCE.md 6 and 7):
-  // the root rule is instance 1 (Go's and Rust's is 0), and a fixed token
-  // has no value, as in Go (Rust's has its text).
-  it("the engine's own instance numbers and fixed-token values", () => {
-    const seen = passes('[1]') as any[]
-    assert.equal(seen[0].pass.i, 1)
-    assert.equal(seen[1].pass.tokens[0].name, '#OS')
-    assert.deepStrictEqual(seen[1].pass.tokens[0].val, Datum.null)
-  })
-
   it('a parse error is INPUT_INVALID after the passes before it', () => {
     const seen = new Seen()
     const err = thrown(() => new ParserEventSource(makeJson(), '[1,\n ]').run(seen))
