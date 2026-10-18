@@ -140,12 +140,14 @@ number the engine gives the rule (`rule.i`), which `ParserEventSource`
 relays as it is. TypeScript's engine numbers the first rule 1, Go's and
 Rust's 0, and every later rule one more in each, so a pass's `i` differs
 by one between the runtimes, and a part that pairs a rule's passes by it
-pairs them alike. tabnas/parser's `DIVERGENCE.md` does not record it;
-the repair, whichever engine moves, is the engine's. The shared fixtures
-leave `i` out: `parser-events.tsv`'s `passes` stage writes every field
-of a pass but it. Pinned in Rust by
+pairs them alike. The repair is the engine's: tabnas/parser#311 moves
+Go's and Rust's engines to TypeScript's numbering, and until the parser
+release that carries it is this crate's floor, the tests here accept
+either. The shared fixtures leave `i` out: `parser-events.tsv`'s
+`passes` stage writes every field of a pass but it. Pinned in Rust by
 `the_engines_own_instance_numbers_and_fixed_token_values`
-(`rs/src/source/parser_events.rs`).
+(`rs/src/source/parser_events.rs`), and in Go by
+`TestTheEnginesOwnInstanceNumbersAndFixedTokenValues`.
 
 ## 7. A fixed token has its text as its value in Rust's engine
 
@@ -160,8 +162,10 @@ punctuation) has none in TypeScript's and Go's engines, which
 Rust's engine gives a fixed token its source text as its value, so a part
 that reads a fixed token's `:val` reads a string in Rust and `null`
 elsewhere. A part reads `:src` for the text, which every engine gives
-alike. tabnas/parser's `DIVERGENCE.md` does not record it; the repair is
-the engine's. The shared fixtures leave a fixed token's value out:
+alike. The repair is the engine's: tabnas/parser#311 gives a fixed token
+no value in Rust's engine too, and until the parser release that carries
+it is this crate's floor, the tests here accept either. The shared
+fixtures leave a fixed token's value out:
 `parser-events.tsv`'s `tokens` stage writes each token's name, text and
 position, and its `passes` rows hold no fixed token. Pinned in Rust by
 `the_engines_own_instance_numbers_and_fixed_token_values`

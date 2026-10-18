@@ -364,6 +364,7 @@ mod tests {
         let (r, seen) = passes(" 2.50 ");
         assert_eq!(r.unwrap(), Flow::Continue);
         let text = encoded(&seen);
+        let i = start_instance(&seen);
         // The open pass consumed the number, whose source text is its
         // lexeme; the close consumed the end of the source, which has no
         // value, and carries the node's value.
@@ -374,6 +375,7 @@ mod tests {
                 r##"["close",{"name":"val","d":0,"i":0,"alt":{"p":"","r":"","b":0,"g":["end","json"]},"tokens":[["#ZZ",null,"",1,7]],"forced":false,"n":{},"value":2.5}]"##,
                 r#"["end"]"#,
             ]
+            .map(|pass| pass.replace(r#""i":0"#, &format!(r#""i":{i}"#)))
         );
         // The encoding writes a value as JSON; the lexeme is the event's.
         let ParserEvent::Open(open) = &seen[0] else {
@@ -388,11 +390,29 @@ mod tests {
         );
     }
 
+    /// The start rule's instance number, as the engine gives it
+    /// (DIVERGENCE.md 6): 0 in this engine before tabnas/parser#311,
+    /// 1 after it, as in TypeScript. Either passes until the parser
+    /// release that carries it is this crate's floor.
+    fn start_instance(seen: &[ParserEvent]) -> u64 {
+        let ParserEvent::Open(start) = &seen[0] else {
+            panic!("the start rule's open pass");
+        };
+        assert!(
+            matches!(start.i, 0 | 1),
+            "the start rule's instance: {}",
+            start.i
+        );
+        start.i
+    }
+
     /// What the engine of this runtime reports differently from the
     /// others', which the shared fixtures leave out (DIVERGENCE.md 6 and
-    /// 7): the root rule is instance 0, as in Go (TypeScript's is 1), and
-    /// a fixed token has its text as its value (TypeScript's and Go's
-    /// have none, `null`).
+    /// 7): before tabnas/parser#311 the root rule is instance 0, as
+    /// in Go (TypeScript's is 1), and a fixed token has its text as its
+    /// value (TypeScript's and Go's have none, `null`); after it, both are
+    /// TypeScript's. The two move together, and either state passes until
+    /// the parser release that carries them is this crate's floor.
     #[test]
     fn the_engines_own_instance_numbers_and_fixed_token_values() {
         let (r, seen) = passes("[1]");
@@ -400,12 +420,17 @@ mod tests {
         let ParserEvent::Open(root) = &seen[0] else {
             panic!("the root's open pass");
         };
-        assert_eq!(root.i, 0);
         let ParserEvent::Open(list) = &seen[1] else {
             panic!("the list's open pass");
         };
         assert_eq!(&*list.tokens[0].name, "#OS");
-        assert_eq!(list.tokens[0].val, Datum::String("[".into()));
+        let bracket = &list.tokens[0].val;
+        assert!(
+            (root.i == 0 && *bracket == Datum::String("[".into()))
+                || (root.i == 1 && *bracket == Datum::Null),
+            "the root's instance {} with the bracket's value {bracket:?}",
+            root.i
+        );
     }
 
     #[test]
