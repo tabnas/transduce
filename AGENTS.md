@@ -146,9 +146,14 @@ what a single item needs is the proof.
 
 **The parsed values the grammars return are never altered.** The
 incremental source may drop already-streamed elements from a container it
-was told to prune (`Prune`), and only in incremental mode; the value the
-engine hands back afterwards is not used. In every other mode the value
-is exactly the grammar's.
+was told to prune (`Prune`), and only in incremental mode; the parser-event
+source may empty each array behind its stream when it prunes
+(`ParserEventSource::prune`), which is a verified capability as
+incremental streaming is: `source::capability::prunable(grammar)` answers
+from a list `rs/tests/prune_test.rs` keeps honest both ways, every
+document of every grammar run pruned and not, the passes and outcomes
+compared. In both, the value the engine hands back afterwards is not used.
+In every other mode the value is exactly the grammar's.
 
 ## Repository map
 
@@ -165,10 +170,11 @@ is exactly the grammar's.
 | `rs/src/source/rule_events.rs` | the rule-event adapter: `JsonEvents/1` from a live parse |
 | `rs/src/source/parser.rs` | `ParserSource`: one text, materialized or incremental |
 | `rs/src/source/lines.rs` | `LinesSource`: JSON Lines and CSV a record or a chunk at a time |
-| `rs/src/source/capability.rs` | the verified list `capability::incremental` answers from |
-| `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads; a probe's passes dropped |
+| `rs/src/source/capability.rs` | the verified lists `capability::incremental` and `capability::prunable` answer from |
+| `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads; a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
 | `rs/src/transduce_tree.rs` | `TransduceTree`: alchemy's `transduce-tree` natively, offered through `Routers::transduce_tree` |
 | `rs/tests/incremental_test.rs` | the differential suite that keeps that list honest, both ways |
+| `rs/tests/prune_test.rs` | the differential suite behind `capability::prunable`, both ways, and ten times the records leaving the pruned tree as it was |
 | `rs/tests/retention_test.rs` | ten times the rows of a JSON or an XML document leave the retained high-water flat |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |

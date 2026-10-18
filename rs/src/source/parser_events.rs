@@ -51,17 +51,42 @@
 //! returned as it was; a sink that stopped is `Ok(Flow::Stop)`; a parse
 //! cancelled through the caller's [`AbortFlag`] is `ABORTED`; any other
 //! engine error is `INPUT_INVALID` with the engine's code and position.
+//!
+//! The engine builds its value as it parses, so a long document's tree
+//! holds every record, though no pass's value is a container and nothing
+//! reads the value the parse returns. [`ParserEventSource::prune`] empties
+//! each array behind the stream: once the sink has seen a close pass whose
+//! rule's node is an array, the source empties that array, so the tree
+//! holds the elements of the passes since the last close on it and no
+//! more. An array the source cannot empty alone, one also held elsewhere,
+//! is left as it is. That alters the value the engine returns, which this
+//! source never reads, and it is sound for a grammar whose passes do not
+//! depend on what its arrays hold, which a grammar's actions or conditions
+//! could make them. One difference is the contract: a token whose value is
+//! a container of the tree (a yaml alias, which the lexer resolves to the
+//! anchored node) carries what the tree holds when its pass is made, so
+//! the arrays in it may have been emptied, while its kind and its maps'
+//! members are as they were; a part reads such a token's kind, never its
+//! elements. So pruning, like the incremental source, is a verified
+//! capability: the differential suite (`tests/prune_test.rs`) runs every
+//! document of every grammar in the dev-dependencies pruned and not, and
+//! [`super::capability::prunable`] lists the grammars whose passes and
+//! outcomes never differed but by that. A run that prunes is gated on the
+//! list, by the grammar's name ([`ParserEventSource::grammar`]), and
+//! without a listed name it fails with `STREAMABILITY_UNKNOWN` before the
+//! parse, having sent nothing; [`ParserEventSource::unverified`] lifts the
+//! gate for the suite.
 
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use tabnas::{Rule, RuleDone, RuleState, Tabnas, Value};
 
 use crate::datum::Datum;
-use crate::error::Fail;
+use crate::error::{Code, Fail};
 use crate::limits::{AbortFlag, Limits, Metrics};
 use crate::sink::Flow;
-use crate::source::engine_failure;
 use crate::source::rule_events::{is_json_number, GUARD};
+use crate::source::{capability, engine_failure};
 use crate::{ParserEvent, ParserSink, PassAlt, PassToken, RulePass};
 
 /// A tabnas parser applied to one text, as a source of its rule passes.
@@ -71,11 +96,14 @@ pub struct ParserEventSource<'s> {
     limits: Limits,
     abort: AbortFlag,
     metrics: Arc<Metrics>,
+    grammar: Option<Box<str>>,
+    prune: bool,
+    unverified: bool,
 }
 
 impl<'s> ParserEventSource<'s> {
-    /// A source with default limits, its own abort flag and fresh metrics;
-    /// the builder methods change each.
+    /// A source with default limits, its own abort flag and fresh metrics,
+    /// that prunes nothing; the builder methods change each.
     pub fn new(parser: Tabnas, text: &'s str) -> ParserEventSource<'s> {
         ParserEventSource {
             parser,
@@ -83,6 +111,60 @@ impl<'s> ParserEventSource<'s> {
             limits: Limits::default(),
             abort: AbortFlag::new(),
             metrics: Metrics::new(),
+            grammar: None,
+            prune: false,
+            unverified: false,
+        }
+    }
+
+    /// The grammar the parser implements, by the name of the format it
+    /// reads, as [`super::ParserSource::grammar`] takes it. A run that
+    /// prunes needs a name [`capability::prunable`] lists; one that does
+    /// not prune needs no name.
+    pub fn grammar(mut self, name: &str) -> Self {
+        self.grammar = Some(name.into());
+        self
+    }
+
+    /// Empty each array in the engine's tree once the sink has seen a
+    /// close pass on it, so the tree does not hold the whole document.
+    /// The passes are unchanged for a grammar [`capability::prunable`]
+    /// lists, and [`ParserEventSource::run_owned`] refuses to prune any
+    /// other, with `STREAMABILITY_UNKNOWN` before the parse.
+    pub fn prune(mut self) -> Self {
+        self.prune = true;
+        self
+    }
+
+    /// Prune whatever the verified list says. This exists for the
+    /// differential suite that maintains the list and for nothing else: a
+    /// grammar that reads its arrays back may make other passes once they
+    /// are emptied, and the run still returns `Ok`.
+    pub fn unverified(mut self) -> Self {
+        self.unverified = true;
+        self
+    }
+
+    /// Why the run may not prune, when it may not.
+    fn gate(&self) -> Option<Fail> {
+        if !self.prune || self.unverified {
+            return None;
+        }
+        match self.grammar.as_deref() {
+            Some(name) if capability::prunable(name) => None,
+            Some(name) => Some(Fail::new(
+                Code::StreamabilityUnknown,
+                format!(
+                    "grammar {name:?} is not in capability::prunable: the differential suite \
+                     has not verified that its passes are the same when its arrays are emptied \
+                     behind the stream; run it without ParserEventSource::prune"
+                ),
+            )),
+            None => Some(Fail::new(
+                Code::StreamabilityUnknown,
+                "ParserEventSource::prune needs the grammar's name (ParserEventSource::grammar) \
+                 to check capability::prunable; without one, run it without pruning",
+            )),
         }
     }
 
@@ -105,12 +187,30 @@ impl<'s> ParserEventSource<'s> {
     /// engine's subscriber must own its state, so the sink is taken by
     /// value, as [`super::ParserSource::run_owned`] takes it.
     pub fn run_owned<S: ParserSink + Send + 'static>(self, sink: S) -> (Result<Flow, Fail>, S) {
+        let (outcome, sink, _) = self.run_owned_with_value(sink);
+        (outcome, sink)
+    }
+
+    /// [`ParserEventSource::run_owned`], also handing back the value the
+    /// engine returned, when the parse returned one: the engine's tree
+    /// after pruning, when the run prunes. It is not the run's result (the
+    /// passes are): it exists so a test can measure what pruning left in
+    /// the tree, and nothing else should read it.
+    pub fn run_owned_with_value<S: ParserSink + Send + 'static>(
+        self,
+        sink: S,
+    ) -> (Result<Flow, Fail>, S, Option<Value>) {
+        if let Some(refused) = self.gate() {
+            return (Err(refused), sink, None);
+        }
         let ParserEventSource {
             mut parser,
             text,
             limits,
             abort,
             metrics,
+            prune,
+            ..
         } = self;
         let stop = AbortFlag::new();
         let relay = Arc::new(Mutex::new(Relay {
@@ -120,6 +220,7 @@ impl<'s> ParserEventSource<'s> {
             abort: abort.clone(),
             stop: stop.clone(),
             events: 0,
+            prune,
         }));
         install(
             &mut parser,
@@ -144,7 +245,7 @@ impl<'s> ParserEventSource<'s> {
             },
         };
         Metrics::add(&metrics.events, relay.events);
-        (outcome, relay.sink)
+        (outcome, relay.sink, parsed.ok())
     }
 
     /// [`ParserEventSource::run_owned`] for a boxed sink.
@@ -174,6 +275,8 @@ struct Relay<S> {
     /// Set to make the parse guard cancel the parse.
     stop: AbortFlag,
     events: u64,
+    /// Empty the array a close pass's rule builds, once the sink has seen it.
+    prune: bool,
 }
 
 impl<S: ParserSink> Relay<S> {
@@ -207,7 +310,11 @@ impl<S: ParserSink> Relay<S> {
             ParserEvent::Close(pass)
         };
         match self.send(&ev) {
-            Ok(Flow::Continue) => {}
+            Ok(Flow::Continue) => {
+                if self.prune && !open {
+                    empty_array(rule);
+                }
+            }
             Ok(Flow::Stop) => {
                 self.status = Status::Stopped;
                 self.stop.abort();
@@ -242,6 +349,30 @@ fn lock<S>(relay: &Mutex<Relay<S>>) -> MutexGuard<'_, Relay<S>> {
     relay
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Empty the array `rule`'s node is, when the source can empty it alone.
+/// Every element in it was built by passes the sink has seen, the last of
+/// them the close pass just sent, and what those passes carry is held by
+/// the sink, so nothing sent so far changes. An array also held elsewhere
+/// (in a rule's state, or by a container that took it already) is left as
+/// it is: emptying the node's copy would free nothing, and would copy the
+/// array.
+fn empty_array(rule: &Rule) {
+    let mut node = rule.node.borrow_mut();
+    match &mut *node {
+        Value::Array(items) => {
+            if let Some(items) = Arc::get_mut(items) {
+                items.clear();
+            }
+        }
+        Value::ListRef(list) => {
+            if let Some(list) = Arc::get_mut(list) {
+                list.value.clear();
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The pass as alchemy's [`RulePass`], its sizes held to
@@ -520,6 +651,60 @@ mod tests {
             .run_owned(Seen::default());
         assert_eq!(r.unwrap_err().code, Code::Aborted);
         assert!(seen.0.is_empty());
+    }
+
+    #[test]
+    fn pruning_empties_the_trees_arrays_and_leaves_the_passes_as_they_were() {
+        let src = r#"{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}"#;
+        let run = |prune: bool| {
+            let mut source = ParserEventSource::new(tabnas_json::make(), src).grammar("json");
+            if prune {
+                source = source.prune();
+            }
+            let (r, seen, value) = source.run_owned_with_value(Seen::default());
+            assert_eq!(r.unwrap(), Flow::Continue);
+            (
+                encoded(&seen.0),
+                serde_json::to_string(&value.unwrap()).unwrap(),
+            )
+        };
+        let canon = |text: &str| serde_json::to_string(&tabnas_json::make().parse(text).unwrap());
+        let (whole, kept) = run(false);
+        let (pruned, left) = run(true);
+        assert_eq!(pruned, whole);
+        assert_eq!(kept, canon(src).unwrap());
+        // Every array is emptied, and the maps keep their members.
+        assert_eq!(left, canon(r#"{"a":[],"b":[],"d":{"e":"f"}}"#).unwrap());
+    }
+
+    #[test]
+    fn a_run_that_prunes_needs_a_listed_grammar_and_sends_nothing_without_one() {
+        for named in [None, Some("chess"), Some("Json"), Some("")] {
+            let mut source = ParserEventSource::new(tabnas_json::make(), "[1]").prune();
+            if let Some(name) = named {
+                source = source.grammar(name);
+            }
+            let (r, seen) = source.run_owned(Seen::default());
+            let err = r.unwrap_err();
+            assert_eq!(err.code, Code::StreamabilityUnknown, "{named:?}");
+            assert!(err.message.contains("capability::prunable"), "{named:?}");
+            assert!(seen.0.is_empty(), "{named:?}");
+        }
+        // A listed name opens the gate, the suite's switch lifts it, and a
+        // run that does not prune needs no name.
+        for source in [
+            ParserEventSource::new(tabnas_json::make(), "[1]")
+                .grammar("json")
+                .prune(),
+            ParserEventSource::new(tabnas_json::make(), "[1]")
+                .prune()
+                .unverified(),
+            ParserEventSource::new(tabnas_json::make(), "[1]").grammar("chess"),
+        ] {
+            let (r, seen) = source.run_owned(Seen::default());
+            assert_eq!(r.unwrap(), Flow::Continue);
+            assert_eq!(seen.0.last(), Some(&ParserEvent::End));
+        }
     }
 
     #[test]

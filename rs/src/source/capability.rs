@@ -1,4 +1,6 @@
-//! Which grammars the incremental source is verified for.
+//! Which grammars the incremental source is verified for, and which a
+//! [`crate::ParserEventSource`] may prune behind its stream ([`PRUNABLE`],
+//! at the end).
 //!
 //! Incremental streaming is a per-grammar VERIFIED capability, never an
 //! assumption: `tests/incremental_test.rs` runs every fixture of every
@@ -85,6 +87,21 @@ pub fn incremental(grammar: &str) -> bool {
     INCREMENTAL.contains(&grammar)
 }
 
+/// The grammars whose passes a [`crate::ParserEventSource`] relays alike
+/// whether it prunes or not, on every document `tests/prune_test.rs` reads
+/// them, by the name of the format each reads, as [`INCREMENTAL`] names
+/// them. The suite asserts the list in both directions.
+pub const PRUNABLE: &[&str] = &[
+    "csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "pgn", "xml",
+    "yaml", "zon",
+];
+
+/// Whether `grammar`'s arrays may be emptied behind a
+/// [`crate::ParserEventSource`]'s stream ([`crate::ParserEventSource::prune`]).
+pub fn prunable(grammar: &str) -> bool {
+    PRUNABLE.contains(&grammar)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +120,23 @@ mod tests {
         assert!(!incremental(""));
         for name in INCREMENTAL {
             assert!(incremental(name));
+        }
+    }
+
+    #[test]
+    fn the_prunable_list_answers_by_grammar_name() {
+        assert!(prunable("json"));
+        assert!(prunable("yaml"));
+        assert!(prunable("xml"));
+        assert!(prunable("pgn"));
+        assert!(
+            !prunable("toml"),
+            "its message for a key defined twice quotes the value"
+        );
+        assert!(!prunable("chess"), "the format's name, not the crate's");
+        assert!(!prunable(""));
+        for name in PRUNABLE {
+            assert!(prunable(name));
         }
     }
 }

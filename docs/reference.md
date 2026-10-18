@@ -135,6 +135,54 @@ the pass, so a huge token is refused by name before any sink sees it;
 `JsonEvents`. It polls the `AbortFlag` per pass and counts the events it
 delivers in `Metrics::events`.
 
+### Pruning behind the parser's passes
+
+The engine builds its value as it parses, so a `ParserEventSource` over a
+long document leaves the engine holding every record in its tree, though
+nothing a pass carries is a container of the tree (a pass's `value` is a
+scalar or nothing) and nothing reads the value the parse returns.
+`ParserEventSource::prune()` empties each array behind the stream: once
+the sink has seen a close pass whose rule's node is an array, the source
+empties that array in place (in Go, in every rule that builds into it,
+by `tabnas.Rule.SetNode`, its elements cleared first, since a truncated
+slice keeps its backing array), so the tree holds the elements of the
+passes since the last close on it and no more. Rust leaves an array also held
+elsewhere as it is, since emptying the node's copy would free nothing and
+would copy it. `run_owned_with_value` (`RunWithValue`, `runWithValue`)
+hands back the tree the run left, which exists for a test to measure.
+
+Pruning alters the value the engine returns, so it is sound only for a
+grammar whose passes do not depend on what its arrays hold, and like the
+incremental source it is a verified capability. `capability::PRUNABLE`
+lists `csv`, `feed`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`,
+`markdown`, `pgn`, `xml`, `yaml` and `zon` (Go's omits `pgn`, which its
+suite does not run). `rs/tests/prune_test.rs` and its ports run every
+document each grammar reads, pruned and not: the committed fixtures, the
+generated worked-example documents, and every document of the grammar's
+own `test/spec` corpus. A listed grammar's pruned run relays the same
+passes, pass for pass in the fixture encoding, and ends the same way, with
+one difference the contract allows: a token whose value is a container of
+the tree carries what the tree holds when its pass is made, so the arrays
+in it may have been emptied, while its kind and its maps' members are as
+they were. yaml's lexer resolves an alias so, to the anchored node (`a:
+&items [1, 2]` and then `b: *items`), and yaml's part reads such a token's
+kind alone, refusing an alias to a sequence or a mapping as one whose
+members the passes do not show. A part that read the elements of a
+token's arrays would read what pruning left, so none does. `toml` is not
+listed: its message for a key defined twice quotes the earlier value,
+which pruning empties (`cannot define arr, it already has the value []`).
+The suite asserts the list in both directions, and measures what pruning
+is for: ten times the records of a JSON, JSON Lines, CSV, YAML, XML or PGN
+document leave the pruned tree holding as many elements as before (six
+for the worked example's JSON, four for its XML), where the tree without
+pruning holds every record.
+
+A run that prunes is gated on the list by the grammar's name
+(`ParserEventSource::grammar(name)`), as `ParserSource`'s incremental mode
+is: without a listed name it fails with `STREAMABILITY_UNKNOWN` before the
+parse, having sent nothing. `ParserEventSource::unverified()` lifts the
+gate for the suite. A run that does not prune needs no name.
+
 ### The native transduce-tree
 
 `TransduceTree::new(TreeSpec, Sink)` is alchemy's `transduce-tree` run
