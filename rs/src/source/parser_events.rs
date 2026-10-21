@@ -90,6 +90,11 @@ use crate::{ParserEvent, ParserSink, PassAlt, PassToken, RulePass};
 pub struct ParserEventSource<'s> {
     parser: Tabnas,
     text: &'s str,
+    /// A reader the parser reads its source from, a window at a time
+    /// where the grammar declares `lex.window` (`Tabnas::parse_reader`),
+    /// in place of `text`. A prototype (tabnas/parser's
+    /// `doc/chunked-source.md`).
+    reader: Option<Box<dyn std::io::Read + Send + 's>>,
     limits: Limits,
     abort: AbortFlag,
     metrics: Arc<Metrics>,
@@ -105,12 +110,26 @@ impl<'s> ParserEventSource<'s> {
         ParserEventSource {
             parser,
             text,
+            reader: None,
             limits: Limits::default(),
             abort: AbortFlag::new(),
             metrics: Metrics::new(),
             grammar: None,
             prune: false,
             unverified: false,
+        }
+    }
+
+    /// A source of the rule passes of what `reader` gives, which the parser
+    /// reads a window at a time where its grammar declares `lex.window`
+    /// (`Tabnas::parse_reader`). A prototype.
+    pub fn from_reader(
+        parser: Tabnas,
+        reader: impl std::io::Read + Send + 's,
+    ) -> ParserEventSource<'s> {
+        ParserEventSource {
+            reader: Some(Box::new(reader)),
+            ..ParserEventSource::new(parser, "")
         }
     }
 
@@ -203,6 +222,7 @@ impl<'s> ParserEventSource<'s> {
         let ParserEventSource {
             mut parser,
             text,
+            reader,
             limits,
             abort,
             metrics,
@@ -225,7 +245,10 @@ impl<'s> ParserEventSource<'s> {
             abort.clone(),
             stop.clone(),
         );
-        let parsed = parser.parse(text);
+        let parsed = match reader {
+            Some(reader) => parser.parse_reader(reader),
+            None => parser.parse(text),
+        };
         drop(parser);
         let mut relay = match Arc::try_unwrap(relay) {
             Ok(mutex) => mutex
