@@ -90,6 +90,9 @@ use crate::{ParserEvent, ParserSink, PassAlt, PassToken, RulePass};
 pub struct ParserEventSource<'s> {
     parser: Tabnas,
     text: &'s str,
+    /// A reader the parser reads its source from, in place of `text`
+    /// ([`ParserEventSource::from_reader`]).
+    reader: Option<Box<dyn std::io::Read + Send + 's>>,
     limits: Limits,
     abort: AbortFlag,
     metrics: Arc<Metrics>,
@@ -105,12 +108,32 @@ impl<'s> ParserEventSource<'s> {
         ParserEventSource {
             parser,
             text,
+            reader: None,
             limits: Limits::default(),
             abort: AbortFlag::new(),
             metrics: Metrics::new(),
             grammar: None,
             prune: false,
             unverified: false,
+        }
+    }
+
+    /// A source of the rule passes of what `reader` gives, which the parser
+    /// reads with `Tabnas::parse_reader` (admin ADR-30): a grammar that
+    /// declares `lex.window` a window at a time, so that a long document
+    /// streams holding a window of its text rather than all of it, and any
+    /// other grammar whole first. The passes, the value and the failures are
+    /// those of [`ParserEventSource::new`] over the same text, and a reader
+    /// that fails, or bytes that are not UTF-8, end the run with
+    /// `INPUT_INVALID`, the engine's `unreadable` and where the source
+    /// failed.
+    pub fn from_reader(
+        parser: Tabnas,
+        reader: impl std::io::Read + Send + 's,
+    ) -> ParserEventSource<'s> {
+        ParserEventSource {
+            reader: Some(Box::new(reader)),
+            ..ParserEventSource::new(parser, "")
         }
     }
 
@@ -203,6 +226,7 @@ impl<'s> ParserEventSource<'s> {
         let ParserEventSource {
             mut parser,
             text,
+            reader,
             limits,
             abort,
             metrics,
@@ -225,7 +249,10 @@ impl<'s> ParserEventSource<'s> {
             abort.clone(),
             stop.clone(),
         );
-        let parsed = parser.parse(text);
+        let parsed = match reader {
+            Some(reader) => parser.parse_reader(reader),
+            None => parser.parse(text),
+        };
         drop(parser);
         let mut relay = match Arc::try_unwrap(relay) {
             Ok(mutex) => mutex

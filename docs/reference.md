@@ -106,6 +106,17 @@ once the engine has returned the parse's value. It knows no grammar, and
 it has one mode. `run_owned(self, sink)` and `run_boxed` take the sink by
 value and hand it back, with `ParserSource`'s failure mapping.
 
+`ParserEventSource::from_reader(Tabnas, impl Read + Send)` is the same
+source over a reader, which the parser reads with `Tabnas::parse_reader`
+(admin ADR-30, tabnas/parser's `doc/chunked-source.md`). A grammar that
+declares `lex.window` is read a window at a time, so a long document
+streams holding a window of its text rather than all of it; any other
+grammar reads the reader whole first. The passes, the value and the
+failures are those of `new` over the same text. A reader that fails, or
+bytes that are not UTF-8, end the run with `INPUT_INVALID`, carrying the
+engine's `unreadable` and the row and column the source failed at. Only
+Rust has it so far (`DIVERGENCE.md` 6).
+
 A pass is a `RulePass`: the rule's `name`, depth `d` and instance `i`
 (the engine's, which numbers rules from 1, the start rule's, in the order
 it makes them); the alternate that matched (`p`, `r`, `b`, and its
