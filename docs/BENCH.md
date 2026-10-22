@@ -152,3 +152,57 @@ JSON), and 6 to 11 per cent less time; a whole-document parse of 60 MB
 takes a third less. What remains is the parse's own working set and the
 transducer's one record. Throughput is the engine's parse rate
 throughout.
+
+## From a reader
+
+`aless --render csv` again (release builds, this container, 2026-10-22)
+on documents in the shape `rs/tests/support` generates: the median of
+three interleaved runs, within 3% of each other, and the peak resident
+set of the aless process from `wait4` (`/usr/bin/time`), within 2%.
+Every pair wrote the same output in every round.
+
+The JSON rows select the records (`--path .response.payload.deep.records`)
+and read them through tabnas-json's part, pruned. aless 0.4.8 hands the
+part the file's text, read whole. Since rjrodger/aless#89 aless hands it
+a reader (`ParserEventSource::from_reader`), which the parser reads a
+window at a time, since tabnas-json declares `lex.window` (tabnas-parser
+0.12.15, admin ADR-30). The JSON Lines and CSV rows set `LinesSource`,
+which aless reads both with, beside the general path that step 12 of
+alchemy's streaming plan would leave them on: a local build of aless
+`main` that reads each through its crate's part, from a reader, a window
+at a time, pruned. (aless reads no CSV through a part today, so that
+build adds tabnas-csv's part to the formats it reads through one.)
+
+| Input | Read | Time | Peak RSS |
+|---|---|---|---|
+| JSON, 21.6 MB, 250,000 records | the text, whole (aless 0.4.8) | 23.7 s | 136 MiB |
+| | from a reader (aless#89) | 23.6 s | 12 MiB |
+| JSON, 43.6 MB, 500,000 records | the text, whole | 47.0 s | 261 MiB |
+| | from a reader | 47.0 s | 12 MiB |
+| JSON Lines, 21.6 MB, 250,000 records | `LinesSource` | 19.4 s | 11 MiB |
+| | tabnas-jsonl's part, from a reader | 23.2 s | 12 MiB |
+| JSON Lines, 43.6 MB, 500,000 records | `LinesSource` | 38.2 s | 11 MiB |
+| | tabnas-jsonl's part, from a reader | 46.5 s | 12 MiB |
+| CSV, 26.9 MB, 700,000 rows | `LinesSource` | 27.1 s | 17 MiB |
+| | tabnas-csv's part, from a reader | 112.3 s | 12 MiB |
+| CSV, 55.0 MB, 1,400,000 rows | `LinesSource` | 53.9 s | 18 MiB |
+| | tabnas-csv's part, from a reader | 223.7 s | 12 MiB |
+
+What the table says:
+
+- **A document read from a reader holds a window of it, not its text.**
+  Read whole, the JSON cost about six bytes a byte of the document (its
+  text, and the lexer's copy of it): 136 MiB for 21.6 MB, and twice that
+  for twice the file. From a reader the run holds 12 MiB whatever the
+  file's size, in the same time to within 0.5%.
+- **On the general path, JSON Lines and CSV hold memory flat as well.**
+  Each is read a window at a time and pruned, so step 12 costs no memory:
+  12 MiB, beside `LinesSource`'s 11 MiB to 18 MiB.
+- **The general path costs time, and the part decides how much.**
+  `LinesSource` parses a record at a time and makes its events natively.
+  tabnas-jsonl's part is a rule table for transduce's native
+  `transduce-tree`, a fifth slower than that. tabnas-csv's part is
+  hand-written alchemy, two `scan-emit` scans whose steps alchemy's
+  evaluator runs on every pass, and it takes about four times as long.
+  Before step 12 retires `LinesSource`, CSV's part needs a native route
+  or a faster evaluator, or CSV keeps a line source.
