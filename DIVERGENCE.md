@@ -127,3 +127,15 @@ Pinned in Rust by `pgn_streams_incrementally_where_the_list_says_so` and
 `every_document_of_pgns_own_corpus_streams_as_the_walk`
 (`rs/tests/incremental_test.rs`), and in TypeScript by the differential
 suite's `pgn` case (`ts/test/incremental.test.ts`).
+
+## 6. Only Rust reads the parser's source from a reader
+
+`ParserEventSource::from_reader` hands the parser a reader in place of a
+text (`Tabnas::parse_reader`, admin ADR-30), so a grammar that declares
+`lex.window` streams a long document holding a window of its text. The
+TypeScript and Go engines parse a string, so their sources take a text
+read whole: the same passes, and the whole text held. They take a reader
+when their engines do, in the maintainer's order, and this entry goes.
+
+Pinned in Rust by `every_fixture_streams_the_same_from_a_reader` and
+`an_unreadable_source_is_invalid_input` (`rs/tests/reader_test.rs`).

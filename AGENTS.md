@@ -171,11 +171,12 @@ In every other mode the value is exactly the grammar's.
 | `rs/src/source/parser.rs` | `ParserSource`: one text, materialized or incremental |
 | `rs/src/source/lines.rs` | `LinesSource`: JSON Lines and CSV a record or a chunk at a time |
 | `rs/src/source/capability.rs` | the verified lists `capability::incremental` and `capability::prunable` answer from |
-| `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads; a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
+| `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
 | `rs/src/transduce_tree.rs` | `TransduceTree`: alchemy's `transduce-tree` natively, offered through `Routers::transduce_tree` |
 | `rs/tests/incremental_test.rs` | the differential suite that keeps that list honest, both ways |
 | `rs/tests/prune_test.rs` | the differential suite behind `capability::prunable`, both ways, and ten times the records leaving the pruned tree as it was |
 | `rs/tests/retention_test.rs` | ten times the rows of a JSON or an XML document leave the retained high-water flat |
+| `rs/tests/reader_test.rs` | `ParserEventSource::from_reader` against the same text read whole: every fixture of a grammar the harness builds, a few bytes at a time, and a reader that fails |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
 | `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML), shared with the benches |
@@ -228,7 +229,7 @@ here) and written in `SCREAMING_SNAKE_CASE`:
 | `PROTOCOL_ORDER_ERROR` | a protocol event out of sequence |
 | `TARGET_VALUE_UNREPRESENTABLE` | the target format cannot carry the value |
 | `RESOURCE_LIMIT_EXCEEDED` | a `Limits` field was passed; `Fail::limit` names it |
-| `INPUT_INVALID` | the input did not parse; the engine's code and position ride along, in both modes alike: an incremental run of a document the grammar refuses fails with the same code and position after a protocol-valid prefix (zon's repeated fields; the member the grammar never stored is not streamed). A grammar's own guard cancelling the parse (tabnas-json refuses nesting past 128, below `Limits::max_depth`) is this too, and the message names the grammar's guard |
+| `INPUT_INVALID` | the input did not parse, or could not be read (the engine's `unreadable`, from `ParserEventSource::from_reader`, at the character the reader failed at or the bytes that are not UTF-8); the engine's code and position ride along, in both modes alike: an incremental run of a document the grammar refuses fails with the same code and position after a protocol-valid prefix (zon's repeated fields; the member the grammar never stored is not streamed). A grammar's own guard cancelling the parse (tabnas-json refuses nesting past 128, below `Limits::max_depth`) is this too, and the message names the grammar's guard |
 | `OUTPUT_FAILED` | writing failed |
 | `ABORTED` | the run was cancelled; from a line source, `row` names the line the record or chunk it was reading starts on |
 
