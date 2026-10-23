@@ -27,19 +27,20 @@ tabnas-alchemy = { path = "../../alchemy/rs", default-features = false, features
 # repo. It is on crates.io as tabnas-parser, but this committed manifest
 # stays path-only (crates-release.yml rewrites the path into a crates.io
 # requirement when it publishes), so there is no registry version to fall
-# back on. tabnas-json and tabnas-csv are the grammars the tests read JSON
-# and CSV with; the line sources that parsed with them in the library were
-# retired at steps 12 and 13 of alchemy's streaming plan.
+# back on.
 tabnas = { package = "tabnas-parser", path = "../../parser/rs" }
-tabnas-json = { path = "../../json/rs" }
-tabnas-csv = { path = "../../csv/rs" }
 
 [dev-dependencies]
 # The unit tests in src/matcher.rs and src/table_from_json.rs and the shared
 # fixture harness (tests/common) read JSON with serde_json.
 serde_json = { version = "1.0", features = ["preserve_order"] }
 # The grammars the differential suite runs every fixture through, each a
-# sibling checkout like the engine.
+# sibling checkout like the engine. tabnas-json and tabnas-csv were the
+# library's own dependencies while its line sources parsed with them; they
+# went at steps 12 and 13 of alchemy's streaming plan, and the tests read
+# JSON and CSV with them (on the maintainer's instruction of 2026-10-23).
+tabnas-json = { path = "../../json/rs" }
+tabnas-csv = { path = "../../csv/rs" }
 tabnas-jsonl = { path = "../../jsonl/rs" }
 tabnas-jsonic = { path = "../../jsonic/rs" }
 tabnas-jsonc = { path = "../../jsonc/rs" }
