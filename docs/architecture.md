@@ -2,7 +2,7 @@
 
 > The protocol modules this design sketches (`event`, `sink`, `error`, `limits`, `datum`, `selector`, `table`) are now alchemy's shared types, [`tabnas_alchemy::shared`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared), and the renderer-facing types (`TextOut`, the CSV and JSON options) moved there from render. transduce and render depend on them and re-export them; alchemy's runtime takes transduce's `Routers` and render's `Renderers` from its host.
 >
-> Since step 13 of alchemy's streaming plan, a format streams through the transducer part its package ships, over the parser's rule passes (`ParserEventSource`), and the Rust crate has retired the rule-event adapter (2.2), its verified list and `ParserSource`'s incremental mode: every format the list named has a part, or reads whole as markdown's manifest declares. `ParserSource` parses and walks; pruning is `ParserEventSource::prune`, gated on `capability::prunable`. The TypeScript and Go ports keep their adapters while their JSON Lines line sources read through them. The design is otherwise as written.
+> Since step 13 of alchemy's streaming plan, a format streams through the transducer part its package ships, over the parser's rule passes (`ParserEventSource`), and the Rust crate has retired the rule-event adapter (2.2), its verified list and `ParserSource`'s incremental mode: every format the list named has a part, or reads whole as markdown's manifest declares. `ParserSource` parses and walks; pruning is `ParserEventSource::prune`, gated on `capability::prunable`. The TypeScript and Go ports keep their adapters while their JSON Lines line sources read through them. Since step 12, JSON Lines and CSV stream through their parts from a reader as every other format does (CSV's through the native `TransduceRecords`), and the Rust crate has retired `LinesSource` and `LineFormat`; the ports keep their line sources until their engines read a reader. The design is otherwise as written.
 
 Status: implementation brief, 2026-09-27. Derived from the maintainer's design
 document "Declarative Streaming Transducers and Renderers" (the "spec" below)
@@ -233,9 +233,6 @@ pub struct ParserSource<'s> { parser: Tabnas, text: &'s str,
                                            // incremental mode went at step 13
 pub struct ParserEventSource<'s> { … }    // the rule passes a part reads; prune()
                                            // empties each array behind the stream
-pub struct LinesSource<R: BufRead> { … }   // Csv { header }: header + chunks of whole
-                                           // records (quote-aware split); JSON Lines is
-                                           // read through its part since step 12
 pub mod capability { pub fn prunable(grammar: &str) -> bool }  // the verified list
 ```
 

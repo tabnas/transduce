@@ -65,11 +65,10 @@ are already projected into schema order. **Limits** are part of a plan
 and fail loudly; **metrics** report retention high-water marks; an
 **abort flag** cancels.
 
-The three sources, in order of preference:
+The two sources, in order of preference:
 
 | Source | When | Memory |
 |---|---|---|
-| `LinesSource` | CSV input | one chunk of records at a time |
 | `ParserEventSource` and the format's transducer part | a format whose package ships a part | the engine's own per-parse state, plus one selected scope; from a reader, a window of the input when the grammar declares `lex.window` |
 | `ParserSource` / `ValueSource` | every other grammar | the whole parsed value |
 
@@ -145,7 +144,6 @@ every other run the value is exactly the grammar's.
 | `rs/src/source/mod.rs` | `Source`, `ValueSource`, `walk_value`, and the engine failures the sources map alike |
 | `rs/src/source/guard.rs` | `Guarded`: the source limits, the abort flag and the source metrics on every event |
 | `rs/src/source/parser.rs` | `ParserSource`: one text, parsed, then its value walked |
-| `rs/src/source/lines.rs` | `LinesSource`: CSV a chunk of records at a time (JSON Lines is read through its part, `ParserEventSource::from_reader`, since alchemy's step 12) |
 | `rs/src/source/capability.rs` | the verified list `capability::prunable` answers from |
 | `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
 | `rs/src/transduce_tree.rs` | `TransduceTree`: alchemy's `transduce-tree` natively, offered through `Routers::transduce_tree` |
@@ -159,7 +157,7 @@ every other run the value is exactly the grammar's.
 | `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML, XML, PGN) and JSON's part, shared with the benches |
 | `rs/benches/` | criterion throughput benches: parse only, JSON's part, walk, router and table |
 | `docs/` | `architecture.md` (the design), `reference.md`, `translation.md` (any format to any other: the parts a format ships and the host composes) |
-| `test/spec/*.tsv` | the shared fixtures every runtime runs: events, routes, tables, the line sources, scan-emit, limits, the parser's rule passes and the native transduce-tree over them (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
+| `test/spec/*.tsv` | the shared fixtures every runtime runs (the incremental and line-source rows the TypeScript and Go ports' alone, which the Rust runners skip by mode, `common::rust_rows`): events, routes, tables, the line sources, scan-emit, limits, the parser's rule passes and the native transduce-tree over them (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
 | `DIVERGENCE.md` | what a runtime may do differently, and what the fixtures leave out on purpose |
 | `ci/rust/run.sh` | the gate `.github/workflows/rust.yml` runs |
 
@@ -208,7 +206,7 @@ here) and written in `SCREAMING_SNAKE_CASE`:
 | `RESOURCE_LIMIT_EXCEEDED` | a `Limits` field was passed; `Fail::limit` names it |
 | `INPUT_INVALID` | the input did not parse, or could not be read (the engine's `unreadable`, from `ParserEventSource::from_reader`, at the character the reader failed at or the bytes that are not UTF-8); the engine's code and position ride along, from every source alike: a run that streams a document the grammar refuses fails with the same code and position after the prefix it streamed. A grammar's own guard cancelling the parse (tabnas-json refuses nesting past 128, below `Limits::max_depth`) is this too, and the message names the grammar's guard |
 | `OUTPUT_FAILED` | writing failed |
-| `ABORTED` | the run was cancelled; from a line source, `row` names the line the record or chunk it was reading starts on |
+| `ABORTED` | the run was cancelled; from the TypeScript and Go ports' line sources, `row` names the line the record or chunk it was reading starts on |
 
 A code is never renamed, removed or repurposed. A failure also says
 whether output had already been committed (`output: "partial"`), because

@@ -20,11 +20,13 @@ tabnas parse ──rule passes──▶ format's part ──▶ JsonEvents/1 ─
   ships a transducer part streams through it, over the rule passes
   `ParserEventSource` delivers, from a reader a window at a time where
   the grammar declares one, with the engine's arrays emptied behind the
-  stream on request; the rest are walked whole. CSV also has a line
-  source that holds one chunk of records at a time, whatever the file's
-  size. The TypeScript and Go ports still stream the grammars their
-  differential suites verify by inferring events from the rule events,
-  as the Rust crate did until step 13 of alchemy's streaming plan.
+  stream on request; the rest are walked whole. JSON Lines and CSV
+  stream so too, so memory stays flat whatever the file's size. The
+  TypeScript and Go ports still read those two with line sources, a
+  record or a chunk of records at a time, and stream the grammars their
+  differential suites verify by inferring events from the rule events.
+  The Rust crate did both until steps 12 and 13 of alchemy's streaming
+  plan.
 - **Bounded by contract.** Retained values are measured against named
   limits as they are built; a breach fails with the limit's name, never
   a silent fallback to a bigger algorithm.

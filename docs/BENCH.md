@@ -61,11 +61,11 @@ What the table says:
   parser it hands to a source; aless sets 3 (rjrodger/aless#33, and
   "Through aless" below). Without it a streaming source bounds what the
   transducer retains, and the engine's own retention stands.
-- CSV is parsed a chunk of records at a time by `LinesSource`, so its
-  memory is bounded whatever the file size, at the engine's per-record
-  cost. JSON Lines, which `LinesSource` read a record at a time until
-  step 12, is read through its part from a reader, a window at a time
-  ("From a reader" below).
+- JSON Lines and CSV, which `LinesSource` read a record or a chunk of
+  records at a time until step 12, are read through their parts from a
+  reader, a window at a time, so their memory is bounded whatever the
+  file size: JSON Lines through `TransduceTree` ("From a reader" below),
+  CSV through `TransduceRecords` ("Records, natively").
 - Throughput through this crate is the engine's: about 1 MB/s for
   record-shaped data. The stages downstream (events, router, table, CSV)
   are measured separately by `cargo bench` and are not the bottleneck.
@@ -135,8 +135,7 @@ What the table says, in the terms of the engine table above:
   and `tests/retention_test.rs` checks the engine's tree itself holds no
   streamed row once the run is over), while the engine's rule history
   grows with the document unless the host bounds it (`options.rule.history`,
-  "What follows for this crate"); the line source sidesteps that for CSV
-  by parsing a chunk of records at a time.
+  "What follows for this crate").
 
 ## Through aless
 
