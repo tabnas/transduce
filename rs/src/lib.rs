@@ -44,14 +44,16 @@ pub mod routers;
 pub mod scan;
 pub mod source;
 pub mod table_from_json;
+pub mod transduce_records;
 pub mod transduce_tree;
 
 /// The protocol modules, which are alchemy's shared types.
 pub use tabnas_alchemy::shared::{datum, error, event, limits, selector, sink, table};
 
 pub use tabnas_alchemy::shared::{
-    parser_event, tree, tree_text_refusal, ParserEvent, ParserSink, PassAlt, PassToken, RulePass,
-    TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec,
+    parser_event, records, records_name, records_state_bytes, records_state_refusal, tree,
+    tree_text_refusal, ParserEvent, ParserSink, PassAlt, PassToken, RecordsPhase, RecordsSpec,
+    RulePass, TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec,
 };
 
 pub use datum::{
@@ -74,6 +76,7 @@ pub use table::{
     TableBinding, TableEvent, TableSink,
 };
 pub use table_from_json::TableFromJson;
+pub use transduce_records::TransduceRecords;
 pub use transduce_tree::TransduceTree;
 
 /// This crate's version, as `Cargo.toml` declares it.
