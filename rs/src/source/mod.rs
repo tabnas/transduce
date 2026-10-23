@@ -7,9 +7,9 @@
 //!   as they happen, for the grammars the differential suite has verified
 //!   ([`capability::incremental`]); in [`SourceMode::Materialize`] it
 //!   parses and walks.
-//! - [`LinesSource`] reads JSON Lines or CSV from any `BufRead` a record
-//!   (or a chunk of records) at a time, bounding memory whatever the
-//!   file's size.
+//! - [`LinesSource`] reads CSV from any `BufRead` a chunk of records at a
+//!   time, bounding memory whatever the file's size. JSON Lines is read
+//!   through its part, from a reader ([`ParserEventSource::from_reader`]).
 //!
 //! - [`ParserEventSource`] drives a tabnas parse of one text and relays
 //!   its rule passes as `ParserEvents/1`, the input a transducer part

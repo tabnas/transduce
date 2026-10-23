@@ -1,32 +1,20 @@
-//! [`LinesSource`]: JSON Lines and CSV a record (or a chunk of records) at
-//! a time, from any [`BufRead`].
+//! [`LinesSource`]: CSV a chunk of records at a time, from any
+//! [`BufRead`].
 //!
-//! The engine parses a whole `&str`, so a document is retained at least
-//! once however it is consumed. Line-delimited formats do not need to be
-//! one document: JSON Lines is one value per line, and CSV is a header
-//! plus independent records, so each can be parsed a piece at a time with
-//! one reused parser and the memory a run needs stops depending on the
-//! file's size. That is what this source does, and the only reason it
-//! exists: its events are exactly the whole-file parse's (the array of
-//! the per-line values, or of the records), which the chunk-boundary
-//! tests hold it to at every byte.
+//! A CSV file is a header plus independent records, so it can be parsed a
+//! piece at a time with one reused parser, and the memory a run needs
+//! stops depending on the file's size. That is what this source does, and
+//! the only reason it exists: its events are exactly the whole-file
+//! parse's (the array of the records), which the chunk-boundary tests hold
+//! it to at every byte. JSON Lines, which this source read a record at a
+//! time until alchemy's streaming plan retired it here (its step 12), is
+//! read through tabnas-jsonl's transducer part from a reader, a window at
+//! a time ([`crate::ParserEventSource::from_reader`]).
 //!
-//! Both formats cut the input where the grammar ends a record, reading
-//! the text as the grammar's own lexer does (with the line characters,
-//! quotes, separators and comments its parser's resolved options set), and
-//! nothing read is left unparsed but a blank JSON Lines record, which the
-//! grammar skips too.
-//!
-//! JSON Lines: each record is parsed with one `tabnas-json` parser. A
-//! record is the text between line characters outside a string, so a lone
-//! `\r` ends one as `\n` does. A record of nothing but the grammar's
-//! spaces (a space or a tab) is blank and skipped; any other is parsed, so
-//! a line holding a form feed or a no-break space fails as the grammar
-//! fails it. With an owned sink ([`LinesSource::run_owned`]) the record
-//! goes through the rule-event adapter, reset per record, so numbers keep
-//! their lexemes; with a borrowed sink ([`Source::run`]) the value is
-//! walked and numbers carry none. A record that does not parse is
-//! `INPUT_INVALID` with its line's number as the row.
+//! The input is cut where the grammar ends a record, reading the text as
+//! the grammar's own lexer does (with the line characters, quotes,
+//! separators and comments its parser's resolved options set), and
+//! nothing read is left unparsed.
 //!
 //! CSV: the input is cut into chunks of whole records. A quote opens a
 //! quoted field only where the lexer starts a token (a record's start,
@@ -67,7 +55,7 @@
 //! is the same idea of "one row" measured before it is parsed.
 
 use std::io::{self, BufRead};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tabnas::Tabnas;
 use tabnas_csv::CsvOptions;
@@ -77,8 +65,8 @@ use crate::event::JsonEvent;
 use crate::limits::{AbortFlag, Limits, Metrics};
 use crate::sink::{Flow, Sink};
 use crate::source::guard::Guarded;
-use crate::source::rule_events::{self, Adapter, Status, GUARD};
-use crate::source::{engine_failure, walk_value, Prune, Source};
+use crate::source::rule_events::GUARD;
+use crate::source::{engine_failure, walk_value, Source};
 
 /// How much of the input one CSV parse holds, at most one record over.
 pub const DEFAULT_CHUNK_BYTES: usize = 256 * 1024;
@@ -86,8 +74,6 @@ pub const DEFAULT_CHUNK_BYTES: usize = 256 * 1024;
 /// The line-delimited format to read.
 #[derive(Clone, Debug)]
 pub enum LineFormat {
-    /// One JSON value per line; blank lines are skipped.
-    Jsonl,
     /// CSV records. `header` says whether the first record names the
     /// fields (it overrides `options.header`); the other options are the
     /// grammar's (`object: false` for arrays instead of objects, and so
@@ -161,18 +147,13 @@ impl<R: BufRead> LinesSource<R> {
         self
     }
 
-    /// Run with an owned sink: JSON Lines through the rule-event adapter
-    /// (lexemes kept), CSV through the walk. The sink comes back.
+    /// Run with an owned sink, the records through the walk. The sink
+    /// comes back.
     pub fn run_owned<S: Sink + Send + 'static>(self, sink: S) -> (Result<Flow, Fail>, S) {
-        match &self.format {
-            LineFormat::Jsonl => self.jsonl_incremental(sink),
-            LineFormat::Csv { .. } => {
-                let mut guarded =
-                    Guarded::new(sink, &self.limits, self.abort.clone(), self.metrics.clone());
-                let outcome = self.drive(&mut guarded);
-                (outcome, guarded.into_inner())
-            }
-        }
+        let mut guarded =
+            Guarded::new(sink, &self.limits, self.abort.clone(), self.metrics.clone());
+        let outcome = self.drive(&mut guarded);
+        (outcome, guarded.into_inner())
     }
 
     /// [`LinesSource::run_owned`] for a boxed sink.
@@ -183,7 +164,7 @@ impl<R: BufRead> LinesSource<R> {
         self.run_owned(sink)
     }
 
-    /// The borrowed-sink drive: both formats through the walk.
+    /// The drive: the records through the walk.
     fn drive<S: Sink>(self, guarded: &mut Guarded<S>) -> Result<Flow, Fail> {
         let LinesSource {
             reader,
@@ -194,28 +175,6 @@ impl<R: BufRead> LinesSource<R> {
             ..
         } = self;
         match format {
-            LineFormat::Jsonl => {
-                let mut parser = tabnas_json::make();
-                install_guard(&mut parser, &abort);
-                let mut records = JsonRecords::new(reader, &parser, limits.max_record_bytes);
-                if guarded.event(JsonEvent::ArrayStart)? == Flow::Stop {
-                    return Ok(Flow::Stop);
-                }
-                while let Some((number, record)) = records.next_record()? {
-                    let value = parser
-                        .parse(record)
-                        .map_err(|e| line_failure(&e, number, number, &abort))?;
-                    if walk_value(&value, guarded).map_err(|fail| at_record(fail, number))?
-                        == Flow::Stop
-                    {
-                        return Ok(Flow::Stop);
-                    }
-                }
-                if guarded.event(JsonEvent::ArrayEnd)? == Flow::Stop {
-                    return Ok(Flow::Stop);
-                }
-                guarded.event(JsonEvent::End)
-            }
             LineFormat::Csv { header, options } => {
                 let mut options = *options;
                 options.header = header;
@@ -251,92 +210,10 @@ impl<R: BufRead> LinesSource<R> {
             }
         }
     }
-
-    /// JSON Lines with the adapter: one parser, one subscriber, the
-    /// adapter reset before each line.
-    fn jsonl_incremental<S: Sink + Send + 'static>(self, sink: S) -> (Result<Flow, Fail>, S) {
-        let LinesSource {
-            reader,
-            limits,
-            abort,
-            metrics,
-            ..
-        } = self;
-        let stop = AbortFlag::new();
-        let adapter = Adapter::new(
-            sink,
-            &limits,
-            abort.clone(),
-            metrics,
-            &Prune::Never,
-            stop.clone(),
-        );
-        let shared = Arc::new(Mutex::new(adapter));
-        let mut parser = tabnas_json::make();
-        Adapter::install(
-            &mut parser,
-            Arc::downgrade(&shared),
-            abort.clone(),
-            stop.clone(),
-        );
-        let mut records = JsonRecords::new(reader, &parser, limits.max_record_bytes);
-        // The record being read, which an abort the adapter raised names.
-        let mut reading = None;
-        let mut outcome = rule_events::lock(&shared).send(JsonEvent::ArrayStart);
-        if outcome.as_ref().is_ok_and(|flow| *flow == Flow::Continue) {
-            outcome = loop {
-                let (number, record) = match records.next_record() {
-                    Ok(Some(next)) => next,
-                    Ok(None) => break Ok(Flow::Continue),
-                    Err(fail) => break Err(fail),
-                };
-                reading = Some(number);
-                let parsed = parser.parse(record);
-                let mut adapter = rule_events::lock(&shared);
-                match adapter.status() {
-                    Status::Running => {}
-                    Status::Stopped => break Ok(Flow::Stop),
-                    // Reported from the adapter's own status below.
-                    Status::Failed(_) => break Ok(Flow::Continue),
-                }
-                match parsed {
-                    Ok(_) if adapter.complete() => adapter.reset(),
-                    Ok(value) if adapter.idle() => match adapter.walk_whole(&value) {
-                        Ok(Flow::Continue) => adapter.reset(),
-                        Ok(Flow::Stop) => break Ok(Flow::Stop),
-                        Err(fail) => break Err(at_record(fail, number)),
-                    },
-                    Ok(_) => break Err(rule_events::not_streamable()),
-                    Err(e) => break Err(line_failure(&e, number, number, &abort)),
-                }
-            };
-        }
-        drop(parser);
-        let mut adapter = rule_events::take(shared);
-        if let (Ok(Flow::Continue), Status::Running) = (&outcome, adapter.status()) {
-            outcome = adapter
-                .send(JsonEvent::ArrayEnd)
-                .and_then(|flow| match flow {
-                    Flow::Continue => adapter.send(JsonEvent::End),
-                    Flow::Stop => Ok(Flow::Stop),
-                });
-        }
-        let (status, sink) = adapter.finish();
-        let outcome = match status {
-            Status::Failed(fail) => Err(match reading {
-                Some(number) => at_record(fail, number),
-                None => fail,
-            }),
-            Status::Stopped => Ok(Flow::Stop),
-            Status::Running => outcome,
-        };
-        (outcome, sink)
-    }
 }
 
 impl<R: BufRead> Source for LinesSource<R> {
-    /// Both formats through the walk; JSON Lines numbers carry no lexeme
-    /// on this path (see [`LinesSource::run_owned`]).
+    /// The records through the walk, as [`LinesSource::run_owned`].
     fn run(self, sink: &mut dyn Sink) -> Result<Flow, Fail> {
         let mut guarded =
             Guarded::new(sink, &self.limits, self.abort.clone(), self.metrics.clone());
@@ -383,133 +260,6 @@ fn records_of(value: &tabnas::Value) -> &[tabnas::Value] {
         tabnas::Value::ListRef(list) => &list.value,
         // The grammar returns an array; anything else has no records.
         _ => &[],
-    }
-}
-
-/// What the JSON Lines grammar's lexer makes of a line, read from the line
-/// parser's resolved options (the grammar is the JSON one with the line
-/// token made significant): a line character outside a string ends a
-/// record, and a record of nothing but space is blank. Each set is empty
-/// while the engine does not lex its kind.
-struct JsonLexis {
-    line: Vec<char>,
-    space: Vec<char>,
-    quotes: Vec<char>,
-    escape: char,
-}
-
-impl JsonLexis {
-    fn of(parser: &Tabnas) -> JsonLexis {
-        let config = parser.config();
-        let mut line = lexed(config.line.lex, &config.line.chars);
-        if config.line.lex {
-            line.extend(&config.line.fixed);
-        }
-        JsonLexis {
-            line,
-            space: lexed(config.space.lex, &config.space.chars),
-            quotes: lexed(config.string.lex, &config.string.chars),
-            escape: config.string.escape_char,
-        }
-    }
-}
-
-/// JSON Lines records from the input's pieces. A record ends at a line
-/// character outside a string, as the grammar's lexer ends one: a line
-/// character inside a string is the string's, which the grammar refuses
-/// there, so the record goes on into the next piece and fails whole as the
-/// grammar fails it. A record of nothing but the grammar's spaces is blank
-/// and skipped.
-struct JsonRecords<R: BufRead> {
-    pieces: Pieces<R>,
-    lexis: JsonLexis,
-    record: String,
-    max_bytes: usize,
-}
-
-impl<R: BufRead> JsonRecords<R> {
-    fn new(reader: R, parser: &Tabnas, max_bytes: usize) -> JsonRecords<R> {
-        let lexis = JsonLexis::of(parser);
-        let config = parser.config();
-        let fixed: Vec<String> = config
-            .fixed
-            .tokens
-            .values()
-            .filter(|token| config.fixed.lex && !token.source.is_empty())
-            .map(|token| token.source.clone())
-            .collect();
-        let pieces = Pieces::new(
-            reader,
-            lexis.line.clone(),
-            config.line.row_chars.chars().collect(),
-            config.line.single,
-            &fixed,
-        );
-        JsonRecords {
-            pieces,
-            lexis,
-            record: String::new(),
-            max_bytes,
-        }
-    }
-
-    /// The next record that is not blank, without its line ending, and
-    /// the row it starts on; `None` at the end of the input. A record
-    /// with its line ending longer than `max_bytes` fails with that limit.
-    fn next_record(&mut self) -> Result<Option<(u64, &str)>, Fail> {
-        let (start, end) = loop {
-            self.record.clear();
-            let mut start = None;
-            let mut quote = None;
-            let mut escaped = false;
-            let mut end = None;
-            while end.is_none() {
-                let first = start.unwrap_or(self.pieces.row);
-                let max = self.max_bytes;
-                let over = || {
-                    Fail::limit(
-                        "max_record_bytes",
-                        max as u64,
-                        format!("line {first} is longer than {max} bytes"),
-                    )
-                    .at(first, 1)
-                };
-                let budget = max.saturating_sub(self.record.len());
-                let Some((row, piece)) = self.pieces.next_piece(budget, over)? else {
-                    break;
-                };
-                start.get_or_insert(row);
-                let held = self.record.len();
-                for (at, c) in piece.char_indices() {
-                    if let Some(open) = quote {
-                        if escaped {
-                            escaped = false;
-                        } else if c == self.lexis.escape {
-                            escaped = true;
-                        } else if c == open {
-                            quote = None;
-                        }
-                    } else if self.lexis.quotes.contains(&c) {
-                        quote = Some(c);
-                    } else if self.lexis.line.contains(&c) {
-                        end = Some(held + at);
-                        break;
-                    }
-                }
-                self.record.push_str(piece);
-            }
-            let Some(start) = start else {
-                return Ok(None);
-            };
-            let end = end.unwrap_or(self.record.len());
-            if !self.record[..end]
-                .chars()
-                .all(|c| self.lexis.space.contains(&c))
-            {
-                break (start, end);
-            }
-        };
-        Ok(Some((start, &self.record[..end])))
     }
 }
 
@@ -1284,96 +1034,30 @@ mod tests {
         )
     }
 
-    fn without_lexemes(events: &[OwnedJsonEvent]) -> Vec<OwnedJsonEvent> {
-        events
-            .iter()
-            .map(|e| match e {
-                OwnedJsonEvent::Number { value, .. } => OwnedJsonEvent::Number {
-                    value: *value,
-                    lexeme: None,
-                },
-                other => other.clone(),
-            })
-            .collect()
-    }
-
     fn walked(value: &tabnas::Value) -> Vec<OwnedJsonEvent> {
         let mut rec = Vec::new();
         ValueSource(value).run(&mut rec).unwrap();
         rec
     }
 
-    const JSONL: &str = "{\"a\":1.50,\"b\":[true,null]}\r\n\n  \n{\"a\":2,\"b\":\"x\"}\n[3]\n\"s\"";
-
-    /// The JSON Lines source installs the adapter on `tabnas-json` itself,
-    /// without the `ParserSource` gate, which is sound only while json is
-    /// verified.
     #[test]
-    fn the_line_sources_grammar_is_verified() {
-        assert!(crate::source::capability::incremental("json"));
-    }
-
-    #[test]
-    fn jsonl_matches_the_whole_file_parse_at_every_reader_boundary() {
-        let want = walked(&tabnas_jsonl::parse(JSONL).unwrap());
-        for step in 1..=JSONL.len() {
-            let mut rec: Vec<OwnedJsonEvent> = Vec::new();
-            LinesSource::new(trickle(JSONL, step), LineFormat::Jsonl)
-                .run(&mut rec)
-                .unwrap();
-            assert_eq!(rec, want, "borrowed, step {step}");
-
-            let (r, rec) = LinesSource::new(trickle(JSONL, step), LineFormat::Jsonl)
-                .run_owned(Vec::<OwnedJsonEvent>::new());
-            assert_eq!(r.unwrap(), Flow::Continue);
-            assert_eq!(without_lexemes(&rec), want, "owned, step {step}");
-            assert!(
-                rec.contains(&OwnedJsonEvent::Number {
-                    value: 1.5,
-                    lexeme: Some("1.50".into())
-                }),
-                "the owned path keeps lexemes"
-            );
-        }
-    }
-
-    #[test]
-    fn a_bad_jsonl_line_names_its_line_number() {
-        let text = "{\"a\":1}\n\n{\"a\": }\n{\"a\":2}\n";
+    fn empty_input_is_an_empty_array() {
         let mut rec: Vec<OwnedJsonEvent> = Vec::new();
-        let err = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
+        LinesSource::new(Cursor::new(""), LineFormat::csv())
             .run(&mut rec)
-            .unwrap_err();
-        assert_eq!(err.code, Code::InputInvalid);
-        assert_eq!(err.row, Some(3));
-        assert_eq!(err.column, Some(7));
-        let (r, _) = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
+            .unwrap();
+        assert_eq!(
+            rec,
+            vec![
+                OwnedJsonEvent::ArrayStart,
+                OwnedJsonEvent::ArrayEnd,
+                OwnedJsonEvent::End
+            ]
+        );
+        let (r, rec) = LinesSource::new(Cursor::new("\n\n"), LineFormat::csv())
             .run_owned(Vec::<OwnedJsonEvent>::new());
-        let err = r.unwrap_err();
-        assert_eq!(err.code, Code::InputInvalid);
-        assert_eq!(err.row, Some(3));
-    }
-
-    #[test]
-    fn empty_input_is_an_empty_array_for_both_formats() {
-        for format in [LineFormat::Jsonl, LineFormat::csv()] {
-            let mut rec: Vec<OwnedJsonEvent> = Vec::new();
-            LinesSource::new(Cursor::new(""), format.clone())
-                .run(&mut rec)
-                .unwrap();
-            assert_eq!(
-                rec,
-                vec![
-                    OwnedJsonEvent::ArrayStart,
-                    OwnedJsonEvent::ArrayEnd,
-                    OwnedJsonEvent::End
-                ]
-            );
-            let (r, rec) = LinesSource::new(Cursor::new("\n\n"), format)
-                .run_owned(Vec::<OwnedJsonEvent>::new());
-            r.unwrap();
-            assert_eq!(rec.len(), 3);
-        }
+        r.unwrap();
+        assert_eq!(rec.len(), 3);
     }
 
     const CSV: &str =
@@ -1486,7 +1170,8 @@ mod tests {
             max_record_bytes: 8,
             ..Limits::default()
         };
-        for format in [LineFormat::Jsonl, LineFormat::csv()] {
+        {
+            let format = LineFormat::csv();
             let mut reader = io::BufReader::with_capacity(
                 BUFFER,
                 Counting {
@@ -1515,15 +1200,6 @@ mod tests {
             ..Limits::default()
         };
         let err = LinesSource::new(
-            Cursor::new("{\"a\":1}\n{\"a\":123456}\n"),
-            LineFormat::Jsonl,
-        )
-        .limits(limits.clone())
-        .run(&mut Vec::<OwnedJsonEvent>::new())
-        .unwrap_err();
-        assert_eq!(err.limit.as_ref().unwrap().name, "max_record_bytes");
-        assert_eq!(err.row, Some(2));
-        let err = LinesSource::new(
             Cursor::new("a\n\"long\nquoted\nfield\"\n"),
             LineFormat::csv(),
         )
@@ -1536,7 +1212,7 @@ mod tests {
 
     #[test]
     fn a_stop_and_an_abort_end_the_run_on_both_paths() {
-        let text = "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n";
+        let text = "a\n1\n2\n3\n";
         let stopper = || {
             let mut n = 0;
             FnSink(move |_ev: JsonEvent<'_>| {
@@ -1546,22 +1222,22 @@ mod tests {
         };
         let mut sink = stopper();
         assert_eq!(
-            LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
+            LinesSource::new(Cursor::new(text), LineFormat::csv())
                 .run(&mut sink)
                 .unwrap(),
             Flow::Stop
         );
-        let (r, _) = LinesSource::new(Cursor::new(text), LineFormat::Jsonl).run_owned(stopper());
+        let (r, _) = LinesSource::new(Cursor::new(text), LineFormat::csv()).run_owned(stopper());
         assert_eq!(r.unwrap(), Flow::Stop);
 
         let abort = AbortFlag::new();
         abort.abort();
-        let err = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
+        let err = LinesSource::new(Cursor::new(text), LineFormat::csv())
             .abort(abort.clone())
             .run(&mut Vec::<OwnedJsonEvent>::new())
             .unwrap_err();
         assert_eq!(err.code, Code::Aborted);
-        let (r, _) = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
+        let (r, _) = LinesSource::new(Cursor::new(text), LineFormat::csv())
             .abort(abort)
             .run_owned(Vec::<OwnedJsonEvent>::new());
         assert_eq!(r.unwrap_err().code, Code::Aborted);
@@ -1570,8 +1246,9 @@ mod tests {
     #[test]
     fn an_abort_names_the_row_the_record_or_chunk_it_was_reading_starts_on() {
         // An abort lands between two of the engine's steps, where it has no
-        // position of its own, so the run names the row the record (JSON
-        // Lines) or chunk (CSV) it was reading starts on, and no column.
+        // position of its own, so the run names the row the chunk it was
+        // reading starts on, and no column; one already raised fails the
+        // run's first event, before any chunk is read, and names no row.
         let aborter = |abort: AbortFlag, after: usize| {
             let mut n = 0;
             FnSink(move |_ev: JsonEvent<'_>| {
@@ -1582,41 +1259,17 @@ mod tests {
                 Ok(Flow::Continue)
             })
         };
-        let raised = |already: bool| {
-            let abort = AbortFlag::new();
-            if already {
-                abort.abort();
-            }
-            abort
-        };
-        // Raised with the second record's first event, which the owned
-        // path emits during that record's parse and the borrowed one while
-        // it walks the value: the run stops in that record, which starts on
-        // row 3. Already raised: the run's first event fails, before any
-        // record is read, and names no row.
-        let text = "{\"a\":1}\n\n{\"a\":2}\n{\"a\":3}\n";
-        for (after, row) in [(6, Some(3)), (0, None)] {
-            let abort = raised(after == 0);
-            let err = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
-                .abort(abort.clone())
-                .run(&mut aborter(abort, after))
-                .unwrap_err();
-            assert_eq!(
-                (err.code, err.row, err.column),
-                (Code::Aborted, row, None),
-                "{err}"
-            );
-            let abort = raised(after == 0);
-            let (r, _) = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
-                .abort(abort.clone())
-                .run_owned(aborter(abort, after));
-            let err = r.unwrap_err();
-            assert_eq!(
-                (err.code, err.row, err.column),
-                (Code::Aborted, row, None),
-                "{err}"
-            );
-        }
+        let abort = AbortFlag::new();
+        abort.abort();
+        let err = LinesSource::new(Cursor::new("a\n1\n"), LineFormat::csv())
+            .abort(abort.clone())
+            .run(&mut aborter(abort, 0))
+            .unwrap_err();
+        assert_eq!(
+            (err.code, err.row, err.column),
+            (Code::Aborted, None, None),
+            "{err}"
+        );
         // CSV: the first row of the chunk, with a chunk for each record, and
         // with one chunk for the whole text.
         for (chunk_bytes, row) in [(0, 3), (DEFAULT_CHUNK_BYTES, 1)] {
@@ -1636,12 +1289,12 @@ mod tests {
 
     #[test]
     fn invalid_utf8_is_invalid_input_at_its_line() {
-        let bytes: &[u8] = b"{\"a\":1}\n{\"a\":\"\xff\"}\n";
-        let err = LinesSource::new(Cursor::new(bytes), LineFormat::Jsonl)
+        let bytes: &[u8] = b"a\n1\n\"\xff\"\n";
+        let err = LinesSource::new(Cursor::new(bytes), LineFormat::csv())
             .run(&mut Vec::<OwnedJsonEvent>::new())
             .unwrap_err();
         assert_eq!(err.code, Code::InputInvalid);
-        assert_eq!(err.row, Some(2));
+        assert_eq!(err.row, Some(3));
     }
 
     /// A reading of one text: its events, or its failure as the engine's
@@ -1694,20 +1347,6 @@ mod tests {
                 .run_owned(Vec::<OwnedJsonEvent>::new());
             assert_eq!(reading(outcome, rec), want, "{text:?}, step {step}");
         }
-        want
-    }
-
-    /// Holds the JSON Lines source to the whole parse of `text` by the
-    /// JSON Lines grammar, on both paths, and returns that reading.
-    fn jsonl_streams_as_whole(text: &str) -> Reading {
-        let want = whole(tabnas_jsonl::parse(text));
-        let mut rec: Vec<OwnedJsonEvent> = Vec::new();
-        let outcome = LinesSource::new(Cursor::new(text), LineFormat::Jsonl).run(&mut rec);
-        assert_eq!(reading(outcome, rec), want, "borrowed, {text:?}");
-        let (outcome, rec) = LinesSource::new(Cursor::new(text), LineFormat::Jsonl)
-            .run_owned(Vec::<OwnedJsonEvent>::new());
-        let rec = without_lexemes(&rec);
-        assert_eq!(reading(outcome, rec), want, "owned, {text:?}");
         want
     }
 
@@ -1852,44 +1491,11 @@ mod tests {
     }
 
     #[test]
-    fn a_jsonl_line_is_blank_only_when_the_grammar_reads_it_so() {
-        // Space and tab are the grammar's blanks; a form feed, a vertical
-        // tab, a no-break space or a line separator is not, and the
-        // grammar refuses the line rather than skipping it.
-        for blank in ["\u{c}", "\u{b}", "\u{a0}", "\u{85}", "\u{2028}", "\u{3000}"] {
-            let text = format!("{{\"a\":1}}\n{blank}\n{{\"b\":2}}\n");
-            let want = jsonl_streams_as_whole(&text);
-            assert_eq!(
-                want.unwrap_err().1,
-                Some(2),
-                "{blank:?} is refused on its line"
-            );
-        }
-        let want = jsonl_streams_as_whole("{\"a\":1}\n \t\n\r\n{\"b\":2}\n   ").unwrap();
-        assert_eq!(objects(&want), 2);
-    }
-
-    #[test]
-    fn a_lone_carriage_return_ends_a_jsonl_record() {
-        let want = jsonl_streams_as_whole("{\"a\":1}\r{\"b\":2}\r\r \r{\"c\":3}\n").unwrap();
-        assert_eq!(objects(&want), 3);
-        // A value cut by one is incomplete, as the grammar reads it, and
-        // the position of a failure after one is the grammar's.
-        for text in ["{\"a\":\r1}\n", "{\"a\":1}\r{\"b\": }\n"] {
-            jsonl_streams_as_whole(text).unwrap_err();
-        }
-        // Inside a string it is the string's (refused there, as a control
-        // character), not a record's end.
-        jsonl_streams_as_whole("{\"a\":\"x\ry\"}\n").unwrap_err();
-    }
-
-    #[test]
     fn records_one_line_holds_are_bounded_and_cut_one_by_one() {
-        // Many records and no `\n`: records ended by a lone `\r`, by a
-        // configured separator, and JSON Lines records ended by `\r`. Each
-        // record is under the limit and the line far over it, so the limit
-        // is the record's, and a chunk closes after a record rather than
-        // after the line.
+        // Many records and no `\n`: records ended by a lone `\r`, and by a
+        // configured separator. Each record is under the limit and the line
+        // far over it, so the limit is the record's, and a chunk closes
+        // after a record rather than after the line.
         let limits = Limits {
             max_record_bytes: 8,
             ..Limits::default()
@@ -1925,18 +1531,6 @@ mod tests {
             }
             assert!(count > 10, "{text:?}: {count} chunks");
         }
-        let records = "{\"a\":1}\r".repeat(200);
-        let want = whole(tabnas_jsonl::parse(&records));
-        assert_eq!(objects(want.as_ref().unwrap()), 200);
-        let mut rec: Vec<OwnedJsonEvent> = Vec::new();
-        let outcome = LinesSource::new(Cursor::new(records.as_str()), LineFormat::Jsonl)
-            .limits(limits.clone())
-            .run(&mut rec);
-        assert_eq!(reading(outcome, rec), want);
-        let (outcome, rec) = LinesSource::new(Cursor::new(records.as_str()), LineFormat::Jsonl)
-            .limits(limits.clone())
-            .run_owned(Vec::<OwnedJsonEvent>::new());
-        assert_eq!(reading(outcome, without_lexemes(&rec)), want);
         // A record over the limit still fails, at the row it starts on,
         // which is counted as the engine counts rows: by `\n`, or by the
         // configured separator.
@@ -1975,21 +1569,6 @@ mod tests {
             ] {
                 csv_streams_as_whole(text, &options).unwrap();
             }
-        }
-    }
-
-    #[test]
-    fn a_line_character_inside_a_jsonl_string_is_the_strings() {
-        // The grammar refuses a string at a raw line character, and the
-        // record is read whole up to the line character after it, so the
-        // failure is the grammar's: a `\n` in a string ends a record no
-        // more than a `\r` does.
-        for text in [
-            "{\"a\":\"x\ny\"}\n{\"b\":1}\n",
-            "[\"\\\n\"]\n",
-            "{\"a\":\"x\r\ny\"}\r\n",
-        ] {
-            jsonl_streams_as_whole(text).unwrap_err();
         }
     }
 

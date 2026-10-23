@@ -57,10 +57,8 @@ input	grammar	mode	captures	duplicates	expected	path
 {"a":{"x":1},"a":{"x":2}}	json	incremental	[{"tag":"a","select":["a"]}]	first_wins	[["a",".a",["object",["x",["number",1,"1"]]]],["a",".a",["object",["x",["number",2,"2"]]]],"end"]
 {"a":{"x":1},"a":{"x":2}}	json	materialize	[{"tag":"a","select":["a"]}]	reject	[["a",".a",["object",["x",["number",2,null]]]],"end"]
 a: 1\na: 2\nb: [3]\n	yaml	incremental	[{"tag":"root","select":[]}]	last_wins	[["root",".",["object",["a",["number",2,"2"]],["b",["array",["number",3,"3"]]]]],"end"]
-# Any source: yaml, and JSON Lines a line at a time.
+# Any source: yaml, and CSV a chunk at a time.
 a:\n  - x: 1\n  - x: 2.0\n	yaml	incremental	[{"tag":"row","select":["a",{"each":"index"}]}]		[["row",".a[0]",["object",["x",["number",1,"1"]]]],["row",".a[1]",["object",["x",["number",2,"2.0"]]]],"end"]
-{"a":1}\n{"a":2.5}\n	jsonl	lines-incremental	[{"tag":"row","select":[{"each":"index"}]}]		[["row","[0]",["object",["a",["number",1,"1"]]]],["row","[1]",["object",["a",["number",2.5,"2.5"]]]],"end"]
-{"a":1}\n{"a":2.5}\n	jsonl	lines	[{"tag":"row","select":[{"each":"index"}]}]		[["row","[0]",["object",["a",["number",1,null]]]],["row","[1]",["object",["a",["number",2.5,null]]]],"end"]
 id,n\n1,x\n	csv	lines	[{"tag":"row","select":[{"each":"index"}]}]		[["row","[0]",["object",["id","1"],["n","x"]]],"end"]
 # A source failure reaches the route unchanged.
 {"rows":[{"a":1},\n{"a": }]}	json	incremental	[{"tag":"row","select":["rows",{"each":"index"}]}]		ERROR:INPUT_INVALID@2:7

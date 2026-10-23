@@ -45,15 +45,14 @@ source metrics (`events`, `keys`, `scalars`).
 |---|---|---|---|
 | `ValueSource(&Value)` | a parsed engine value | walk | the value (the caller's) |
 | `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists, named by the format's `languageId` with `.grammar("json")` (`pgn` for tabnas-chess, not `chess`); no name or an unlisted one is `STREAMABILITY_UNKNOWN` before the parse (`.unverified()` lifts the gate, for the differential suite) | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
-| `LinesSource::new(BufRead, LineFormat)` | JSON Lines or CSV | one record per line (`Jsonl`) or chunks of whole records (`Csv { header, options }`), each parsed with one reused grammar; a record ends where the grammar ends one, at any of its line characters outside a token | one record, or one chunk (`DEFAULT_CHUNK_BYTES`, 256 KiB, never a fraction of a record) |
+| `LinesSource::new(BufRead, LineFormat)` | CSV | chunks of whole records (`Csv { header, options }`), each parsed with one reused grammar; a record ends where the grammar ends one, at any of its line characters outside a token. JSON Lines is read through tabnas-jsonl's part from a reader (`ParserEventSource::from_reader`), a window at a time | one chunk (`DEFAULT_CHUNK_BYTES`, 256 KiB, never a fraction of a record) |
 
 `Source::run(self, &mut dyn Sink)` drives a borrowed sink and is always
-the walking path (`ParserSource` materializes whatever its mode, and the
-JSON Lines source walks each line). `run_owned(self, sink) -> (Result<Flow,
-Fail>, sink)` and `run_boxed` take the sink by value, which is what the
-engine's `Fn + Send + Sync + 'static` subscriber needs, and hand it back:
-that is the incremental path, and the one where JSON Lines numbers keep
-their lexemes. `run_owned_with_value` also hands back the value the engine
+the walking path (`ParserSource` materializes whatever its mode).
+`run_owned(self, sink) -> (Result<Flow, Fail>, sink)` and `run_boxed` take
+the sink by value, which is what the engine's `Fn + Send + Sync + 'static`
+subscriber needs, and hand it back: that is the incremental path (the
+line source walks its records on both). `run_owned_with_value` also hands back the value the engine
 returned: the grammar's in `Materialize`, and in `Incremental` the
 engine's tree after pruning, which is there for a test to measure what
 pruning left and for nothing else.
@@ -430,7 +429,7 @@ or `"none"`).
 `Limits` fields, each named in a failure as written: `max_depth`,
 `max_key_bytes`, `max_scalar_bytes`, `max_metadata_bytes`, `max_columns`,
 `max_record_bytes`, `max_capture_bytes`, `max_output_bytes`. Sizes are
-payload bytes plus `NODE_BYTES` per node. The line sources also apply
+payload bytes plus `NODE_BYTES` per node. The line source also applies
 `max_record_bytes` to a record's source bytes as the record is read, so a
 record never grows a chunk without bound: the input is read in pieces
 that end at the grammar's line endings, a lone `\r` or a configured
@@ -472,9 +471,9 @@ reports.
 | `input` | the source text |
 | `grammar` | `json`, `jsonl`, `json5`, `jsonc`, `jsonic`, `yaml`, `zon`, `csv`, `toml` or `ini`; in `parser-events.tsv`, also `spec`, the serialized grammar in `document` |
 | `document` | `parser-events.tsv`, grammar `spec`: a serialized grammar, installed with `Tabnas::grammar_json` |
-| `mode` | `materialize` and `incremental`: `ParserSource` over the grammar, named with `.grammar(name)`, in that `SourceMode`. `value`: the grammar's parse (an engine error is `Fail::from_tabnas`), then `ValueSource` over the value, which applies no limits. `lines`: `LinesSource` (`jsonl` or `csv`) on its walking path, `Source::run`. `lines-incremental`: `LinesSource::run_owned`, where JSON Lines goes through the rule-event adapter and keeps lexemes |
+| `mode` | `materialize` and `incremental`: `ParserSource` over the grammar, named with `.grammar(name)`, in that `SourceMode`. `value`: the grammar's parse (an engine error is `Fail::from_tabnas`), then `ValueSource` over the value, which applies no limits. `lines`: `LinesSource` (`csv`) on its walking path, `Source::run`. `lines-incremental`: `LinesSource::run_owned`, which walks the records too |
 | `prune` | incremental only: `"all"` for `Prune::AllArrays`, a selector for `Prune::Under`, empty for `Prune::Never` |
-| `options` | the line sources: a JSON object of `header` (default `true`), `object`, `number`, `value`, `trim` and `strict` for the CSV grammar, and `chunk_bytes` for the source |
+| `options` | the line source: a JSON object of `header` (default `true`), `object`, `number`, `value`, `trim` and `strict` for the CSV grammar, and `chunk_bytes` for the source |
 | `captures` | a JSON array of `{"tag", "select", "mode"}`, `select` a selector, `mode` `materialize` (the default) or `observe` |
 | `binding` | `{"schema": ..., "rows": selector}`, the schema `"infer"`, `{"metadata": selector}` (each descriptor read by `column_from_meta`) or `{"static": [{"label", "source": segments, "missing"}]}`, `missing` `missing` (the default), `null` or `error` |
 | `duplicates` | `reject` (the default), `last_wins` or `first_wins` |
@@ -542,13 +541,13 @@ returned (`"continue"` or `"stop"`).
 | File | Rows | What it pins |
 |---|---|---|
 | `events.tsv` | 84 | `JsonEvents/1` from every mode and the verified grammars, lexemes, string decoding, repeated members, the refusals and their prefixes, the gate on unverified grammars, pruning |
-| `route.tsv` | 38 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
-| `table.tsv` | 38 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
-| `lines.tsv` | 50 | `LinesSource`: JSON Lines and CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR, blank JSON Lines records, a line character inside a string) |
+| `route.tsv` | 36 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
+| `table.tsv` | 34 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
+| `lines.tsv` | 29 | `LinesSource`: CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR) |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
 | `parser-events.tsv` | 7 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
 | `tree.tsv` | 18 | `TransduceTree` over tabnas-json's passes: the json part's spec and its lexemes, a close pass's value, a container handed on through a replaced rule, the library's refusal of a key that is not a string, the guard in front, a rule's text and a text joined to the one around it, a member after its container's start, the refusal of a member that is not a string, a text held to `max_scalar_bytes` at each of the library's joins and not refused at the bound |
-| `limits.tsv` | 71 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
+| `limits.tsv` | 60 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
 
 ### What a port must reproduce exactly
 
@@ -559,9 +558,9 @@ returned (`"continue"` or `"stop"`).
   counts code units fails the multibyte rows of `limits.tsv`.
 - **A line source's record counts its line ending**: `\n`, `\r\n`, a lone
   `\r` or a configured separator, and under `record.empty` the whole line
-  token the lexer reads. So the same record passes as a last line without
-  one and fails with one at the same limit (`limits.tsv` pins both), and a
-  line holding many records is held to the limit one record at a time.
+  token the lexer reads. So a record that fits the limit without its
+  ending fails with it (`limits.tsv` pins the bound), and a line holding
+  many records is held to the limit one record at a time.
 - **The lexeme rule**: the incremental source attaches a number's token
   text only when it is an RFC 8259 number that reads as the node's value
   (`1e2` keeps `"1e2"`; `0x1F`, `+1`, `.5`, `5.` and YAML's `012` have

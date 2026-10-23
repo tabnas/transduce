@@ -68,10 +68,6 @@ input	grammar	mode	binding	duplicates	expected	path
 {"rows":[{"a":1,"a":2}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	reject	ERROR:DUPLICATE_MEMBER	.rows[0]
 {"rows":[{"a":1,"a":2}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	last_wins	[["schema",["A"]],["row",[["number",2,"2"]]],["end"]]
 {"rows":[{"a":1,"a":2}]}	json	incremental	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	first_wins	[["schema",["A"]],["row",[["number",1,"1"]]],["end"]]
-# Any source: the line sources, and yaml.
-{"a":1,"b":"x"}\n{"b":"y","a":2.50}\n	jsonl	lines-incremental	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a","b"]],["row",[["number",1,"1"],"x"]],["row",[["number",2.5,"2.50"],"y"]],["end"]]
-{"a":1,"b":"x"}\n{"b":"y","a":2.50}\n	jsonl	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a","b"]],["row",[["number",1,null],"x"]],["row",[["number",2.5,null],"y"]],["end"]]
-[1,"x"]\n["y"]\n	jsonl	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0","1"]],["row",[["number",1,null],"x"]],["row",["y",["missing"]]],["end"]]
-1\n{"value":2}\n	jsonl	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["value"]],["row",[["number",1,null]]],["row",["{\"value\":2}"]],["end"]]
+# Any source: the line source, and yaml.
 id,name\n1,"a, b"\n2,c\n	csv	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["id","name"]],["row",["1","a, b"]],["row",["2","c"]],["end"]]
 rows:\n  - id: 1\n    n: x\n  - n: y\n	yaml	incremental	{"schema":{"static":[{"label":"Id","source":["id"]},{"label":"N","source":["n"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["Id","N"]],["row",[["number",1,"1"],"x"]],["row",[["missing"],"y"]],["end"]]

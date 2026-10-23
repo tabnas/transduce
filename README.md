@@ -21,9 +21,9 @@ tabnas parse ──rule events──▶ JsonEvents/1 ──▶ router/captures �
   `jsonl`, `markdown`, `pgn`, `xml`, `yaml`, `zon`; `pgn` a game at a time,
   and not in Go) stream incrementally, with the
   streamed rows pruned from the engine's tree on request; the rest are
-  walked whole. JSON Lines and
-  CSV also have a line source that holds one record or one chunk at a
-  time, whatever the file's size.
+  walked whole. CSV also has a line source that holds one chunk of
+  records at a time, whatever the file's size; JSON Lines is read through
+  its part from a reader, a window at a time.
 - **Bounded by contract.** Retained values are measured against named
   limits as they are built; a breach fails with the limit's name, never
   a silent fallback to a bigger algorithm.

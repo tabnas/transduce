@@ -246,7 +246,6 @@ fn line_options(row: &Row) -> (LineFormat, Option<usize>) {
         .and_then(serde_json::Value::as_u64)
         .map(|n| n as usize);
     let format = match row.named("grammar") {
-        "jsonl" => LineFormat::Jsonl,
         "csv" => {
             let mut options = CsvOptions::default();
             if let Some(object) = flag("object") {
