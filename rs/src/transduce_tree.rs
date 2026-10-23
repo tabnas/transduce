@@ -23,7 +23,7 @@
 //! together, then the innermost text with them, and a closed text with the
 //! text around it, each refused past the bound with alchemy's
 //! [`tree_text_refusal`]. The routers say this native reads `:member` and
-//! `:text` ([`crate::routers`]), which is what lets the lowering hand it a
+//! `:text` ([`crate::routers()`]), which is what lets the lowering hand it a
 //! spec that uses either.
 //!
 //! A pass's events are worked out before the first of them is written, as
