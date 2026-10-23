@@ -2,8 +2,8 @@
 //! document. Run with `cargo bench`; each group prints a line before it
 //! starts so a long run is never silent.
 //!
-//! The groups separate the costs: the engine alone (`parse_only`), the
-//! rule-event adapter on top of it (`incremental`, with and without
+//! The groups separate the costs: the engine alone (`parse_only`), JSON's
+//! transducer part over the engine's passes (`part`, with and without
 //! pruning), the walk over an already parsed value (`walk`), the router
 //! and table transducer fed from a recording (`table_from_recording`: the
 //! stages without the parse), and the whole chain from text to table rows
@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use tabnas_transduce::{
-    column_from_meta, replay, Cell, CountSink, Duplicates, Fail, Flow, Limits, Metrics,
-    OwnedJsonEvent, ParserSource, Prune, Schema, Selector, Source, SourceMode, TableBinding,
-    TableEvent, TableFromJson, TableSink, ValueSource,
+    column_from_meta, replay, AbortFlag, Cell, CountSink, Duplicates, Fail, Flow, Guarded, Limits,
+    Metrics, OwnedJsonEvent, ParserEventSource, Schema, Selector, Sink, Source, TableBinding,
+    TableEvent, TableFromJson, TableSink, TransduceTree, ValueSource,
 };
 
 /// 20k records in a release measurement; under `cargo test` (a debug
@@ -80,6 +80,14 @@ fn table(sink: CountTable) -> TableFromJson<CountTable> {
     .expect("the worked-example binding is valid")
 }
 
+/// JSON's part writing to `sink` through a guard, as a host reads JSON.
+fn part_into<S: Sink>(sink: S) -> TransduceTree<Guarded<S>> {
+    TransduceTree::new(
+        support::json_part(),
+        Guarded::new(sink, &Limits::default(), AbortFlag::new(), Metrics::new()),
+    )
+}
+
 fn progress(group: &str, src: &str) {
     eprintln!(
         "bench: {group} on {RECORDS} records ({:.1} MB)",
@@ -100,35 +108,29 @@ fn parse_only(c: &mut Criterion) {
     group.finish();
 }
 
-fn incremental(c: &mut Criterion) {
+fn part(c: &mut Criterion) {
     let src = support::records_json(RECORDS);
-    progress("incremental", &src);
+    progress("part", &src);
     let parser = tabnas_json::make();
-    let mut group = c.benchmark_group("incremental");
+    let mut group = c.benchmark_group("part");
     group.sample_size(10);
     group.throughput(Throughput::Bytes(src.len() as u64));
     group.bench_function("events_into_count_sink", |b| {
         b.iter(|| {
-            let (r, count) = ParserSource::new(parser.clone(), &src)
-                .grammar("json")
-                .mode(SourceMode::Incremental {
-                    prune: Prune::Never,
-                })
-                .run_owned(CountSink::default());
+            let (r, tree) = ParserEventSource::new(parser.clone(), &src)
+                .run_owned(part_into(CountSink::default()));
             r.expect("the run succeeds");
-            count.events
+            tree.into_inner().into_inner().events
         })
     });
     group.bench_function("events_pruned_into_count_sink", |b| {
         b.iter(|| {
-            let (r, count) = ParserSource::new(parser.clone(), &src)
+            let (r, tree) = ParserEventSource::new(parser.clone(), &src)
                 .grammar("json")
-                .mode(SourceMode::Incremental {
-                    prune: Prune::Under(records_selector()),
-                })
-                .run_owned(CountSink::default());
+                .prune()
+                .run_owned(part_into(CountSink::default()));
             r.expect("the run succeeds");
-            count.events
+            tree.into_inner().into_inner().events
         })
     });
     group.finish();
@@ -180,16 +182,14 @@ fn table_from_text(c: &mut Criterion) {
     let mut group = c.benchmark_group("table_from_text");
     group.sample_size(10);
     group.throughput(Throughput::Bytes(src.len() as u64));
-    group.bench_function("incremental_pruned_into_table", |b| {
+    group.bench_function("part_pruned_into_table", |b| {
         b.iter(|| {
-            let (r, t) = ParserSource::new(parser.clone(), &src)
+            let (r, tree) = ParserEventSource::new(parser.clone(), &src)
                 .grammar("json")
-                .mode(SourceMode::Incremental {
-                    prune: Prune::Under(records_selector()),
-                })
-                .run_owned(table(CountTable::default()));
+                .prune()
+                .run_owned(part_into(table(CountTable::default())));
             r.expect("the run succeeds");
-            t.into_inner().rows
+            tree.into_inner().into_inner().into_inner().rows
         })
     });
     group.finish();
@@ -198,7 +198,7 @@ fn table_from_text(c: &mut Criterion) {
 criterion_group!(
     benches,
     parse_only,
-    incremental,
+    part,
     walk_parsed_value,
     table_from_recording,
     table_from_text

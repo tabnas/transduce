@@ -37,9 +37,10 @@ import (
 // unread.
 var specFixtures = []string{"events.tsv", "limits.tsv", "lines.tsv", "parser-events.tsv", "route.tsv", "scan.tsv", "table.tsv", "tree.tsv"}
 
-// rustIncremental is the Rust crate's verified list, which the fixtures'
-// incremental rows were written against: a row that streams one of these
-// grammars incrementally needs the adapter.
+// rustIncremental is the Rust crate's verified list as it stood when the
+// crate retired its inference (step 13 of alchemy's streaming plan), which
+// the fixtures' incremental rows were written against: a row that streams
+// one of these grammars incrementally needs the adapter.
 var rustIncremental = map[string]bool{
 	"json": true, "json5": true, "jsonc": true, "jsonic": true,
 	"jsonl": true, "markdown": true, "yaml": true, "zon": true,
@@ -282,7 +283,21 @@ func lineOptions(t testing.TB, row *support.Row) (LineFormat, int, bool) {
 	return LineFormat{}, 0, false
 }
 
-// drive runs the row's source into sink.
+// jsonPart is JSON's transducer part, as tabnas-json spells it:
+// transduce-tree over the json grammar's rules, the spec tree.tsv's json
+// rows give.
+func jsonPart() TreeSpec {
+	return TreeSpec{Rules: map[string]TreeRule{
+		"map":  {Container: TreeObject},
+		"list": {Container: TreeArray},
+		"pair": {Key: TreeKey{Set: true, IsToken: true, Token: 0}},
+		"val":  {Scalar: TreeScalar{Set: true, Token: 0}},
+	}}
+}
+
+// drive runs the row's source into sink. The part mode is JSON's
+// transducer part natively over the passes ParserEventSource delivers,
+// through the source's guard, as a host reads JSON.
 func drive(t testing.TB, row *support.Row, input string, sink Sink) (Flow, *Fail) {
 	name := row.Named("grammar")
 	limits := limitsOf(t, row)
@@ -293,6 +308,14 @@ func drive(t testing.TB, row *support.Row, input string, sink Sink) (Flow, *Fail
 			m = IncrementalMode(pruneOf(t, row))
 		}
 		return NewParserSource(makeGrammar(name), input).Grammar(name).Mode(m).Limits(limits).Run(sink)
+	case "part":
+		if name != "json" {
+			t.Fatalf("%s: the part mode is JSON's", row.Where())
+		}
+		guarded := NewGuarded(sink, limits, NewAbortFlag(), NewMetrics())
+		spec := jsonPart()
+		spec.MaxTextBytes = limits.MaxScalarBytes
+		return NewParserEventSource(makeGrammar(name), input).Limits(limits).Run(NewTransduceTree(spec, guarded))
 	case "value":
 		value, err := makeGrammar(name).Parse(input)
 		if err != nil {

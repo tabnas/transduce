@@ -18,8 +18,11 @@ Nobody will write them and nobody could keep them green.
 Reading is a hub. Every grammar in the fleet, whatever its syntax,
 builds its value through the engine, and the transducer turns that into
 one event stream (`JsonEvents/1`: start and end of objects and arrays,
-keys, scalars) either incrementally, for the grammars the differential
-suite has verified, or by walking the whole value. That is the N side of
+keys, scalars) either as the parse proceeds, through the transducer part
+the format's package ships, or by walking the whole value. (Before the
+parts, the grammars a differential suite had verified streamed through
+an inference over the engine's rule events, which the Rust crate retired
+at step 13 of alchemy's streaming plan.) That is the N side of
 the translation, done: a CSV file, a YAML file and a Markdown file all
 arrive as the same kind of stream. The only question left is writing.
 
@@ -34,8 +37,8 @@ third is the render crate's text output, which alchemy types as `Text`:
 
 A renderer is a function from one of the last two to the first. A tree
 is a value's events: one root value, each key once per object.
-`JsonEvents/1` can carry more, since an incremental source streams
-every occurrence of a repeated member, so the host checks a stream
+`JsonEvents/1` can carry more, since a source that streams as the parse
+proceeds streams every occurrence of a repeated member, so the host checks a stream
 against that before a render that writes from a tree takes it ([In the
 host](#where-the-parts-live-and-how-they-reach-the-host)). The
 render crate ships two natively, CSV from records and JSON from a tree.
@@ -99,7 +102,7 @@ shape it saw rather than guess a column layout. It comes before any
 output where the shape is decided before any, at the root's first event
 and at the first row; a later row of another kind is refused where it
 is met, after the rows before it have been written, and the failure
-says so (`output: "partial"`), as an incremental export cannot take
+says so (`output: "partial"`), as a streaming export cannot take
 bytes back and `--render csv` reports today. The refusal that names the
 shape is the host's: aless keeps its row check (`Rows`) in front of the
 program's sink whenever a tree is adapted to records, as it stands in
@@ -342,8 +345,8 @@ this order (the dependencies are below the list):
    spellings of true, false, null and the non-finite numbers, as a
    number, or as a nested mapping at its first `: `; numbers by their
    lexeme, which reaches a render only when it is a JSON number (the
-   rule-event adapter keeps no other token text, and a walked value
-   carries none), and every JSON number is a YAML 1.2 core-schema
+   parser's rule passes keep no other token text, as the rule-event
+   adapter kept none, and a walked value carries none), and every JSON number is a YAML 1.2 core-schema
    number, so a JSON5 `Infinity` or `0xFF` never arrives as its
    spelling; a non-finite number (which the reader builds from `.inf`
    and `.nan`, and JSON5 from its own spellings) as `.inf`, `-.inf` or
@@ -362,8 +365,8 @@ this order (the dependencies are below the list):
    render takes a tree's events, each key once per mapping: YAML 1.2
    forbids a repeated key, and a mapping written with one would be read
    by a conforming reader as nothing, or as the last, not as the
-   document. A walked value keeps that contract by construction; an
-   incremental source streams a repeated member as it was read, so the
+   document. A walked value keeps that contract by construction; a
+   streamed source sends a repeated member as it was read, so the
    host refuses one before the render sees it (see [What the pilot
    found](#what-the-pilot-found), which says why the render does not
    keep the keys itself). The state is one marker per open container,
@@ -457,13 +460,13 @@ departs from the steps above, and what it measured:
   which every host keeps ([In the
   host](#where-the-parts-live-and-how-they-reach-the-host)). aless
   holds a stream to the contract natively: a member the parse streams
-  twice (JSON's `{"a":1,"a":2}`, which the incremental source does
-  stream) is `DUPLICATE_MEMBER`, and events no tree has are
+  twice (JSON's `{"a":1,"a":2}`, which JSON's part does stream) is
+  `DUPLICATE_MEMBER`, and events no tree has are
   `STREAMABILITY_UNKNOWN`. Either falls back once to the parsed value,
   as `--json` reads it, when nothing had been written. The second case
   was real: for a YAML key that is itself a mapping, the incremental
   source streamed the member's value before its key
-  (tabnas/transduce#7); the rule-event adapter now refuses that shape
+  (tabnas/transduce#7); the rule-event adapter came to refuse that shape
   itself, with `STREAMABILITY_UNKNOWN` when the value opens, and the
   host's check stands behind it for whatever else a grammar can
   produce. Since tabnas/yaml#107 the grammar names that member before

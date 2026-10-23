@@ -6,11 +6,10 @@
 //!
 //! - the source protocol [`JsonEvent`] (`JsonEvents/1`) and the push
 //!   boundary [`Sink`];
-//! - [`source`]s that produce it from a parsed value, from a live tabnas
-//!   parse through the engine's rule events, or from line-delimited input,
-//!   and the source of the parser's rule passes themselves
+//! - [`source`]s that produce it from a parsed value, or from CSV a chunk
+//!   of records at a time, and the source of the parser's rule passes
 //!   ([`ParserEventSource`], `ParserEvents/1`), what a transducer part
-//!   reads;
+//!   reads, from which a format streams;
 //! - [`TransduceTree`], alchemy's `transduce-tree` run natively over
 //!   those passes;
 //! - [`Selector`]s and the matcher and router that recognize selected
@@ -68,8 +67,7 @@ pub use scan::{ScanEmit, Transition};
 pub use selector::{Path, Segment, Selector, Step};
 pub use sink::{replay, CountSink, Flow, FnSink, Sink, TreeContract};
 pub use source::{
-    capability, walk_value, Guarded, ParserEventSource, ParserSource, Prune, Source, SourceMode,
-    ValueSource,
+    capability, walk_value, Guarded, ParserEventSource, ParserSource, Source, ValueSource,
 };
 pub use table::{
     column_from_meta, BoundColumn, Cell, ColumnMapper, MissingPolicy, PublicColumn, Schema, Table,

@@ -65,8 +65,7 @@ use crate::event::JsonEvent;
 use crate::limits::{AbortFlag, Limits, Metrics};
 use crate::sink::{Flow, Sink};
 use crate::source::guard::Guarded;
-use crate::source::rule_events::GUARD;
-use crate::source::{engine_failure, walk_value, Source};
+use crate::source::{engine_failure, walk_value, Source, GUARD};
 
 /// How much of the input one CSV parse holds, at most one record over.
 pub const DEFAULT_CHUNK_BYTES: usize = 256 * 1024;

@@ -12,10 +12,31 @@
 //! elements, a record per line, and the PGN variant is a database of
 //! games, a game per record, its number in the `Round` tag and the
 //! record's name in a comment.
+//!
+//! JSON's transducer part ([`json_part`]) is here too: the JSON document
+//! reaches a table or a count through it, as a host reads JSON.
 
 #![allow(dead_code)]
 
 use std::fmt::Write as _;
+
+use tabnas_transduce::{TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec};
+
+/// JSON's transducer part, as tabnas-json spells it: `transduce-tree` over
+/// the json grammar's rules, natively (`TransduceTree`).
+pub fn json_part() -> TreeSpec {
+    let rule = |container, key, scalar| TreeRule {
+        container,
+        key,
+        scalar,
+        ..TreeRule::default()
+    };
+    TreeSpec::new()
+        .with("map", rule(Some(TreeContainer::Object), None, None))
+        .with("list", rule(Some(TreeContainer::Array), None, None))
+        .with("pair", rule(None, Some(TreeKey::Token(0)), None))
+        .with("val", rule(None, None, Some(TreeScalar::Token(0))))
+}
 
 /// The metadata the worked example carries: three columns by path.
 pub const METADATA: &str = r#"{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]}"#;

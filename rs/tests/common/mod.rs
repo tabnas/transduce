@@ -23,9 +23,9 @@ use tabnas_transduce::source::{LineFormat, LinesSource};
 use tabnas_transduce::{
     column_from_meta, AbortFlag, BoundColumn, CaptureSpec, Cell, Code, Datum, Duplicates, Fail,
     Flow, Guarded, Limits, Metrics, MissingPolicy, OwnedJsonEvent, ParserEvent, ParserEventSource,
-    ParserSink, ParserSource, Prune, RouteSink, Router, ScanEmit, Schema, Segment, Selected,
-    Selector, Sink, Source, SourceMode, TableBinding, TableEvent, TableFromJson, TableSink,
-    TransduceTree, Transition, TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec, ValueSource,
+    ParserSink, ParserSource, RouteSink, Router, ScanEmit, Schema, Segment, Selected, Selector,
+    Sink, Source, TableBinding, TableEvent, TableFromJson, TableSink, TransduceTree, Transition,
+    TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec, ValueSource,
 };
 
 /// The shared `test/spec` directory, found by walking up from the crate.
@@ -227,14 +227,6 @@ pub fn duplicates(row: &Row) -> Duplicates {
     }
 }
 
-fn prune(row: &Row) -> Prune {
-    match json_cell(row, "prune") {
-        None => Prune::Never,
-        Some(serde_json::Value::String(all)) if all == "all" => Prune::AllArrays,
-        Some(steps) => Prune::Under(selector(&steps)),
-    }
-}
-
 /// The CSV line format and chunk size from the row's `options` column:
 /// `header` (default true), `object`, `number`, `value`, `trim` and
 /// `strict` for the grammar, and `chunk_bytes` for the source.
@@ -267,10 +259,28 @@ fn line_options(row: &Row) -> (LineFormat, Option<usize>) {
 // ---------------------------------------------------------------------
 // Driving a source.
 
+/// JSON's transducer part, as tabnas-json spells it: `transduce-tree` over
+/// the json grammar's rules, the spec `tree.tsv`'s json rows give.
+fn json_part() -> TreeSpec {
+    let rule = |container, key, scalar| TreeRule {
+        container,
+        key,
+        scalar,
+        ..TreeRule::default()
+    };
+    TreeSpec::new()
+        .with("map", rule(Some(TreeContainer::Object), None, None))
+        .with("list", rule(Some(TreeContainer::Array), None, None))
+        .with("pair", rule(None, Some(TreeKey::Token(0)), None))
+        .with("val", rule(None, None, Some(TreeScalar::Token(0))))
+}
+
 /// Run the row's source into `sink`: `grammar` and `mode` name it.
 ///
-/// - `materialize` and `incremental`: `ParserSource` over the grammar,
-///   named with `.grammar`, in that mode (`prune` column for incremental).
+/// - `materialize`: `ParserSource` over the grammar: its value, walked.
+/// - `part`: JSON's transducer part ([`json_part`]) natively over the
+///   passes `ParserEventSource` delivers, through the source's guard, as a
+///   host reads JSON: the document's events, lexemes kept. JSON only.
 /// - `value`: the grammar's parse (an engine error is `Fail::from_tabnas`),
 ///   then `ValueSource` over the value. No limits apply on this path.
 /// - `lines` and `lines-incremental`: `LinesSource` over the text, the
@@ -279,17 +289,19 @@ pub fn drive<S: Sink + Send + 'static>(row: &Row, input: &str, sink: S) -> (Resu
     let name = row.named("grammar");
     let limits = limits(row);
     match row.named("mode") {
-        mode @ ("materialize" | "incremental") => {
-            let mode = if mode == "materialize" {
-                SourceMode::Materialize
-            } else {
-                SourceMode::Incremental { prune: prune(row) }
-            };
-            ParserSource::new(grammar(name)(), input)
-                .grammar(name)
-                .mode(mode)
-                .limits(limits)
-                .run_owned(sink)
+        "materialize" => ParserSource::new(grammar(name)(), input)
+            .limits(limits)
+            .run_owned(sink),
+        "part" => {
+            assert_eq!(name, "json", "{}: the part mode is JSON's", row.location());
+            let guarded = Guarded::new(sink, &limits, AbortFlag::new(), Metrics::new());
+            let (outcome, tree) = ParserEventSource::new(grammar(name)(), input)
+                .limits(limits.clone())
+                .run_owned(TransduceTree::new(
+                    json_part().with_max_text_bytes(limits.max_scalar_bytes),
+                    guarded,
+                ));
+            (outcome, tree.into_inner().into_inner())
         }
         "value" => {
             let mut sink = sink;

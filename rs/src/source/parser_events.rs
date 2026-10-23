@@ -23,9 +23,8 @@
 //!   name, its value, its source text and its 1-based row and column; a
 //!   token with no value (the end of the source, or a fixed token such as
 //!   `[`) has `null`, and a number carries its source text as its lexeme
-//!   when that text is a JSON number spelling the value (RFC 8259), the
-//!   rule the incremental source keeps lexemes by, so a renderer can write
-//!   it as it stands;
+//!   when that text is a JSON number spelling the value (RFC 8259), so a
+//!   renderer can write it as it stands;
 //! - on a close pass, the rule's node when that is a scalar (`value`), a
 //!   number with the lexeme of the rule's first open token as above;
 //!   nothing on an open pass, nor for a container.
@@ -64,8 +63,8 @@
 //! anchored node) carries what the tree holds when its pass is made, so
 //! the arrays in it may have been emptied, while its kind and its maps'
 //! members are as they were; a part reads such a token's kind, never its
-//! elements. So pruning, like the incremental source, is a verified
-//! capability: the differential suite (`tests/prune_test.rs`) runs every
+//! elements. So pruning is a verified capability, never an assumption:
+//! the differential suite (`tests/prune_test.rs`) runs every
 //! document of every grammar in the dev-dependencies pruned and not, and
 //! [`super::capability::prunable`] lists the grammars whose passes and
 //! outcomes never differed but by that. A run that prunes is gated on the
@@ -82,8 +81,8 @@ use crate::datum::Datum;
 use crate::error::{Code, Fail};
 use crate::limits::{AbortFlag, Limits, Metrics};
 use crate::sink::Flow;
-use crate::source::rule_events::{is_json_number, GUARD};
 use crate::source::{capability, engine_failure};
+use crate::source::{is_json_number, GUARD};
 use crate::{ParserEvent, ParserSink, PassAlt, PassToken, RulePass};
 
 /// A tabnas parser applied to one text, as a source of its rule passes.

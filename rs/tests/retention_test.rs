@@ -8,16 +8,24 @@
 //! criterion 4 of the design brief, measured rather than asserted in
 //! prose. That metric is the router's own accounting, so the test also
 //! looks where pruning acts: the engine's tree after the run
-//! (`ParserSource::run_owned_with_value`) must hold no row for 200 rows
-//! and none for 2000, and the same bytes for both, while the same run
-//! without pruning holds every row. A pruning that stopped truncating
-//! would leave the metric flat and fail here.
+//! (`ParserEventSource::run_owned_with_value`) must hold no row for 200
+//! rows and none for 2000, and the same bytes for both, while the same
+//! run without pruning holds every row. A pruning that stopped emptying
+//! the tree would leave the metric flat and fail here.
+//!
+//! The rows reach the table as a host reads a JSON document: JSON's
+//! transducer part, natively (`TransduceTree`), over the passes
+//! `ParserEventSource` delivers, the engine's arrays emptied behind the
+//! stream. Every other grammar's pruned tree is held flat by
+//! `tests/prune_test.rs`, and the router's peak does not depend on the
+//! format the rows came from.
 
 mod support;
 
 use tabnas_transduce::{
-    column_from_meta, Datum, Duplicates, Limits, Metrics, OwnedJsonEvent, ParserSource, Prune,
-    Schema, Segment, Selector, SourceMode, Table, TableBinding, TableFromJson,
+    column_from_meta, AbortFlag, Datum, Duplicates, Guarded, Limits, Metrics, OwnedJsonEvent,
+    ParserEventSource, ParserSource, Schema, Segment, Selector, Table, TableBinding, TableFromJson,
+    TransduceTree,
 };
 
 /// The worked example with `rows` copies of one record, so every row has
@@ -58,7 +66,25 @@ fn records() -> Vec<Segment> {
     ]
 }
 
-fn run(rows: usize, prune: Prune) -> Left {
+/// The table over the document's events, from JSON's part over the
+/// passes, pruned or not; `metrics` counts the events once, at the guard
+/// in front of the table, as a source's guard counts them.
+fn table_run(
+    text: &str,
+    table: TableFromJson<Table>,
+    prune: bool,
+    metrics: std::sync::Arc<Metrics>,
+) -> (Table, Option<tabnas::Value>) {
+    let guarded = Guarded::new(table, &Limits::default(), AbortFlag::new(), metrics);
+    let source = ParserEventSource::new(tabnas_json::make(), text).grammar("json");
+    let source = if prune { source.prune() } else { source };
+    let (outcome, tree, value) =
+        source.run_owned_with_value(TransduceTree::new(support::json_part(), guarded));
+    outcome.expect("the run succeeds");
+    (tree.into_inner().into_inner().into_inner(), value)
+}
+
+fn run(rows: usize, prune: bool) -> Left {
     let text = same_rows(rows);
     let metrics = Metrics::new();
     let selector = Selector::root()
@@ -76,7 +102,7 @@ fn run(rows: usize, prune: Prune) -> Left {
                     .property("fields"),
                 column: Box::new(column_from_meta),
             },
-            rows: selector.clone(),
+            rows: selector,
         },
         &Limits::default(),
         Duplicates::Reject,
@@ -84,13 +110,7 @@ fn run(rows: usize, prune: Prune) -> Left {
         Table::default(),
     )
     .expect("the binding is valid");
-    let (outcome, table, value) = ParserSource::new(tabnas_json::make(), &text)
-        .grammar("json")
-        .mode(SourceMode::Incremental { prune })
-        .metrics(metrics.clone())
-        .run_owned_with_value(table);
-    outcome.expect("the run succeeds");
-    let table = table.into_inner();
+    let (table, value) = table_run(&text, table, prune, metrics.clone());
     assert!(table.ended);
     let tree = Datum::from_tabnas(&value.expect("the parse returned"));
     let tree_rows = tree
@@ -109,22 +129,12 @@ fn run(rows: usize, prune: Prune) -> Left {
 
 #[test]
 fn ten_times_the_rows_leave_the_retained_high_water_flat() {
-    let prune = || {
-        Prune::Under(
-            Selector::root()
-                .property("response")
-                .property("payload")
-                .property("deep")
-                .property("records")
-                .each_index(),
-        )
-    };
-    let one = run(200, prune());
+    let one = run(200, true);
     println!(
         "retention: 200 rows, captured high-water {} bytes, tree {} bytes",
         one.captured_high, one.tree_bytes
     );
-    let ten = run(2000, prune());
+    let ten = run(2000, true);
     println!(
         "retention: 2000 rows, captured high-water {} bytes, tree {} bytes",
         ten.captured_high, ten.tree_bytes
@@ -151,200 +161,14 @@ fn ten_times_the_rows_leave_the_retained_high_water_flat() {
 /// so the assertion above can fail if pruning stops.
 #[test]
 fn without_pruning_the_engines_tree_holds_every_row() {
-    let one = run(200, Prune::Never);
-    let ten = run(2000, Prune::Never);
+    let one = run(200, false);
+    let ten = run(2000, false);
     assert_eq!((one.tree_rows, ten.tree_rows), (200, 2000));
     assert!(ten.tree_bytes > 9 * one.tree_bytes);
     assert_eq!(
         ten.captured_high, one.captured_high,
         "the router's peak is one row with or without pruning"
     );
-}
-
-/// The worked example as XML with `rows` copies of one record and nothing
-/// between them, so every row is one `<record>` element of the same size,
-/// and the records element's children are the rows alone.
-fn same_rows_xml(rows: usize) -> String {
-    let record = "<record id=\"123456\"><person><name>Person number 123456</name></person>\
-                  <account><balance>864192.56</balance></account></record>";
-    format!(
-        "<?xml version=\"1.0\"?>\n<response><records>{}</records></response>\n",
-        record.repeat(rows)
-    )
-}
-
-/// The records element's children: the root's first child's `children`.
-fn xml_rows() -> Selector {
-    Selector::root()
-        .property("children")
-        .index(0)
-        .property("children")
-        .each_index()
-}
-
-/// One run over the XML worked example, a table inferred from the rows.
-fn run_xml(rows: usize, prune: Prune) -> Left {
-    let text = same_rows_xml(rows);
-    let metrics = Metrics::new();
-    let table = TableFromJson::new(
-        TableBinding {
-            schema: Schema::Infer,
-            rows: xml_rows(),
-        },
-        &Limits::default(),
-        Duplicates::Reject,
-        metrics.clone(),
-        Table::default(),
-    )
-    .expect("the binding is valid");
-    let (outcome, table, value) = ParserSource::new(tabnas_xml::make(), &text)
-        .grammar("xml")
-        .mode(SourceMode::Incremental { prune })
-        .metrics(metrics.clone())
-        .run_owned_with_value(table);
-    outcome.expect("the run succeeds");
-    let table = table.into_inner();
-    assert!(table.ended);
-    let tree = Datum::from_tabnas(&value.expect("the parse returned"));
-    let tree_rows = tree
-        .get_path(&[
-            Segment::key("children"),
-            Segment::Index(0),
-            Segment::key("children"),
-        ])
-        .and_then(Datum::as_array)
-        .expect("the records element's children are in the tree")
-        .len();
-    Left {
-        captured_high: Metrics::get(&metrics.captured_bytes_high),
-        retained_high: Metrics::get(&metrics.retained_bytes_high),
-        rows: table.rows.len(),
-        tree_rows,
-        tree_bytes: tree.byte_size(),
-    }
-}
-
-/// xml streams too: its rules build each element in document order, so
-/// the rows of an XML document reach the table one at a time, and with
-/// the records element's children pruned the engine's tree holds none of
-/// them after the run. Ten times the rows leave the high-water marks and
-/// the tree where they were.
-#[test]
-fn ten_times_the_rows_of_an_xml_document_leave_the_retained_high_water_flat() {
-    let one = run_xml(200, Prune::Under(xml_rows()));
-    println!(
-        "retention xml: 200 rows, captured high-water {} bytes, tree {} bytes",
-        one.captured_high, one.tree_bytes
-    );
-    let ten = run_xml(2000, Prune::Under(xml_rows()));
-    println!(
-        "retention xml: 2000 rows, captured high-water {} bytes, tree {} bytes",
-        ten.captured_high, ten.tree_bytes
-    );
-    assert_eq!((one.rows, ten.rows), (200, 2000));
-    assert!(one.captured_high > 0);
-    assert_eq!(
-        ten.captured_high, one.captured_high,
-        "the peak is one row's, not the count's"
-    );
-    assert_eq!(ten.retained_high, one.retained_high);
-    assert_eq!(
-        (one.tree_rows, ten.tree_rows),
-        (0, 0),
-        "every streamed row was dropped from the engine's tree"
-    );
-    assert_eq!(
-        ten.tree_bytes, one.tree_bytes,
-        "the tree left behind does not grow with the rows"
-    );
-    // The control: without pruning the tree keeps every row.
-    let kept = run_xml(2000, Prune::Never);
-    assert_eq!(kept.tree_rows, 2000);
-    assert_eq!(kept.captured_high, one.captured_high);
-}
-
-/// A PGN database of `games` copies of one game, so every game is the same
-/// size and the database's elements are the games alone.
-fn same_games_pgn(games: usize) -> String {
-    "[Event \"Records\"]\n[Result \"1-0\"]\n\n\
-     1. e4 e5 2. Nf3 {Person number 123456} Nc6 $1 (2... d6 3. d4) 3. Bb5 1-0\n\n"
-        .repeat(games)
-}
-
-/// One run over a PGN database, a table inferred from its games.
-fn run_pgn(games: usize, prune: Prune) -> Left {
-    let text = same_games_pgn(games);
-    let metrics = Metrics::new();
-    let table = TableFromJson::new(
-        TableBinding {
-            schema: Schema::Infer,
-            rows: Selector::root().each_index(),
-        },
-        &Limits::default(),
-        Duplicates::Reject,
-        metrics.clone(),
-        Table::default(),
-    )
-    .expect("the binding is valid");
-    let pgn = tabnas_chess::make(&tabnas_chess::ChessOptions::default())
-        .expect("the PGN grammar installs");
-    let (outcome, table, value) = ParserSource::new(pgn, &text)
-        .grammar("pgn")
-        .mode(SourceMode::Incremental { prune })
-        .metrics(metrics.clone())
-        .run_owned_with_value(table);
-    outcome.expect("the run succeeds");
-    let table = table.into_inner();
-    assert!(table.ended);
-    let tree = Datum::from_tabnas(&value.expect("the parse returned"));
-    let tree_rows = tree.as_array().expect("the database is in the tree").len();
-    Left {
-        captured_high: Metrics::get(&metrics.captured_bytes_high),
-        retained_high: Metrics::get(&metrics.retained_bytes_high),
-        rows: table.rows.len(),
-        tree_rows,
-        tree_bytes: tree.byte_size(),
-    }
-}
-
-/// pgn streams a game at a time: tabnas-chess stores a game in the database
-/// only once the game is complete, so each game reaches the table whole,
-/// and with the database's games pruned the engine's tree holds none of
-/// them after the run. Ten times the games leave the high-water marks and
-/// the tree where they were.
-#[test]
-fn ten_times_the_games_of_a_pgn_database_leave_the_retained_high_water_flat() {
-    let games = || Prune::Under(Selector::root().each_index());
-    let one = run_pgn(200, games());
-    println!(
-        "retention pgn: 200 games, captured high-water {} bytes, tree {} bytes",
-        one.captured_high, one.tree_bytes
-    );
-    let ten = run_pgn(2000, games());
-    println!(
-        "retention pgn: 2000 games, captured high-water {} bytes, tree {} bytes",
-        ten.captured_high, ten.tree_bytes
-    );
-    assert_eq!((one.rows, ten.rows), (200, 2000));
-    assert!(one.captured_high > 0);
-    assert_eq!(
-        ten.captured_high, one.captured_high,
-        "the peak is one game's, not the count's"
-    );
-    assert_eq!(ten.retained_high, one.retained_high);
-    assert_eq!(
-        (one.tree_rows, ten.tree_rows),
-        (0, 0),
-        "every streamed game was dropped from the engine's tree"
-    );
-    assert_eq!(
-        ten.tree_bytes, one.tree_bytes,
-        "the tree left behind does not grow with the games"
-    );
-    // The control: without pruning the tree keeps every game.
-    let kept = run_pgn(2000, Prune::Never);
-    assert_eq!(kept.tree_rows, 2000);
-    assert_eq!(kept.captured_high, one.captured_high);
 }
 
 /// The README's chain shares one `Metrics` between the source and the
@@ -360,7 +184,7 @@ fn a_chain_sharing_one_metrics_counts_the_source_events_once() {
                 columns: Selector::root().property("meta"),
                 column: Box::new(column_from_meta),
             },
-            rows: rows.clone(),
+            rows,
         },
         &Limits::default(),
         Duplicates::Reject,
@@ -368,14 +192,7 @@ fn a_chain_sharing_one_metrics_counts_the_source_events_once() {
         Table::default(),
     )
     .expect("the binding is valid");
-    let (outcome, _) = ParserSource::new(tabnas_json::make(), text)
-        .grammar("json")
-        .mode(SourceMode::Incremental {
-            prune: Prune::Under(rows),
-        })
-        .metrics(metrics.clone())
-        .run_owned(table);
-    outcome.expect("the run succeeds");
+    table_run(text, table, true, metrics.clone());
     let (_, recorded) =
         ParserSource::new(tabnas_json::make(), text).run_owned(Vec::<OwnedJsonEvent>::new());
     assert_eq!(Metrics::get(&metrics.events), recorded.len() as u64);
