@@ -27,9 +27,9 @@ tabnas-alchemy = { path = "../../alchemy/rs", default-features = false, features
 # repo. It is on crates.io as tabnas-parser, but this committed manifest
 # stays path-only (crates-release.yml rewrites the path into a crates.io
 # requirement when it publishes), so there is no registry version to fall
-# back on. tabnas-json is the grammar the JSON Lines source parses each
-# line with, and tabnas-csv the one the CSV line source parses each chunk
-# of records with.
+# back on. tabnas-json and tabnas-csv are the grammars the tests read JSON
+# and CSV with; the line sources that parsed with them in the library were
+# retired at steps 12 and 13 of alchemy's streaming plan.
 tabnas = { package = "tabnas-parser", path = "../../parser/rs" }
 tabnas-json = { path = "../../json/rs" }
 tabnas-csv = { path = "../../csv/rs" }
