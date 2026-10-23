@@ -8,13 +8,13 @@
 //!   [`ParserEventSource`]; the rule-event inference that streamed the
 //!   verified grammars before the parts was retired with alchemy's
 //!   step 13.
-//! - [`LinesSource`] reads CSV from any `BufRead` a chunk of records at a
-//!   time, bounding memory whatever the file's size. JSON Lines is read
-//!   through its part, from a reader ([`ParserEventSource::from_reader`]).
-//!
 //! - [`ParserEventSource`] drives a tabnas parse of one text and relays
 //!   its rule passes as `ParserEvents/1`, the input a transducer part
-//!   reads, dropping the passes a probe rewinds.
+//!   reads, dropping the passes a probe rewinds. A line-delimited format,
+//!   JSON Lines and CSV, streams through its part from a reader
+//!   ([`ParserEventSource::from_reader`]), a window at a time; the line
+//!   source that read them a record or a chunk at a time was retired with
+//!   alchemy's step 12.
 //!
 //! Every JSON-events source emits through [`Guarded`], which enforces the
 //! source limits (`max_depth`, `max_key_bytes`, `max_scalar_bytes`), polls
@@ -24,12 +24,10 @@
 
 pub mod capability;
 pub mod guard;
-pub mod lines;
 pub mod parser;
 pub mod parser_events;
 
 pub use guard::Guarded;
-pub use lines::{LineFormat, LinesSource, DEFAULT_CHUNK_BYTES};
 pub use parser::ParserSource;
 pub use parser_events::ParserEventSource;
 

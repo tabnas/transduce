@@ -9,10 +9,10 @@ use tabnas_support::Runner;
 
 #[test]
 fn table() {
-    Runner::new_with_row(|input, row| {
+    let runner = Runner::new_with_row(|input, row| {
         common::table(row, input).map_err(|fail| common::to_failure(&fail, row))
     })
     .input("input")
-    .expected("expected")
-    .file(common::spec_dir().join("table.tsv"));
+    .expected("expected");
+    runner.spec(&common::rust_rows("table.tsv", &runner));
 }

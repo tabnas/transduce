@@ -14,14 +14,7 @@ fn events() {
     })
     .input("input")
     .expected("expected");
-    let mut spec =
-        tabnas_support::load_spec(common::spec_dir().join("events.tsv"), runner.load_options())
-            .expect("the fixture loads");
-    // The incremental rows are the TypeScript and Go ports': this crate
-    // retired its rule-event inference at step 13 of alchemy's streaming
-    // plan, and the fixture says why the ports keep theirs.
-    spec.rows.retain(|row| row.named("mode") != "incremental");
-    runner.spec(&spec);
+    runner.spec(&common::rust_rows("events.tsv", &runner));
 }
 
 /// Every fixture the directory holds has a runner; a new file added

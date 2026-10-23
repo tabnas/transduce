@@ -12,7 +12,7 @@
 //! at the same pass the text would. A cell's events are worked out before
 //! the first of them is written.
 //!
-//! The routers offer it ([`crate::routers`]), and the lowering asks for it
+//! The routers offer it ([`crate::routers()`]), and the lowering asks for it
 //! where a program applies the library's `transduce-records` to the host's
 //! parser events with a spec of the standard shape: tabnas-csv's
 //! transducer part is one.

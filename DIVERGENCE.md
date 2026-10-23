@@ -75,12 +75,14 @@ types and `write_json_number` live.
 
 **A grammar's behaviour, not this crate's.** With the separator set, `\n`
 is no line character to either grammar; the Rust one reads it as field
-text and the TypeScript one refuses it. Each line source holds to the
-whole parse of its own runtime's grammar, and neither cuts a record at
-the newline, so this crate agrees with itself in both and the `csv`
-repository owns the difference. No row can carry it, since the `options`
-column has no separators. Pinned by `configured_record_separators_end_records`
-in `rs/src/source/lines.rs` and its twin in `ts/test/sources.test.ts`.
+text and the TypeScript one refuses it. The TypeScript and Go line
+sources hold to the whole parse of their runtime's grammar, and neither
+cuts a record at the newline, so this crate agrees with itself and the
+`csv` repository owns the difference. No row can carry it, since the
+`options` column has no separators. Pinned in `ts/test/sources.test.ts`;
+Rust's twin went with its line source at step 12 of alchemy's streaming
+plan, and a Rust host reads CSV through its part, as the grammar
+parses it.
 
 ## 4. Rust-only harness and tooling
 
@@ -89,12 +91,11 @@ gap:
 
 - **The criterion benches** (`rs/benches/throughput.rs`, `docs/BENCH.md`)
   measure the Rust implementation. A port measures itself its own way.
-- **What a TSV cell cannot carry** stays in the Rust unit tests: input
-  that is not UTF-8 (`invalid_utf8_is_invalid_input_at_its_line`), a
-  reader that hands out one byte at a time or never ends
-  (`csv_matches_the_whole_file_parse_at_every_chunk_size_and_reader_boundary`,
-  `an_unterminated_line_is_refused_at_the_limit_not_after_being_read_whole`),
-  the abort flag, a sink that stops or fails part-way, and the metrics.
+- **What a TSV cell cannot carry** stays in the Rust tests: input that
+  is not UTF-8 or a reader that fails, and a reader that hands out a few
+  bytes at a time (`rs/tests/reader_test.rs`, `rs/tests/records_test.rs`),
+  the abort flag, a sink that stops or fails
+  part-way, and the metrics.
   A port tests the same contracts in its own suite; they are API shapes
   (a borrowed or an owned sink, a `BufRead`), not results a row can name.
 - **A grammar the test builds.** A row names a fleet grammar, and since

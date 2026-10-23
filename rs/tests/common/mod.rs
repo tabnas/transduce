@@ -12,14 +12,11 @@
 #![allow(dead_code)]
 
 use std::cell::RefCell;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use tabnas::Tabnas;
-use tabnas_csv::CsvOptions;
-use tabnas_support::{find_spec_dir, Failure, Row, Value};
-use tabnas_transduce::source::{LineFormat, LinesSource};
+use tabnas_support::{find_spec_dir, Failure, Row, Runner, SpecFile, Value};
 use tabnas_transduce::{
     column_from_meta, AbortFlag, BoundColumn, CaptureSpec, Cell, Code, Datum, Duplicates, Fail,
     Flow, Guarded, Limits, Metrics, MissingPolicy, OwnedJsonEvent, ParserEvent, ParserEventSource,
@@ -227,33 +224,21 @@ pub fn duplicates(row: &Row) -> Duplicates {
     }
 }
 
-/// The CSV line format and chunk size from the row's `options` column:
-/// `header` (default true), `object`, `number`, `value`, `trim` and
-/// `strict` for the grammar, and `chunk_bytes` for the source.
-fn line_options(row: &Row) -> (LineFormat, Option<usize>) {
-    let json = json_cell(row, "options").unwrap_or(serde_json::json!({}));
-    let flag = |name: &str| json.get(name).and_then(serde_json::Value::as_bool);
-    let chunk = json
-        .get("chunk_bytes")
-        .and_then(serde_json::Value::as_u64)
-        .map(|n| n as usize);
-    let format = match row.named("grammar") {
-        "csv" => {
-            let mut options = CsvOptions::default();
-            if let Some(object) = flag("object") {
-                options.object = object;
-            }
-            if let Some(strict) = flag("strict") {
-                options.strict = strict;
-            }
-            options.number = flag("number");
-            options.value = flag("value");
-            options.trim = flag("trim");
-            LineFormat::csv_with(flag("header").unwrap_or(true), options)
-        }
-        other => panic!("{}: no line format for grammar {other:?}", row.location()),
-    };
-    (format, chunk)
+/// The modes a row may name that this crate has retired, whose rows are
+/// the TypeScript and Go ports' alone: the rule-event inference's
+/// (`incremental`, step 13 of alchemy's streaming plan) and the line
+/// source's (`lines` and `lines-incremental`, step 12). The Rust runners
+/// skip those rows, by their mode.
+pub const PORTS_ONLY: [&str; 3] = ["incremental", "lines", "lines-incremental"];
+
+/// The rows of the fixture `file` this crate runs: every row but those
+/// whose mode [`PORTS_ONLY`] names, loaded as `runner` loads a file.
+pub fn rust_rows(file: &str, runner: &Runner) -> SpecFile {
+    let mut spec = tabnas_support::load_spec(spec_dir().join(file), runner.load_options())
+        .unwrap_or_else(|e| panic!("{file} loads: {e}"));
+    spec.rows
+        .retain(|row| !PORTS_ONLY.contains(&row.named("mode")));
+    spec
 }
 
 // ---------------------------------------------------------------------
@@ -283,8 +268,9 @@ fn json_part() -> TreeSpec {
 ///   host reads JSON: the document's events, lexemes kept. JSON only.
 /// - `value`: the grammar's parse (an engine error is `Fail::from_tabnas`),
 ///   then `ValueSource` over the value. No limits apply on this path.
-/// - `lines` and `lines-incremental`: `LinesSource` over the text, the
-///   walking path (`Source::run`) and the owned path (`run_owned`).
+///
+/// The ports' modes ([`PORTS_ONLY`]) are not this crate's: [`rust_rows`]
+/// leaves their rows out.
 pub fn drive<S: Sink + Send + 'static>(row: &Row, input: &str, sink: S) -> (Result<Flow, Fail>, S) {
     let name = row.named("grammar");
     let limits = limits(row);
@@ -311,21 +297,6 @@ pub fn drive<S: Sink + Send + 'static>(row: &Row, input: &str, sink: S) -> (Resu
             };
             let outcome = ValueSource(&value).run(&mut sink);
             (outcome, sink)
-        }
-        mode @ ("lines" | "lines-incremental") => {
-            let (format, chunk) = line_options(row);
-            let mut source =
-                LinesSource::new(Cursor::new(input.as_bytes().to_vec()), format).limits(limits);
-            if let Some(chunk) = chunk {
-                source = source.chunk_bytes(chunk);
-            }
-            if mode == "lines" {
-                let mut sink = sink;
-                let outcome = source.run(&mut sink);
-                (outcome, sink)
-            } else {
-                source.run_owned(sink)
-            }
         }
         other => panic!("{}: no mode {other:?}", row.location()),
     }

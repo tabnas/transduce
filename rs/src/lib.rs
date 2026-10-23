@@ -6,12 +6,12 @@
 //!
 //! - the source protocol [`JsonEvent`] (`JsonEvents/1`) and the push
 //!   boundary [`Sink`];
-//! - [`source`]s that produce it from a parsed value, or from CSV a chunk
-//!   of records at a time, and the source of the parser's rule passes
-//!   ([`ParserEventSource`], `ParserEvents/1`), what a transducer part
-//!   reads, from which a format streams;
-//! - [`TransduceTree`], alchemy's `transduce-tree` run natively over
-//!   those passes;
+//! - [`source`]s that produce it from a parsed value, and the source of
+//!   the parser's rule passes ([`ParserEventSource`], `ParserEvents/1`),
+//!   what a transducer part reads, from which a format streams;
+//! - [`TransduceTree`] and [`TransduceRecords`], alchemy's
+//!   `transduce-tree` and `transduce-records` run natively over those
+//!   passes;
 //! - [`Selector`]s and the matcher and router that recognize selected
 //!   scopes in one pass and materialize them under a byte limit;
 //! - the table protocol [`TableEvent`] (`TableRows/1`) and the standard
