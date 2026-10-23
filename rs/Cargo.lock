@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-alchemy"
-version = "0.2.14"
+version = "0.2.15"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-csv"
-version = "0.6.8"
+version = "0.6.9"
 dependencies = [
  "indexmap",
  "serde",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-transduce"
-version = "0.2.12"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "serde_json",
