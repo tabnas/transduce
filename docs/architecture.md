@@ -1,6 +1,8 @@
 # Streaming transducers and renderers for tabnas — Rust design brief
 
-> The protocol modules this design sketches (`event`, `sink`, `error`, `limits`, `datum`, `selector`, `table`) are now alchemy's shared types, [`tabnas_alchemy::shared`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared), and the renderer-facing types (`TextOut`, the CSV and JSON options) moved there from render. transduce and render depend on them and re-export them; alchemy's runtime takes transduce's `Routers` and render's `Renderers` from its host. The design is otherwise as written.
+> The protocol modules this design sketches (`event`, `sink`, `error`, `limits`, `datum`, `selector`, `table`) are now alchemy's shared types, [`tabnas_alchemy::shared`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared), and the renderer-facing types (`TextOut`, the CSV and JSON options) moved there from render. transduce and render depend on them and re-export them; alchemy's runtime takes transduce's `Routers` and render's `Renderers` from its host.
+>
+> Since step 13 of alchemy's streaming plan, a format streams through the transducer part its package ships, over the parser's rule passes (`ParserEventSource`), and the Rust crate has retired the rule-event adapter (2.2), its verified list and `ParserSource`'s incremental mode: every format the list named has a part, or reads whole as markdown's manifest declares. `ParserSource` parses and walks; pruning is `ParserEventSource::prune`, gated on `capability::prunable`. The TypeScript and Go ports keep their adapters while their JSON Lines line sources read through them. The design is otherwise as written.
 
 Status: implementation brief, 2026-09-27. Derived from the maintainer's design
 document "Declarative Streaming Transducers and Renderers" (the "spec" below)
@@ -53,7 +55,8 @@ markdown, feed (imperative value construction, containers transformed before
 insertion) and for a large yaml (to be investigated). Consequence: incremental
 streaming is a per-grammar VERIFIED capability, never assumed.
 
-What the differential suite then established (`rs/tests/incremental_test.rs`,
+What the differential suite then established (`rs/tests/incremental_test.rs`
+until step 13,
 over every fixture each grammar reads, under the contract that a listed
 grammar produces the walk's stream, or the walk's stream after a last-wins
 router, or a documented refusal before `End`) differs from that prototype:
@@ -225,19 +228,24 @@ pub struct ScanEmit<S, I, O, Step, Finish> { … }
 // source/mod.rs
 pub trait Source { fn run(self, sink: &mut dyn Sink) -> Result<(), Fail>; }
 pub struct ValueSource<'v>(pub &'v tabnas::Value);       // whole-value walker
-pub struct ParserSource<'s> { parser: Tabnas, text: &'s str, mode: SourceMode,
-    limits: Limits, abort: AbortFlag, metrics: Arc<Metrics> }
-pub enum SourceMode { Materialize, Incremental { prune: Prune } }
-pub enum Prune { Never, Under(Selector), AllArrays }   // drop streamed array elements
+pub struct ParserSource<'s> { parser: Tabnas, text: &'s str,
+    limits: Limits, abort: AbortFlag, metrics: Arc<Metrics> }   // parse, then walk; its
+                                           // incremental mode went at step 13
+pub struct ParserEventSource<'s> { … }    // the rule passes a part reads; prune()
+                                           // empties each array behind the stream
 pub struct LinesSource<R: BufRead> { … }   // Csv { header }: header + chunks of whole
                                            // records (quote-aware split); JSON Lines is
                                            // read through its part since step 12
-pub mod capability { pub fn incremental(grammar: &str) -> bool }  // the verified list
+pub mod capability { pub fn prunable(grammar: &str) -> bool }  // the verified list
 ```
 
 ### 2.2 The rule-event adapter (source/rule_events.rs)
 
-Exactly the prototype's algorithm (section 0), productionized:
+Retired from the Rust crate at step 13 of alchemy's streaming plan, once
+every format it streamed had a transducer part; the TypeScript and Go
+ports keep theirs (`ts/src/rule-events.ts`, `go/rule_events.go`). As it
+was designed: exactly the prototype's algorithm (section 0),
+productionized:
 
 - Installed on a `Tabnas` with `subscribe_rule_done`; state behind
   `Arc<Mutex<…>>` because the subscriber must be `Fn + Send + Sync`. The parse
@@ -268,7 +276,8 @@ style duplicates rejected as unsupported), router overlap rejection, capture
 limits, table-from-json on the spec's worked example (metadata first; rows
 before metadata rejected; member order within a row irrelevant; missing vs
 null; zero rows), lines sources with quotes and CRLF, chunk boundaries at every
-byte for the line sources, and the incremental differential suite above. A
+byte for the line sources, and, until step 13, the incremental differential
+suite above. A
 retention test: rows × 10 with fixed row size leaves the retained-bytes
 high-water flat.
 

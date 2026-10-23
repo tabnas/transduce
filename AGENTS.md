@@ -70,45 +70,21 @@ The three sources, in order of preference:
 | Source | When | Memory |
 |---|---|---|
 | `LinesSource` | CSV input | one chunk of records at a time |
-| `ParserSource` (incremental) | a grammar the differential suite has verified | the engine's own per-parse state, plus one selected scope |
-| `ParserSource` (materialize) / `ValueSource` | every other grammar | the whole parsed value |
+| `ParserEventSource` and the format's transducer part | a format whose package ships a part | the engine's own per-parse state, plus one selected scope; from a reader, a window of the input when the grammar declares `lex.window` |
+| `ParserSource` / `ValueSource` | every other grammar | the whole parsed value |
 
-**Incremental streaming is a verified capability, never an assumption.**
-`source::capability::incremental(grammar)` answers from a list that
-`rs/tests/incremental_test.rs` keeps honest: every fixture each grammar
-in the dev-dependencies reads runs both incrementally and through the
-whole-value walker, and for the grammar to be listed no fixture may
-complete an incremental stream the walk contradicts. Two outcomes short of
-identity are the contract: a repeated member name streams every occurrence
-where the walk keeps the engine's survivor, so a router's `LastWins` makes
-the two agree (a grammar that merges the two values fails the run with
-`DUPLICATE_MEMBER` instead); and a shape the rule events cannot follow (a
-list wrapped around a root already streamed, as in a YAML stream of
-several documents, whatever their shapes, or a jsonic top-level implicit
-list; a map rewritten after streaming, as a YAML `<<` merge key does; a
-container opened inside a map before the member's key, as toml and ini
-open a section's container, as xml opened an element's until its rules
-built each element in document order, and as yaml opened the value of
-the first member of a mapping in a sequence entry until tabnas/yaml#107)
-is refused with `STREAMABILITY_UNKNOWN` before `End`. The last is a net,
-and counts against a grammar: one that opens a container before its key
-on a fixture builds every member so, and is not verified. So does
-streaming no document to the end: a grammar refused on every document it
-reads is not verified, whichever shape the refusal names. A listed
-grammar that mismatches, trips the net or streams nothing fails the
-test; an unlisted grammar that does none of those fails too. The list
-today is `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown`, `pgn`,
-`xml`, `yaml`, `zon` (`docs/reference.md` has the detail; `pgn` is
-tabnas-chess, a game at a time, in Rust and TypeScript but not Go,
-`DIVERGENCE.md` 5); the imperative
-grammars `toml`, `ini` and `csv` build values the rule events do not
-show, and `feed` replaces xml's root element with the feed it makes of
-the tree when the root closes. `ParserSource` checks the list by the grammar's name
-(`ParserSource::grammar`, since the json and jsonl parsers register no
-plugin to read it from): an incremental run of an unverified or unnamed
-grammar fails with `STREAMABILITY_UNKNOWN` before the parse, emitting
-nothing, rather than a malformed stream; `unverified()` lifts the gate
-for the differential suite alone.
+**A format streams through its part, never through inference.** Until
+step 13 of alchemy's streaming plan, `ParserSource` also streamed the
+grammars a differential suite had verified (`capability::INCREMENTAL`),
+by inferring a document's events from the value cells the grammar's rules
+built. Every format on that list ships a transducer part now, which
+declares its events where the inference guessed them, or reads whole as
+markdown's manifest declares, so the Rust crate retired the inference,
+its list and its suite (`git log` has them). The TypeScript and Go ports
+keep theirs (`ts/src/rule-events.ts`, `go/rule_events.go`, and the shared
+fixtures' incremental rows, which the Rust runner skips) while their JSON
+Lines line sources read through it, until their engines read a reader a
+window at a time as Rust's does.
 
 **Repetition is replacement, never a push chain.** When a tabnas alternate hands control to another rule, it
 either pushes a child rule (`alt.p`: a new stack frame, for something the
@@ -116,9 +92,13 @@ tree nests) or replaces the current one (`alt.r`: the same frame, for the
 next item of a sequence); an alternate that only matches its tokens, or pops the frame to end the rule, does neither. Every repetition in a grammar, the elements
 of a list, the members of a map, the records of a file, a `*A` in a
 compiled grammar, is a replace loop: the loop is `r`, the item may be `p`, and the loop's
-iterations add nothing to the engine's rule depth `d`. Real recursion still nests with its input, as it should: a grammar with `node = "(" node ")" / "x"` is as deep as its brackets. What a repetition may never do is make rule depth grow with a list's length. The rule-event adapter
-([`rs/src/source/rule_events.rs`](rs/src/source/rule_events.rs)) is built
-on exactly that. It opens a frame at the `d` of the rule whose node first
+iterations add nothing to the engine's rule depth `d`. Real recursion still nests with its input, as it should: a grammar with `node = "(" node ")" / "x"` is as deep as its brackets. What a repetition may never do is make rule depth grow with a list's length. A part's
+`transduce-tree` rests on it ([`rs/src/transduce_tree.rs`](rs/src/transduce_tree.rs)):
+a container whose rule is replaced by a rule the spec names a container
+is one container, so a list's items stream at one depth. So did the
+rule-event adapter this crate retired at step 13, and so do the
+TypeScript and Go ports' adapters, which are built on exactly that.
+Each opens a frame at the `d` of the rule whose node first
 shows a container and ends it when a rule at that `d` closes on the
 frame's cell, or the rule that started it closes, unless the close's
 alternate replaces the rule: a replaced rule hands its cell to its
@@ -138,22 +118,19 @@ of the grammar's, where it has one, cancels the parse (`INPUT_INVALID`,
 naming the guard).
 Such a grammar is wrong even when it parses, and the fix is the grammar's
 or its compiler's (tabnas-bnf's `desugar` spelled every star that way
-until 2026-09-27), never the adapter's: this crate does not lift
-`max_depth` for it, does not flatten a staircase, and does not list the
-grammar as verified. Rule depth over a repetition is constant; a test
-that repeats an item ten thousand times and asserts the maximum `d` stays
-what a single item needs is the proof.
+until 2026-09-27), never the adapter's: no port lifts `max_depth` for it,
+flattens a staircase, or lists the grammar as verified. Rule depth over a
+repetition is constant; a test that repeats an item ten thousand times
+and asserts the maximum `d` stays what a single item needs is the proof.
 
 **The parsed values the grammars return are never altered.** The
-incremental source may drop already-streamed elements from a container it
-was told to prune (`Prune`), and only in incremental mode; the parser-event
-source may empty each array behind its stream when it prunes
-(`ParserEventSource::prune`), which is a verified capability as
-incremental streaming is: `source::capability::prunable(grammar)` answers
+parser-event source may empty each array behind its stream when it
+prunes (`ParserEventSource::prune`), which is a verified capability,
+never an assumption: `source::capability::prunable(grammar)` answers
 from a list `rs/tests/prune_test.rs` keeps honest both ways, every
 document of every grammar run pruned and not, the passes and outcomes
-compared. In both, the value the engine hands back afterwards is not used.
-In every other mode the value is exactly the grammar's.
+compared. The value the engine hands back afterwards is not used. In
+every other run the value is exactly the grammar's.
 
 ## Repository map
 
@@ -165,22 +142,20 @@ In every other mode the value is exactly the grammar's.
 | `rs/src/route.rs` | captures: materialize or observe selected scopes, deliver in order |
 | `rs/src/table_from_json.rs` | the metadata-first table transducer |
 | `rs/src/scan.rs` | `scan-emit` |
-| `rs/src/source/mod.rs` | `Source`, `ValueSource`, `SourceMode`, `Prune` |
+| `rs/src/source/mod.rs` | `Source`, `ValueSource`, `walk_value`, and the engine failures the sources map alike |
 | `rs/src/source/guard.rs` | `Guarded`: the source limits, the abort flag and the source metrics on every event |
-| `rs/src/source/rule_events.rs` | the rule-event adapter: `JsonEvents/1` from a live parse |
-| `rs/src/source/parser.rs` | `ParserSource`: one text, materialized or incremental |
+| `rs/src/source/parser.rs` | `ParserSource`: one text, parsed, then its value walked |
 | `rs/src/source/lines.rs` | `LinesSource`: CSV a chunk of records at a time (JSON Lines is read through its part, `ParserEventSource::from_reader`, since alchemy's step 12) |
-| `rs/src/source/capability.rs` | the verified lists `capability::incremental` and `capability::prunable` answer from |
+| `rs/src/source/capability.rs` | the verified list `capability::prunable` answers from |
 | `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
 | `rs/src/transduce_tree.rs` | `TransduceTree`: alchemy's `transduce-tree` natively, offered through `Routers::transduce_tree` |
-| `rs/tests/incremental_test.rs` | the differential suite that keeps that list honest, both ways |
 | `rs/tests/prune_test.rs` | the differential suite behind `capability::prunable`, both ways, and ten times the records leaving the pruned tree as it was |
-| `rs/tests/retention_test.rs` | ten times the rows of a JSON or an XML document leave the retained high-water flat |
+| `rs/tests/retention_test.rs` | ten times the rows of a JSON document, read through JSON's part and pruned, leave the retained high-water and the engine's tree flat |
 | `rs/tests/reader_test.rs` | `ParserEventSource::from_reader` against the same text read whole: every fixture of a grammar the harness builds, a few bytes at a time, and a reader that fails |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
-| `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML), shared with the benches |
-| `rs/benches/` | criterion throughput benches: parse only, incremental events, walk, router and table |
+| `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML, XML, PGN) and JSON's part, shared with the benches |
+| `rs/benches/` | criterion throughput benches: parse only, JSON's part, walk, router and table |
 | `docs/` | `architecture.md` (the design), `reference.md`, `translation.md` (any format to any other: the parts a format ships and the host composes) |
 | `test/spec/*.tsv` | the shared fixtures every runtime runs: events, routes, tables, the line sources, scan-emit, limits, the parser's rule passes and the native transduce-tree over them (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
 | `DIVERGENCE.md` | what a runtime may do differently, and what the fixtures leave out on purpose |
@@ -220,22 +195,22 @@ here) and written in `SCREAMING_SNAKE_CASE`:
 |---|---|
 | `DSL_PARSE_ERROR`, `DSL_TYPE_ERROR` | reserved for alchemy, which shares this enum |
 | `STREAM_REUSED` | a one-shot stream was consumed twice |
-| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; an incremental run of an unnamed or unverified grammar (refused before the parse), or one the adapter refuses mid-way: a list wrapped around a root already streamed (at the wrapping container, or when the root rule closes over a value that is not the streamed root), a map rewritten after streaming, a container opened inside a map before the member's key, a member announced and never stored; a stream `TreeContract` finds is no tree's (a value where a key is due, a close with nothing open, a second root, `End` out of place) |
+| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; a run that prunes an unnamed or unverified grammar (refused before the parse); a stream `TreeContract` finds is no tree's (a value where a key is due, a close with nothing open, a second root, `End` out of place); in the TypeScript and Go ports, an incremental run of an unnamed or unverified grammar (refused before the parse), or one their adapter refuses mid-way: a list wrapped around a root already streamed (at the wrapping container, or when the root rule closes over a value that is not the streamed root), a map rewritten after streaming, a container opened inside a map before the member's key, a member announced and never stored |
 | `INPUT_ORDER_VIOLATION` | a row began before its metadata completed |
 | `CAPTURE_OVERLAP_UNSUPPORTED` | two captures select overlapping scopes |
 | `MISSING_VALUE` | a required value is absent and the policy is `Error` |
-| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy; an incremental run whose grammar merged a repeated member's containers after the first was streamed; a key repeated in one object of a stream `TreeContract` holds to a tree's events |
+| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy; a key repeated in one object of a stream `TreeContract` holds to a tree's events; in the TypeScript and Go ports, an incremental run whose grammar merged a repeated member's containers after the first was streamed |
 | `INVALID_NUMBER` | a number lexeme the target cannot take |
 | `PROTOCOL_ORDER_ERROR` | a protocol event out of sequence |
 | `TARGET_VALUE_UNREPRESENTABLE` | the target format cannot carry the value |
 | `RESOURCE_LIMIT_EXCEEDED` | a `Limits` field was passed; `Fail::limit` names it |
-| `INPUT_INVALID` | the input did not parse, or could not be read (the engine's `unreadable`, from `ParserEventSource::from_reader`, at the character the reader failed at or the bytes that are not UTF-8); the engine's code and position ride along, in both modes alike: an incremental run of a document the grammar refuses fails with the same code and position after a protocol-valid prefix (zon's repeated fields; the member the grammar never stored is not streamed). A grammar's own guard cancelling the parse (tabnas-json refuses nesting past 128, below `Limits::max_depth`) is this too, and the message names the grammar's guard |
+| `INPUT_INVALID` | the input did not parse, or could not be read (the engine's `unreadable`, from `ParserEventSource::from_reader`, at the character the reader failed at or the bytes that are not UTF-8); the engine's code and position ride along, from every source alike: a run that streams a document the grammar refuses fails with the same code and position after the prefix it streamed. A grammar's own guard cancelling the parse (tabnas-json refuses nesting past 128, below `Limits::max_depth`) is this too, and the message names the grammar's guard |
 | `OUTPUT_FAILED` | writing failed |
 | `ABORTED` | the run was cancelled; from a line source, `row` names the line the record or chunk it was reading starts on |
 
 A code is never renamed, removed or repurposed. A failure also says
 whether output had already been committed (`output: "partial"`), because
-an incremental export cannot take bytes back.
+a streaming export cannot take bytes back.
 
 ## Untrusted input
 

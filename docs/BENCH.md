@@ -58,9 +58,9 @@ What the table says:
 - Bounded-memory streaming of one large document needs the engine to
   bound its rule history. It can since engine 0.12.6
   (`options.rule.history`, tabnas/parser#252), which a host sets on the
-  parser it hands to `ParserSource`; aless sets 3 (rjrodger/aless#33, and
-  "Through aless" below). Without it the incremental source bounds what
-  the transducer retains, and the engine's own retention stands.
+  parser it hands to a source; aless sets 3 (rjrodger/aless#33, and
+  "Through aless" below). Without it a streaming source bounds what the
+  transducer retains, and the engine's own retention stands.
 - CSV is parsed a chunk of records at a time by `LinesSource`, so its
   memory is bounded whatever the file size, at the engine's per-record
   cost. JSON Lines, which `LinesSource` read a record at a time until
@@ -73,54 +73,70 @@ What the table says:
 ## The stages after the engine
 
 Measured by `tabnas-render`'s criterion bench (`cargo bench` in
-`render/rs`), one core, synthetic input, 2026-09-27:
+`render/rs`), one core of a shared two-vCPU VM (Arm Neoverse-N1),
+synthetic input, 2026-10-23:
 
 | Stage | Input | Rate |
 |---|---|---|
-| `CsvRenderer` over a discarding writer (renderer only, no parse) | 20k rows × 5 cells of `TableRows/1` events | about 4.3 M rows/s, about 290 MiB/s of CSV out |
-| `json_to_csv/text_to_csv_incremental`: JSON text → `ParserSource` (incremental, pruned) → `TableFromJson` → `CsvRenderer` → `WriteOut` | the 20k-record worked-example document (1.66 MB) | 1.37 s, 1.15 MiB/s of JSON in, 0.57 MiB/s of CSV out |
-| `ValueSource` walk + `JsonRenderer` | a parsed 1.66 MB, 20k-record document | about 78 MiB/s of source (about 20 ms) |
+| `CsvRenderer` over a discarding writer (renderer only, no parse) | 20k rows × 5 cells of `TableRows/1` events | about 3.5 M rows/s, about 245 MiB/s of CSV out |
+| `json_to_csv/text_to_csv_through_the_part`: JSON text → `ParserEventSource` (pruned) → JSON's part (`TransduceTree`) → `TableFromJson` → `CsvRenderer` → `WriteOut` | the 20k-record worked-example document (1.66 MB) | 1.86 s, 0.85 MiB/s of JSON in, 0.42 MiB/s of CSV out |
+| `ValueSource` walk + `JsonRenderer` | a parsed 1.66 MB, 20k-record document | about 46 MiB/s of source (about 34 ms) |
 
 So the pipeline downstream of the parse runs two orders of magnitude
-faster than the parse itself, and the engine's per-rule cost is the
+faster than the parse itself, and the parse through the part is the
 throughput of the whole. The numbers are also recorded in render's
-`docs/reference.md`.
+`docs/reference.md`, beside the first measurement, on 2026-09-27 on a
+2.1 GHz Xeon vCPU, when the chain read through the incremental source.
 
 ## This crate's stages
 
 `cargo bench` in `rs/` (`benches/throughput.rs`), release build, one core
-of the same kind of container (a 2.1 GHz Xeon vCPU), on the generated
+of a shared two-vCPU VM (Arm Neoverse-N1), 2026-10-23, on the generated
 worked-example document of 20,000 records (1.7 MB; `tests/support`
 generates it). Criterion's mean of 10 samples for the parse-bound
-groups.
+groups. The last three rows are `main`'s groups before step 13 of
+alchemy's streaming plan retired the rule-event adapter, run just after
+the rest on the same machine, with their own `parse_only` (1.21 s).
 
 | Group | What runs | Time | Throughput |
 |---|---|---|---|
-| `parse_only/json` | `tabnas_json::make().parse` alone | 1.10 s | 1.45 MiB/s |
-| `incremental/events_into_count_sink` | the rule-event adapter, no pruning, into `CountSink` | 1.35 s | 1.18 MiB/s |
-| `incremental/events_pruned_into_count_sink` | the same with `Prune::Under(records)` | 1.32 s | 1.21 MiB/s |
-| `walk/value_source_into_count_sink` | `ValueSource` over the parsed value | 4.1 ms | 385 MiB/s |
-| `table_from_recording/router_and_table_into_count_table` | `Router` + `TableFromJson` from a recording, no parse | 41.8 ms | 37.9 MiB/s |
-| `table_from_text/incremental_pruned_into_table` | text to table rows, incremental and pruned | 1.32 s | 1.20 MiB/s |
+| `parse_only/json` | `tabnas_json::make().parse` alone | 1.22 s | 1.30 MiB/s |
+| `part/events_into_count_sink` | JSON's part, natively (`TransduceTree`), over `ParserEventSource`'s passes, behind `Guarded`, into `CountSink` | 1.90 s | 0.83 MiB/s |
+| `part/events_pruned_into_count_sink` | the same, the engine's arrays emptied behind the stream | 1.79 s | 0.89 MiB/s |
+| `walk/value_source_into_count_sink` | `ValueSource` over the parsed value | 8.6 ms | 183 MiB/s |
+| `table_from_recording/router_and_table_into_count_table` | `Router` + `TableFromJson` from a recording, no parse | 33.5 ms | 47.4 MiB/s |
+| `table_from_text/part_pruned_into_table` | text to table rows through JSON's part, pruned | 1.87 s | 0.85 MiB/s |
+| `incremental/events_into_count_sink` (retired) | the rule-event adapter, no pruning, into `CountSink` | 1.58 s | 1.00 MiB/s |
+| `incremental/events_pruned_into_count_sink` (retired) | the same with `Prune::Under(records)` | 1.51 s | 1.05 MiB/s |
+| `table_from_text/incremental_pruned_into_table` (retired) | text to table rows, incremental and pruned | 1.58 s | 1.01 MiB/s |
 
 What the table says, in the terms of the engine table above:
 
-- **The adapter costs about 20% over the bare parse** (1.35 s against
-  1.10 s), the per-pass `Rule` clone and the subscriber's lock included,
-  and pruning gives a little of it back. That is the whole price of
-  streaming a verified grammar instead of parsing it whole.
+- **The part costs about half again the bare parse** (1.90 s against
+  1.22 s): the source copies each pass the engine completes, its rule's
+  name, alternate and tokens with their text, and the native
+  `transduce-tree` makes the document's events of it. Pruning gives some
+  of it back (1.79 s). That is the price of streaming a format through
+  the events its package declares rather than parsing it whole.
+- **The part is about a fifth slower than the inference it replaced.**
+  The rule-event adapter cost about 30% over the parse here (1.58 s
+  against 1.21 s; about a fifth on the Xeon, 1.35 s against 1.10 s, on
+  2026-09-27), and text to table rows took 1.58 s where the part takes
+  1.87 s. aless has read JSON through its part since rjrodger/aless#82
+  (step 9), and alchemy-cli since tabnas/alchemy-cli#50, so step 13
+  removes a route no host took; the hosts have paid this since then.
 - **The stages downstream are not where the time goes.** Walking the
-  parsed value is 385 MiB/s and the router plus the table transducer,
-  materializing every record and projecting three columns, is 38 MiB/s:
-  about 3% of the chain from text to rows. The chain runs at the engine's
-  speed, 1.2 MiB/s here.
+  parsed value is 183 MiB/s and the router plus the table transducer,
+  materializing every record and projecting three columns, is 47 MiB/s:
+  about 2% of the chain from text to rows. The chain runs at the speed
+  of the parse through the part, 0.85 MiB/s here.
 - **Memory is the other axis, and it is the engine's.** With pruning the
   transducer retains one record at a time (`captured_bytes_high` says so,
   and `tests/retention_test.rs` checks the engine's tree itself holds no
   streamed row once the run is over), while the engine's rule history
-  grows with the document, as the first table shows; the line sources
-  sidestep that for JSON Lines and CSV by parsing a record or a chunk at a
-  time.
+  grows with the document unless the host bounds it (`options.rule.history`,
+  "What follows for this crate"); the line source sidesteps that for CSV
+  by parsing a chunk of records at a time.
 
 ## Through aless
 

@@ -9,12 +9,19 @@ use tabnas_support::Runner;
 
 #[test]
 fn events() {
-    Runner::new_with_row(|input, row| {
+    let runner = Runner::new_with_row(|input, row| {
         common::events(row, input).map_err(|fail| common::to_failure(&fail, row))
     })
     .input("input")
-    .expected("expected")
-    .file(common::spec_dir().join("events.tsv"));
+    .expected("expected");
+    let mut spec =
+        tabnas_support::load_spec(common::spec_dir().join("events.tsv"), runner.load_options())
+            .expect("the fixture loads");
+    // The incremental rows are the TypeScript and Go ports': this crate
+    // retired its rule-event inference at step 13 of alchemy's streaming
+    // plan, and the fixture says why the ports keep theirs.
+    spec.rows.retain(|row| row.named("mode") != "incremental");
+    runner.spec(&spec);
 }
 
 /// Every fixture the directory holds has a runner; a new file added

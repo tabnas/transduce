@@ -5,7 +5,9 @@ input**, and why that difference is allowed to stand. Three runtimes run
 the shared fixtures in [`test/spec/`](test/spec/), which
 [`docs/reference.md`](docs/reference.md) ("Shared fixtures") describes:
 Rust in [`rs/`](rs/), TypeScript in [`ts/`](ts/) and Go in [`go/`](go/).
-TypeScript agrees with Rust on every row; Go skips the rows
+TypeScript agrees with Rust on every row both run (`events.tsv`'s
+`incremental` rows are the ports' alone since step 13 of alchemy's
+streaming plan retired Rust's inference); Go skips the rows
 `specDivergences` in `go/spec_test.go` names, each a difference in a Go
 grammar module, measured against Rust. Every entry here is re-measured
 by running its input through each runtime, and an entry that closes is
@@ -19,7 +21,8 @@ as coverage, or as licence.
 
 ## Where these are pinned
 
-Each entry names the Rust test that pins Rust's side. None is a fixture
+Each entry names the test that pins it: Rust's, or the ports' where Rust
+has retired the code. None is a fixture
 row: a row says what every runtime must do, and these are the things that
 are not, or not yet, the same everywhere.
 
@@ -27,7 +30,7 @@ are not, or not yet, the same everywhere.
 
 | input | Rust |
 |---|---|
-| 200 `[` then `1` then 200 `]`, `json`, either mode | `INPUT_INVALID` at 1:128, the message naming the grammar's guard |
+| 200 `[` then `1` then 200 `]`, `json`, walked or through its part | `INPUT_INVALID` at 1:128, the message naming the grammar's guard |
 
 **A grammar's behaviour, not this crate's.** The Rust `tabnas-json`
 installs a parse guard that cancels a parse nested deeper than 128,
@@ -59,9 +62,10 @@ container projected into a table cell turns one into text here. No
 fixture row does that with a number outside the range. The choice is
 whether the contract is ECMAScript's `Number::toString` (Rust and Go
 change) or this crate's text (the ports change); until it is made, the
-row cannot be written. Pinned on the Rust side by `cells_print_as_json`
-in `rs/src/table.rs` and `lexemes_survive` in `rs/src/datum.rs` for the
-numbers inside the range.
+row cannot be written. Pinned on the Rust side, for the numbers inside
+the range, by `cells_print_as_json` and `lexemes_survive` in alchemy's
+`rs/src/shared/table.rs` and `rs/src/shared/datum.rs`, where the shared
+types and `write_json_number` live.
 
 ## 3. tabnas-csv reads a newline in a field differently under `record.separators`
 
@@ -88,7 +92,7 @@ gap:
 - **What a TSV cell cannot carry** stays in the Rust unit tests: input
   that is not UTF-8 (`invalid_utf8_is_invalid_input_at_its_line`), a
   reader that hands out one byte at a time or never ends
-  (`jsonl_matches_the_whole_file_parse_at_every_reader_boundary`,
+  (`csv_matches_the_whole_file_parse_at_every_chunk_size_and_reader_boundary`,
   `an_unterminated_line_is_refused_at_the_limit_not_after_being_read_whole`),
   the abort flag, a sink that stops or fails part-way, and the metrics.
   A port tests the same contracts in its own suite; they are API shapes
@@ -98,19 +102,21 @@ gap:
   the member's key, so the adapter's refusal of that
   (`STREAMABILITY_UNKNOWN`, "before announcing the member's key") has no
   row: `events.tsv`'s YAML key that is a mapping now streams as the
-  walk. Rust pins the refusal over a grammar built in the test
-  (`a_container_opened_in_a_map_before_its_key_is_refused` in
-  `rs/tests/incremental_test.rs`), and a port does the same in its own
-  suite.
+  walk. The TypeScript and Go suites pin the refusal over a grammar
+  built in the test (`ts/test/incremental.test.ts`,
+  `go/incremental_test.go`); Rust pinned it so until step 13 of
+  alchemy's streaming plan retired its adapter.
 
 ## 5. Go does not stream PGN
 
-A PGN database streams a game at a time in Rust and TypeScript, whose
-lists (`rs/src/source/capability.rs`, `ts/src/capability.ts`) name `pgn`,
-and is read whole and then walked in Go, whose list
-(`go/capability_nodecell.go`) does not: an incremental run of `pgn` in Go
-is refused before the parse with `STREAMABILITY_UNKNOWN`, as for every
-unlisted grammar, and a host reads the database through the walk.
+A PGN database streams a game at a time through TypeScript's incremental
+source, whose list (`ts/src/capability.ts`) names `pgn`, and is read
+whole and then walked in Go, whose list (`go/capability_nodecell.go`)
+does not: an incremental run of `pgn` in Go is refused before the parse
+with `STREAMABILITY_UNKNOWN`, as for every unlisted grammar, and a host
+reads the database through the walk. Rust's incremental source streamed
+it as TypeScript's does until step 13 of alchemy's streaming plan retired
+it; a Rust host reads PGN through tabnas-chess's transducer part.
 
 Why: the Go adapter follows the containers a rule holds as generic maps
 and lists (`map[string]any`, `[]any`), which is how every other Go
@@ -119,14 +125,12 @@ grammar builds its values. tabnas-chess's Go port builds typed values
 adapter finds no container to follow. Go streams PGN once the adapter
 follows typed values, or the module builds generic ones, which changes
 its API. The Rust and TypeScript sides take tabnas-chess as a
-dev-dependency (on the maintainer's instruction of 2026-10-14), and their
-differential suites verify `pgn`; Go takes none and runs no PGN, so its
-list cannot name it.
+dev-dependency (on the maintainer's instruction of 2026-10-14):
+TypeScript's differential suite verifies `pgn`, and Rust's prune suite
+reads it. Go takes none and runs no PGN, so its list cannot name it.
 
-Pinned in Rust by `pgn_streams_incrementally_where_the_list_says_so` and
-`every_document_of_pgns_own_corpus_streams_as_the_walk`
-(`rs/tests/incremental_test.rs`), and in TypeScript by the differential
-suite's `pgn` case (`ts/test/incremental.test.ts`).
+Pinned in TypeScript by the differential suite's `pgn` case
+(`ts/test/incremental.test.ts`).
 
 ## 6. Only Rust reads the parser's source from a reader
 

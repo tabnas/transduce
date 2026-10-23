@@ -7,6 +7,11 @@ input	grammar	mode	prune	expected	prefix
 # The walk (materialize, value) carries no number lexemes; the incremental
 # source carries the token's text when it is an RFC 8259 number that reads
 # as the node's value, and null otherwise.
+#
+# The incremental rows are the TypeScript and Go ports' since step 13 of
+# alchemy's streaming plan: the Rust crate retired its rule-event inference
+# then and skips them by their mode, while the ports keep theirs until
+# their own JSON Lines line sources, which read through it, have gone.
 {"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	materialize		[["object_start"],["key","a"],["array_start"],["number",1,null],["number",2.5,null],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,null],["key","f"],["bool",true],["object_end"],["end"]]
 {"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	incremental		[["object_start"],["key","a"],["array_start"],["number",1,"1"],["number",2.5,"2.50"],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,"1e21"],["key","f"],["bool",true],["object_end"],["end"]]
 {"a":[1,2.50,"x",{"b":null}],"c":{},"d":[],"e":1e21,"f":true}	json	value		[["object_start"],["key","a"],["array_start"],["number",1,null],["number",2.5,null],["string","x"],["object_start"],["key","b"],["null"],["object_end"],["array_end"],["key","c"],["object_start"],["object_end"],["key","d"],["array_start"],["array_end"],["key","e"],["number",1e+21,null],["key","f"],["bool",true],["object_end"],["end"]]

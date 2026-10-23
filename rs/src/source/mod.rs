@@ -2,11 +2,12 @@
 //!
 //! - [`ValueSource`] walks a parsed engine value. Always correct, retains
 //!   the whole value: the fallback for every grammar.
-//! - [`ParserSource`] drives a tabnas parse of one text and, in
-//!   [`SourceMode::Incremental`], turns its rule events into source events
-//!   as they happen, for the grammars the differential suite has verified
-//!   ([`capability::incremental`]); in [`SourceMode::Materialize`] it
-//!   parses and walks.
+//! - [`ParserSource`] parses one text with a tabnas parser and walks its
+//!   value: the whole value, for every grammar. A format whose package
+//!   ships a transducer part streams through it instead, over
+//!   [`ParserEventSource`]; the rule-event inference that streamed the
+//!   verified grammars before the parts was retired with alchemy's
+//!   step 13.
 //! - [`LinesSource`] reads CSV from any `BufRead` a chunk of records at a
 //!   time, bounding memory whatever the file's size. JSON Lines is read
 //!   through its part, from a reader ([`ParserEventSource::from_reader`]).
@@ -26,7 +27,6 @@ pub mod guard;
 pub mod lines;
 pub mod parser;
 pub mod parser_events;
-pub(crate) mod rule_events;
 
 pub use guard::Guarded;
 pub use lines::{LineFormat, LinesSource, DEFAULT_CHUNK_BYTES};
@@ -36,29 +36,52 @@ pub use parser_events::ParserEventSource;
 use crate::error::Fail;
 use crate::event::{JsonEvent, Number};
 use crate::limits::AbortFlag;
-use crate::selector::Selector;
 use crate::sink::{Flow, Sink};
 
-/// How [`ParserSource`] produces its events.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SourceMode {
-    /// Parse the whole text, then walk the value. Sound for every grammar.
-    Materialize,
-    /// Emit from the engine's rule events as the parse proceeds. Sound for
-    /// the grammars [`capability::incremental`] lists.
-    Incremental { prune: Prune },
-}
+/// The name this crate's parse guard is installed under.
+pub(crate) const GUARD: &str = "tabnas-transduce.abort";
 
-/// Which arrays the incremental source empties as it streams them.
-/// Pruning alters the value the engine returns, which the incremental
-/// source discards; it is never applied in `Materialize` mode.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Prune {
-    Never,
-    /// The array whose elements the selector names (a trailing `[*]`
-    /// names the elements; without one the selector names the array).
-    Under(Selector),
-    AllArrays,
+/// RFC 8259's number grammar: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`.
+/// Only such a lexeme is kept, so a renderer can write it as it stands.
+pub(crate) fn is_json_number(s: &str) -> bool {
+    let b = s.as_bytes();
+    let mut i = 0;
+    if b.first() == Some(&b'-') {
+        i += 1;
+    }
+    match b.get(i) {
+        Some(b'0') => i += 1,
+        Some(c) if c.is_ascii_digit() => {
+            while b.get(i).is_some_and(u8::is_ascii_digit) {
+                i += 1;
+            }
+        }
+        _ => return false,
+    }
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        let start = i;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == start {
+            return false;
+        }
+    }
+    if matches!(b.get(i), Some(b'e') | Some(b'E')) {
+        i += 1;
+        if matches!(b.get(i), Some(b'+') | Some(b'-')) {
+            i += 1;
+        }
+        let start = i;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == start {
+            return false;
+        }
+    }
+    i == b.len()
 }
 
 /// The engine's cancel code: what a parse guard that answered `false`

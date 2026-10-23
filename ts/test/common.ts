@@ -279,10 +279,26 @@ function lineOptions(row: Row): { format: LineFormat; chunk?: number } {
 // ---------------------------------------------------------------------
 // Driving a source.
 
+// JSON's transducer part, as tabnas-json spells it: `transduce-tree` over
+// the json grammar's rules, the spec `tree.tsv`'s json rows give.
+function jsonPart(): TreeSpec {
+  return {
+    rules: new Map<string, TreeRule>([
+      ['map', { container: 'object' }],
+      ['list', { container: 'array' }],
+      ['pair', { key: { token: 0 } }],
+      ['val', { scalar: { token: 0 } }],
+    ]),
+  }
+}
+
 // Run the row's source into `sink`: `grammar` and `mode` name it.
 //
 // - `materialize` and `incremental`: `ParserSource` over the grammar,
 //   named with `.grammar`, in that mode (`prune` column for incremental).
+// - `part`: JSON's transducer part (`jsonPart`) natively over the passes
+//   `ParserEventSource` delivers, through the source's guard, as a host
+//   reads JSON: the document's events, lexemes kept. JSON only.
 // - `value`: the grammar's parse (an engine error is `Fail.fromTabnas`),
 //   then `ValueSource` over the value. No limits apply on this path.
 // - `lines` and `lines-incremental`: `LinesSource` over the text, the
@@ -298,6 +314,13 @@ export function drive(row: Row, input: string, sink: Sink): Flow {
         .mode('materialize' === mode ? SourceMode.materialize() : SourceMode.incremental(prune(row)))
         .limits(limits(row))
         .run(sink)
+    case 'part': {
+      if ('json' !== name) throw new Error(`${row.where()}: the part mode is JSON's`)
+      const lim = limits(row)
+      const guarded = new Guarded(sink, lim, new AbortFlag(), new Metrics())
+      const spec = { ...jsonPart(), maxTextBytes: lim.max_scalar_bytes }
+      return new ParserEventSource(grammar(name), input).limits(lim).run(new TransduceTree(spec, guarded))
+    }
     case 'value': {
       let value: unknown
       try {

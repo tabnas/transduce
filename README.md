@@ -11,19 +11,20 @@ The declarative language that composes all of this is
 line.
 
 ```
-tabnas parse ──rule events──▶ JsonEvents/1 ──▶ router/captures ──▶ TableRows/1 ──▶ renderer ──▶ text
+tabnas parse ──rule passes──▶ format's part ──▶ JsonEvents/1 ──▶ router/captures ──▶ TableRows/1 ──▶ renderer ──▶ text
 ```
 
 - **Any parser.** The source events come from the engine's rule
   subscribers, so every tabnas grammar (JSON, JSON Lines, jsonic, YAML,
-  TOML, CSV, XML, …) feeds the same transducers. Grammars the
-  differential suite has verified (`json`, `json5`, `jsonc`, `jsonic`,
-  `jsonl`, `markdown`, `pgn`, `xml`, `yaml`, `zon`; `pgn` a game at a time,
-  and not in Go) stream incrementally, with the
-  streamed rows pruned from the engine's tree on request; the rest are
-  walked whole. CSV also has a line source that holds one chunk of
-  records at a time, whatever the file's size; JSON Lines is read through
-  its part from a reader, a window at a time.
+  TOML, CSV, XML, …) feeds the same transducers. A format whose package
+  ships a transducer part streams through it, over the rule passes
+  `ParserEventSource` delivers, from a reader a window at a time where
+  the grammar declares one, with the engine's arrays emptied behind the
+  stream on request; the rest are walked whole. CSV also has a line
+  source that holds one chunk of records at a time, whatever the file's
+  size. The TypeScript and Go ports still stream the grammars their
+  differential suites verify by inferring events from the rule events,
+  as the Rust crate did until step 13 of alchemy's streaming plan.
 - **Bounded by contract.** Retained values are measured against named
   limits as they are built; a breach fails with the limit's name, never
   a silent fallback to a bigger algorithm.

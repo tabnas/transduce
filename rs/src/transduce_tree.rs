@@ -307,8 +307,7 @@ mod tests {
     use super::*;
     use crate::event::OwnedJsonEvent;
     use crate::{
-        OwnedJsonEvent as Ev, ParserEventSource, ParserSource, PassAlt, PassToken, SourceMode,
-        TreeRule,
+        OwnedJsonEvent as Ev, ParserEventSource, ParserSource, PassAlt, PassToken, TreeRule,
     };
 
     fn json_spec() -> TreeSpec {
@@ -333,8 +332,8 @@ mod tests {
     }
 
     /// The json part's spec over tabnas-json's own passes makes the
-    /// document's events, lexemes kept, as the incremental source makes
-    /// them.
+    /// document's events: the walk's, each number with the lexeme the
+    /// document spelled it with, which the walk cannot keep.
     #[test]
     fn the_json_spec_makes_the_documents_events() {
         for src in [
@@ -349,15 +348,26 @@ mod tests {
         ] {
             let (r, native) = tree(src);
             assert_eq!(r.unwrap(), Flow::Continue, "{src}");
-            let (r, incremental) = ParserSource::new(tabnas_json::make(), src)
-                .grammar("json")
-                .mode(SourceMode::Incremental {
-                    prune: crate::Prune::Never,
-                })
-                .run_owned(Vec::<OwnedJsonEvent>::new());
+            let (r, walked) =
+                ParserSource::new(tabnas_json::make(), src).run_owned(Vec::<OwnedJsonEvent>::new());
             r.unwrap();
-            assert_eq!(native, incremental, "{src}");
+            let unspelled: Vec<OwnedJsonEvent> = native
+                .iter()
+                .map(|e| match e {
+                    Ev::Number { value, .. } => Ev::Number {
+                        value: *value,
+                        lexeme: None,
+                    },
+                    other => other.clone(),
+                })
+                .collect();
+            assert_eq!(unspelled, walked, "{src}");
         }
+        let (_, native) = tree(r#"[2.50, 1e21]"#);
+        assert!(native.contains(&Ev::Number {
+            value: 2.5,
+            lexeme: Some("2.50".into())
+        }));
     }
 
     fn pass(name: &str, tokens: Vec<PassToken>, r: &str, value: Option<Datum>) -> RulePass {

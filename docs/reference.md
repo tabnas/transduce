@@ -21,10 +21,11 @@ recording back.
 that writes a document from them) and holds the stream to a tree's
 contract: one root value, and in each object a key and then its value,
 each key once. A value walked from a parsed tree keeps it by
-construction; a parse streamed as it proceeds may not, since the
-incremental source streams a member its grammar reads twice (JSON's
-`{"a":1,"a":2}`) and refuses most shapes it cannot follow but not every
-one a grammar can produce. A repeated key in one object fails with
+construction; a parse streamed as it proceeds may not, since a part
+streams every occurrence of a member its grammar reads twice (JSON's
+`{"a":1,"a":2}`), and the TypeScript and Go ports' incremental source
+refuses most shapes it cannot follow but not every one a grammar can
+produce. A repeated key in one object fails with
 `DUPLICATE_MEMBER`; a value where a key is due, a key outside an object,
 a close with nothing open, a second root value or `End` inside an open
 container fails with `STREAMABILITY_UNKNOWN`; both name the path of the
@@ -44,18 +45,14 @@ source metrics (`events`, `keys`, `scalars`).
 | Source | Input | Modes | Retains |
 |---|---|---|---|
 | `ValueSource(&Value)` | a parsed engine value | walk | the value (the caller's) |
-| `ParserSource::new(Tabnas, &str)` | one text | `SourceMode::Materialize`: parse, then walk. `SourceMode::Incremental { prune }`: the rule-event adapter, for the grammars `capability::incremental` lists, named by the format's `languageId` with `.grammar("json")` (`pgn` for tabnas-chess, not `chess`); no name or an unlisted one is `STREAMABILITY_UNKNOWN` before the parse (`.unverified()` lifts the gate, for the differential suite) | materialize: the whole value; incremental: the engine's parse state and, with pruning, not the streamed elements |
+| `ParserSource::new(Tabnas, &str)` | one text | parse, then walk (the TypeScript and Go ports also stream incrementally: "The rule-event inference, in TypeScript and Go", below) | the whole value |
 | `LinesSource::new(BufRead, LineFormat)` | CSV | chunks of whole records (`Csv { header, options }`), each parsed with one reused grammar; a record ends where the grammar ends one, at any of its line characters outside a token. JSON Lines is read through tabnas-jsonl's part from a reader (`ParserEventSource::from_reader`), a window at a time | one chunk (`DEFAULT_CHUNK_BYTES`, 256 KiB, never a fraction of a record) |
 
-`Source::run(self, &mut dyn Sink)` drives a borrowed sink and is always
-the walking path (`ParserSource` materializes whatever its mode).
+`Source::run(self, &mut dyn Sink)` drives a borrowed sink.
 `run_owned(self, sink) -> (Result<Flow, Fail>, sink)` and `run_boxed` take
-the sink by value, which is what the engine's `Fn + Send + Sync + 'static`
-subscriber needs, and hand it back: that is the incremental path (the
-line source walks its records on both). `run_owned_with_value` also hands back the value the engine
-returned: the grammar's in `Materialize`, and in `Incremental` the
-engine's tree after pruning, which is there for a test to measure what
-pruning left and for nothing else.
+the sink by value and hand it back; each source walks on both, the line
+source its records and `ParserSource` its value.
+`ParserSource::run_owned_with_value` also hands back the grammar's value.
 
 Failure mapping: a sink's `Fail` comes back as it was; a sink that stopped
 is `Ok(Flow::Stop)`; a parse the caller's `AbortFlag` cancelled is
@@ -63,35 +60,19 @@ is `Ok(Flow::Stop)`; a parse the caller's `AbortFlag` cancelled is
 reading starts on and no column, since an abort lands between two of the
 engine's steps, where it has no position of its own); any other engine error is `INPUT_INVALID` with the engine's
 code in the message and its row and column (for a line source, the line's
-number and the column within it), in both modes alike: an incremental run
-of a document the grammar refuses fails with the same code and position
-after a protocol-valid prefix and before `End`. A `cancel` the caller did not ask for is
+number and the column within it), from every source alike: a run that
+streams a document the grammar refuses, through a part, fails with the
+same code and position after the prefix it streamed and before `End`. A `cancel` the caller did not ask for is
 a guard the grammar installed (tabnas-json refuses nesting deeper than
 128, below the default `max_depth` of 256, so that limit is unreachable
 for JSON unless set lower), and the message says "the grammar stopped the
-parse with a guard of its own" rather than reporting a cancellation. An
-incremental run whose rule events
-did not amount to one whole document is `STREAMABILITY_UNKNOWN`, and so
-is one the adapter refuses because the grammar wrapped a value already
-streamed as the root in a list, or rewrote a map after it was streamed;
-the message names the shape and says to run it materialized. An
-incremental parse that returns `Ok` without one event (YAML's empty
-document is `null`) has its value walked instead, so it completes as the
-walk does.
+parse with a guard of its own" rather than reporting a cancellation.
 
-`Prune::Under(selector)` empties the array whose elements the selector
-names (a trailing `[*]` names the elements; without one it names the
-array); `Prune::AllArrays` empties every array; `Prune::Never` leaves the
-tree alone. Pruning truncates the engine's own array through the shared
-node cell after its new elements were emitted, so it alters the value the
-engine returns, which the incremental source discards. It is never
-applied in `Materialize` mode.
-
-Number lexemes are best effort: the adapter keeps the first token's source
-text of a rule whose node is a `Number` when that text is a JSON number
-(RFC 8259's grammar) that parses to the node's value, and attaches it to
-the number when it is inserted next. A number the adapter learns of any
-other way, and every number a walk emits, has `lexeme: None`.
+A walk carries no number lexemes: every number it emits has
+`lexeme: None`. The parser's rule passes carry a number's source text as
+its lexeme when that text is a JSON number (RFC 8259's grammar) spelling
+the value (below), so a part that yields the token keeps it, as JSON's
+does.
 
 ### The parser's rule passes
 
@@ -160,8 +141,8 @@ would copy it. `run_owned_with_value` (`RunWithValue`, `runWithValue`)
 hands back the tree the run left, which exists for a test to measure.
 
 Pruning alters the value the engine returns, so it is sound only for a
-grammar whose passes do not depend on what its arrays hold, and like the
-incremental source it is a verified capability. `capability::PRUNABLE`
+grammar whose passes do not depend on what its arrays hold, and it is a
+verified capability. `capability::PRUNABLE`
 lists `csv`, `feed`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`,
 `markdown`, `pgn`, `xml`, `yaml` and `zon` (Go's omits `pgn`, which its
 suite does not run). `rs/tests/prune_test.rs` and its ports run every
@@ -186,9 +167,8 @@ for the worked example's JSON, four for its XML), where the tree without
 pruning holds every record.
 
 A run that prunes is gated on the list by the grammar's name
-(`ParserEventSource::grammar(name)`), as `ParserSource`'s incremental mode
-is: without a listed name it fails with `STREAMABILITY_UNKNOWN` before the
-parse, having sent nothing. `ParserEventSource::unverified()` lifts the
+(`ParserEventSource::grammar(name)`): without a listed name it fails with
+`STREAMABILITY_UNKNOWN` before the parse, having sent nothing. `ParserEventSource::unverified()` lifts the
 gate for the suite. A run that does not prune needs no name.
 
 ### The native transduce-tree
@@ -230,20 +210,59 @@ in the library's text or here; the passes a source delivers always open
 a rule before they close it. alchemy-cli's differential test
 holds it to the library's text.
 
-### The verified grammars
+### The rule-event inference, in TypeScript and Go
 
-`capability::INCREMENTAL` lists `json`, `json5`, `jsonc`, `jsonic`,
-`jsonl`, `markdown`, `pgn`, `xml`, `yaml` and `zon`, each by the name of
+Until step 13 of alchemy's streaming plan, `ParserSource` had a second
+mode in every port, which streamed a document as the parse proceeded by
+inferring its events from the value cells the grammar's rules built. The
+Rust crate retired it then: every format its list named ships a
+transducer part, or reads whole as markdown's manifest declares, and a
+host reads a format through its part. The TypeScript and Go ports keep
+it, since their JSON Lines line sources read through it until their
+engines read a reader a window at a time, and this section is theirs:
+`new ParserSource(parser, text).grammar(name).mode(SourceMode.incremental(prune))`
+in TypeScript, `NewParserSource(parser, text).Grammar(name).Mode(IncrementalMode(prune))`
+in Go, whose adapter is built with the `tabnas_nodecell` build tag
+alone. An incremental run retains the engine's parse state and, with
+pruning, not the streamed elements.
+
+An incremental run whose rule events did not amount to one whole document
+is `STREAMABILITY_UNKNOWN`, and so is one the adapter refuses because the
+grammar wrapped a value already streamed as the root in a list, or
+rewrote a map after it was streamed; the message names the shape and
+says to run it materialized. An incremental parse that returns without
+one event (YAML's empty document is `null`) has its value walked
+instead, so it completes as the walk does. A document the grammar
+refuses fails with the walk's code and position after a protocol-valid
+prefix and before `End`.
+
+Pruning under a selector empties the array whose elements the selector
+names (a trailing `[*]` names the elements; without one it names the
+array); pruning all arrays empties every array; never pruning leaves the
+tree alone. Pruning truncates the engine's own array through the shared
+node cell after its new elements were emitted, so it alters the value the
+engine returns, which the incremental source discards. It is never
+applied in the materialize mode.
+
+Number lexemes are best effort: the adapter keeps the first token's source
+text of a rule whose node is a `Number` when that text is a JSON number
+(RFC 8259's grammar) that parses to the node's value, and attaches it to
+the number when it is inserted next. A number the adapter learns of any
+other way has no lexeme.
+
+The grammars it streams are a verified capability, never an assumption.
+TypeScript's `capability.INCREMENTAL` lists `json`, `json5`, `jsonc`,
+`jsonic`, `jsonl`, `markdown`, `pgn`, `xml`, `yaml` and `zon`, each by the name of
 the format it reads: its crate's, but `pgn` for tabnas-chess, which
 builds each game on a stack in the parse's context and stores it in the
 database only once complete, so a database streams a game at a time, each
 game walked whole as it is stored. That holds from tabnas-chess 0.1.17
 (earlier releases attached a game's parts after the adapter had sent
 them), and transduce does not depend on chess, so a host that streams PGN
-takes 0.1.17 or later. Go's list omits `pgn`
-([`DIVERGENCE.md`](../DIVERGENCE.md) 5). `rs/tests/incremental_test.rs`
-runs every fixture each grammar reads through both modes and asserts the
-list in both directions; a grammar is listed only when no fixture
+takes 0.1.17 or later. Go's (`IncrementalGrammars()`) omits `pgn`
+([`DIVERGENCE.md`](../DIVERGENCE.md) 5). `ts/test/incremental.test.ts`
+and `go/incremental_test.go` run every fixture each grammar reads through
+both modes and assert the list in both directions; a grammar is listed only when no fixture
 mismatches or is refused for how it builds, and at least one streams to
 the end. What the list promises, precisely: for a listed
 grammar an incremental run either streams exactly what the walk would
@@ -307,10 +326,7 @@ element in document order, in a cell of its own made when its start tag
 is read, its members in their order, with `children` named in `u.key`
 before its list opens and the list in a cell of its own; an element's
 `attributes`, and a self-closing element's empty `children`, land
-complete and are walked at their insertion, as markdown's nodes are. Its
-own corpus is held to the walk too: every document of xml's
-`test/spec/*.tsv` streams as the walk or is refused by the grammar as the
-walk is (`every_document_of_xmls_own_corpus_streams_as_the_walk`). The
+complete and are walked at their insertion, as markdown's nodes are. The
 other imperative grammars (`toml`, `ini`, `csv`, `feed`) build their
 values in ways the rule events do not show (`csv` streams its header and
 raw rows as extra elements, a well-formed stream with the wrong shape;
@@ -319,12 +335,13 @@ adapter refuses on their own samples; `feed` streams xml's element tree
 and then replaces the root with the feed it makes of it, so each of its
 documents is refused as a rewritten root when the root closes) and are
 walked whole. `ParserSource` refuses to run an unlisted grammar
-incrementally: the grammar's name cannot be read from the `Tabnas` (the
-json and jsonl parsers register no plugin), so `SourceMode::Incremental`
-needs `ParserSource::grammar(name)` and fails with `STREAMABILITY_UNKNOWN`
-before the parse, emitting nothing, when the name is missing or unlisted.
-`ParserSource::unverified()` lifts that gate for the differential suite,
-which is how an unlisted grammar's events get measured at all.
+incrementally: the grammar's name cannot be read from the parser (the
+json and jsonl parsers register no plugin), so the incremental mode needs
+the grammar's name (`.grammar(name)`, `.Grammar(name)`) and fails with
+`STREAMABILITY_UNKNOWN` before the parse, emitting nothing, when the name
+is missing or unlisted. `unverified()` (`Unverified()`) lifts that gate
+for the differential suite, which is how an unlisted grammar's events
+get measured at all.
 
 ## Selectors and the matcher
 
@@ -448,7 +465,8 @@ them.
 ## Shared fixtures
 
 `test/spec/*.tsv` is the behaviour every runtime of this crate must
-reproduce, row for row. The Rust runners are `rs/tests/spec_<file>.rs`
+reproduce, row for row, but `events.tsv`'s `incremental` rows, which are
+the TypeScript and Go ports' alone since step 13. The Rust runners are `rs/tests/spec_<file>.rs`
 over the harness in `rs/tests/common/mod.rs`, through `tabnas-support`'s
 `Runner`; a TypeScript or Go port runs the same files through its own
 half of `@tabnas/support`, with a harness that does what this section
@@ -471,8 +489,8 @@ reports.
 | `input` | the source text |
 | `grammar` | `json`, `jsonl`, `json5`, `jsonc`, `jsonic`, `yaml`, `zon`, `csv`, `toml` or `ini`; in `parser-events.tsv`, also `spec`, the serialized grammar in `document` |
 | `document` | `parser-events.tsv`, grammar `spec`: a serialized grammar, installed with `Tabnas::grammar_json` |
-| `mode` | `materialize` and `incremental`: `ParserSource` over the grammar, named with `.grammar(name)`, in that `SourceMode`. `value`: the grammar's parse (an engine error is `Fail::from_tabnas`), then `ValueSource` over the value, which applies no limits. `lines`: `LinesSource` (`csv`) on its walking path, `Source::run`. `lines-incremental`: `LinesSource::run_owned`, which walks the records too |
-| `prune` | incremental only: `"all"` for `Prune::AllArrays`, a selector for `Prune::Under`, empty for `Prune::Never` |
+| `mode` | `materialize`: `ParserSource` over the grammar, parsed and walked (the TypeScript and Go harnesses name the grammar with `.grammar(name)` in that mode). `part`: JSON's transducer part, natively (`TransduceTree` with the spec `tree.tsv`'s json rows give), over the passes `ParserEventSource` delivers, behind `Guarded`, its texts held to `max_scalar_bytes`: the document's events as a host reads JSON, lexemes kept; JSON only. `incremental`: the TypeScript and Go ports' incremental mode ("The rule-event inference, in TypeScript and Go"), the grammar named with `.grammar(name)`; the Rust runner skips these rows by their mode, since the crate retired the mode at step 13. `value`: the grammar's parse (an engine error is `Fail::from_tabnas`), then `ValueSource` over the value, which applies no limits. `lines`: `LinesSource` (`csv`) on its walking path, `Source::run`. `lines-incremental`: `LinesSource::run_owned`, which walks the records too |
+| `prune` | `incremental` rows only: `"all"` to prune every array, a selector to prune the arrays it names, empty to prune none |
 | `options` | the line source: a JSON object of `header` (default `true`), `object`, `number`, `value`, `trim` and `strict` for the CSV grammar, and `chunk_bytes` for the source |
 | `captures` | a JSON array of `{"tag", "select", "mode"}`, `select` a selector, `mode` `materialize` (the default) or `observe` |
 | `binding` | `{"schema": ..., "rows": selector}`, the schema `"infer"`, `{"metadata": selector}` (each descriptor read by `column_from_meta`) or `{"static": [{"label", "source": segments, "missing"}]}`, `missing` `missing` (the default), `null` or `error` |
@@ -540,14 +558,14 @@ returned (`"continue"` or `"stop"`).
 
 | File | Rows | What it pins |
 |---|---|---|
-| `events.tsv` | 84 | `JsonEvents/1` from every mode and the verified grammars, lexemes, string decoding, repeated members, the refusals and their prefixes, the gate on unverified grammars, pruning |
+| `events.tsv` | 84 | `JsonEvents/1` from the walk, and from the TypeScript and Go ports' incremental mode over the grammars their lists verify: lexemes, string decoding, repeated members, the refusals and their prefixes, the gate on unverified grammars, pruning |
 | `route.tsv` | 36 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
 | `table.tsv` | 34 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
 | `lines.tsv` | 29 | `LinesSource`: CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR) |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
-| `parser-events.tsv` | 7 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
+| `parser-events.tsv` | 8 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
 | `tree.tsv` | 18 | `TransduceTree` over tabnas-json's passes: the json part's spec and its lexemes, a close pass's value, a container handed on through a replaced rule, the library's refusal of a key that is not a string, the guard in front, a rule's text and a text joined to the one around it, a member after its container's start, the refusal of a member that is not a string, a text held to `max_scalar_bytes` at each of the library's joins and not refused at the bound |
-| `limits.tsv` | 60 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
+| `limits.tsv` | 62 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, a token's source text held to `max_scalar_bytes` through a part, and a line source's limit on each record a line holds |
 
 ### What a port must reproduce exactly
 
@@ -555,17 +573,21 @@ returned (`"continue"` or `"stop"`).
   (`é` is 2, `日` 3, `😀` 4); a number its lexeme's length, which is 0
   to `max_scalar_bytes` and 8 to a retained value when there is none; a
   retained node adds `NODE_BYTES` (16). A port on UTF-16 strings that
-  counts code units fails the multibyte rows of `limits.tsv`.
+  counts code units fails the multibyte rows of `limits.tsv`. Through a
+  part, the source also holds each token's source text, quotes and
+  punctuation included, to `max_scalar_bytes` before the part sees the
+  pass: `["日本"]` is 6 bytes to the guard and 8 to the source.
 - **A line source's record counts its line ending**: `\n`, `\r\n`, a lone
   `\r` or a configured separator, and under `record.empty` the whole line
   token the lexer reads. So a record that fits the limit without its
   ending fails with it (`limits.tsv` pins the bound), and a line holding
   many records is held to the limit one record at a time.
-- **The lexeme rule**: the incremental source attaches a number's token
-  text only when it is an RFC 8259 number that reads as the node's value
+- **The lexeme rule**: a rule pass's number token, and a number the
+  TypeScript and Go ports' incremental source streams, carries its source
+  text only when that is an RFC 8259 number that reads as the value
   (`1e2` keeps `"1e2"`; `0x1F`, `+1`, `.5`, `5.` and YAML's `012` have
-  none), and a value it walks (a YAML alias, a document stream with
-  nothing streamed early) has none.
+  none), and a value the incremental source walks (a YAML alias, a
+  document stream with nothing streamed early) has none.
 - **jq paths**: a key is written bare (`.a_1`) when it is an ASCII letter
   or `_` followed by ASCII letters, digits and `_`, and otherwise as a
   JSON string (`."odd key"`, `."é"`, `."1a"`, `.""`), escaped as RFC 8259
