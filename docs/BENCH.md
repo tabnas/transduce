@@ -61,9 +61,11 @@ What the table says:
   parser it hands to `ParserSource`; aless sets 3 (rjrodger/aless#33, and
   "Through aless" below). Without it the incremental source bounds what
   the transducer retains, and the engine's own retention stands.
-- JSON Lines and CSV are parsed a record (or a chunk of records) at a
-  time by `LinesSource`, so their memory is bounded whatever the file
-  size, at the engine's per-record cost.
+- CSV is parsed a chunk of records at a time by `LinesSource`, so its
+  memory is bounded whatever the file size, at the engine's per-record
+  cost. JSON Lines, which `LinesSource` read a record at a time until
+  step 12, is read through its part from a reader, a window at a time
+  ("From a reader" below).
 - Throughput through this crate is the engine's: about 1 MB/s for
   record-shaped data. The stages downstream (events, router, table, CSV)
   are measured separately by `cargo bench` and are not the bottleneck.
@@ -204,5 +206,6 @@ What the table says:
   `transduce-tree`, a fifth slower than that. tabnas-csv's part is
   hand-written alchemy, two `scan-emit` scans whose steps alchemy's
   evaluator runs on every pass, and it takes about four times as long.
-  Before step 12 retires `LinesSource`, CSV's part needs a native route
-  or a faster evaluator, or CSV keeps a line source.
+  The maintainer ruled on 2026-10-23 that step 12 retires `LinesSource`
+  for JSON Lines, and that CSV keeps it until its part has a native
+  route, which is a step of its own.

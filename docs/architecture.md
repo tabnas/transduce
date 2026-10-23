@@ -229,9 +229,9 @@ pub struct ParserSource<'s> { parser: Tabnas, text: &'s str, mode: SourceMode,
     limits: Limits, abort: AbortFlag, metrics: Arc<Metrics> }
 pub enum SourceMode { Materialize, Incremental { prune: Prune } }
 pub enum Prune { Never, Under(Selector), AllArrays }   // drop streamed array elements
-pub struct LinesSource<R: BufRead> { … }   // Jsonl: one JSON document per line, parsed
-                                           // with tabnas-json; Csv { header }: header +
-                                           // chunks of whole records (quote-aware split)
+pub struct LinesSource<R: BufRead> { … }   // Csv { header }: header + chunks of whole
+                                           // records (quote-aware split); JSON Lines is
+                                           // read through its part since step 12
 pub mod capability { pub fn incremental(grammar: &str) -> bool }  // the verified list
 ```
 

@@ -251,18 +251,6 @@ impl<S: Sink + Send + 'static> Adapter<S> {
         parser.parse_guard(GUARD, move |_ctx| !abort.is_aborted() && !stop.is_aborted());
     }
 
-    /// Ready for another document into the same sink: the line sources
-    /// parse one value per line with one parser and one subscriber.
-    pub(crate) fn reset(&mut self) {
-        self.open = 0;
-        self.last_completed = None;
-        self.held = None;
-        self.lexeme_ready = false;
-        self.prune_hit = false;
-        self.root_done = false;
-        self.emitted = false;
-    }
-
     pub(crate) fn status(&self) -> &Status {
         &self.status
     }

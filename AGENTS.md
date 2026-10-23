@@ -69,7 +69,7 @@ The three sources, in order of preference:
 
 | Source | When | Memory |
 |---|---|---|
-| `LinesSource` | JSON Lines and CSV input | one record (or one chunk) at a time |
+| `LinesSource` | CSV input | one chunk of records at a time |
 | `ParserSource` (incremental) | a grammar the differential suite has verified | the engine's own per-parse state, plus one selected scope |
 | `ParserSource` (materialize) / `ValueSource` | every other grammar | the whole parsed value |
 
@@ -169,7 +169,7 @@ In every other mode the value is exactly the grammar's.
 | `rs/src/source/guard.rs` | `Guarded`: the source limits, the abort flag and the source metrics on every event |
 | `rs/src/source/rule_events.rs` | the rule-event adapter: `JsonEvents/1` from a live parse |
 | `rs/src/source/parser.rs` | `ParserSource`: one text, materialized or incremental |
-| `rs/src/source/lines.rs` | `LinesSource`: JSON Lines and CSV a record or a chunk at a time |
+| `rs/src/source/lines.rs` | `LinesSource`: CSV a chunk of records at a time (JSON Lines is read through its part, `ParserEventSource::from_reader`, since alchemy's step 12) |
 | `rs/src/source/capability.rs` | the verified lists `capability::incremental` and `capability::prunable` answer from |
 | `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
 | `rs/src/transduce_tree.rs` | `TransduceTree`: alchemy's `transduce-tree` natively, offered through `Routers::transduce_tree` |

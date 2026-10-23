@@ -17,8 +17,6 @@ input	grammar	mode	stage	captures	binding	duplicates	limits	expected	limit	path
 [[[1]]]	json	materialize	events				{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
 [[[1]]]	json	incremental	events				{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
 {"a":{"b":{}}}	yaml	incremental	events				{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
-[[[1]]]\n	jsonl	lines	events				{"max_depth":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
-[[[1]]]\n	jsonl	lines-incremental	events				{"max_depth":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth
 [[[1]]]	json	value	route	[]			{"max_depth":2}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_depth	[0][0]
 [[1]]	json	value	route	[]			{"max_depth":2}	["end"]
 # max_key_bytes: é is 2 bytes, 日 3, 😀 4 (two UTF-16 units).
@@ -30,7 +28,6 @@ input	grammar	mode	stage	captures	binding	duplicates	limits	expected	limit	path
 {"😀":1}	json	incremental	events				{"max_key_bytes":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
 {"😀":1}	json	incremental	events				{"max_key_bytes":4}	[["object_start"],["key","😀"],["number",1,"1"],["object_end"],["end"]]
 {"😀":1}	json	materialize	events				{"max_key_bytes":3}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
-{"é":1}\n	jsonl	lines	events				{"max_key_bytes":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
 é\n1\n	csv	lines	events				{"max_key_bytes":1}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_key_bytes
 # max_scalar_bytes: a string's bytes, a number's lexeme; null and
 # booleans are 0.
@@ -83,17 +80,10 @@ a\nxé\n	csv	lines	events				{"max_scalar_bytes":2}	ERROR:RESOURCE_LIMIT_EXCEEDE
 [[1,2]]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_columns":1,"max_metadata_bytes":49}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_metadata_bytes	[0]
 # max_record_bytes: a table's row as it is retained, and a line source's
 # record as it is read. The line source counts the record's line ending
-# too, so the same record passes as the last line without one and fails
-# with one (pinned as it stands; reported, not changed).
+# too (pinned as it stands; reported, not changed).
 {"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	incremental	table		{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		{"max_record_bytes":48}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_record_bytes	.response.payload.deep.records[0]
 [{"a":"é"}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_record_bytes":34}	ERROR:RESOURCE_LIMIT_EXCEEDED	max_record_bytes	[0]
 [{"a":"é"}]	json	incremental	table		{"schema":"infer","rows":[{"each":"index"}]}		{"max_record_bytes":35}	[["schema",["a"]],["row",["é"]],["end"]]
-{"a":1}\n{"a":123456}\n	jsonl	lines	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
-{"a":1}\n{"a":123456}\n	jsonl	lines-incremental	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
-{"a":"é"}\n	jsonl	lines	events				{"max_record_bytes":10}	ERROR:RESOURCE_LIMIT_EXCEEDED@1:1	max_record_bytes
-{"a":"é"}\n	jsonl	lines	events				{"max_record_bytes":11}	[["array_start"],["object_start"],["key","a"],["string","é"],["object_end"],["array_end"],["end"]]
-{"a":"é"}	jsonl	lines	events				{"max_record_bytes":10}	[["array_start"],["object_start"],["key","a"],["string","é"],["object_end"],["array_end"],["end"]]
-{"a":"é"}\r\n	jsonl	lines	events				{"max_record_bytes":11}	ERROR:RESOURCE_LIMIT_EXCEEDED@1:1	max_record_bytes
 a\n"long\nquoted\nfield"\n	csv	lines	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
 a\nxé\n	csv	lines	events				{"max_record_bytes":3}	ERROR:RESOURCE_LIMIT_EXCEEDED@2:1	max_record_bytes
 a\nxé\n	csv	lines	events				{"max_record_bytes":4}	[["array_start"],["object_start"],["key","a"],["string","xé"],["object_end"],["array_end"],["end"]]
@@ -101,9 +91,6 @@ a\nxé\n	csv	lines	events				{"max_record_bytes":4}	[["array_start"],["object_st
 # record's, never the line's.
 a,b\r1,2\r3,4\r	csv	lines	events				{"max_record_bytes":4}	[["array_start"],["object_start"],["key","a"],["string","1"],["key","b"],["string","2"],["object_end"],["object_start"],["key","a"],["string","3"],["key","b"],["string","4"],["object_end"],["array_end"],["end"]]
 a,b\r1,2\r34,5\r	csv	lines	events				{"max_record_bytes":4}	ERROR:RESOURCE_LIMIT_EXCEEDED@1:1	max_record_bytes
-{"a":1}\r{"a":2}\r	jsonl	lines	events				{"max_record_bytes":8}	[["array_start"],["object_start"],["key","a"],["number",1,null],["object_end"],["object_start"],["key","a"],["number",2,null],["object_end"],["array_end"],["end"]]
-{"a":1}\r{"a":2}\r	jsonl	lines-incremental	events				{"max_record_bytes":8}	[["array_start"],["object_start"],["key","a"],["number",1,"1"],["object_end"],["object_start"],["key","a"],["number",2,"2"],["object_end"],["array_end"],["end"]]
-{"a":1}\r{"a":23}\r	jsonl	lines	events				{"max_record_bytes":8}	ERROR:RESOURCE_LIMIT_EXCEEDED@1:1	max_record_bytes
 # max_output_bytes is a renderer's limit: no stage here writes output,
 # so none trips it.
 ["output"]	json	incremental	events				{"max_output_bytes":1}	[["array_start"],["string","output"],["array_end"],["end"]]
