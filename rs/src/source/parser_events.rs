@@ -137,9 +137,10 @@ impl<'s> ParserEventSource<'s> {
     }
 
     /// The grammar the parser implements, by the name of the format it
-    /// reads, as [`super::ParserSource::grammar`] takes it. A run that
-    /// prunes needs a name [`capability::prunable`] lists; one that does
-    /// not prune needs no name.
+    /// reads: its crate's (`tabnas-<name>`), but `pgn` for tabnas-chess, as
+    /// [`capability::PRUNABLE`] names them. A run that prunes needs a name
+    /// [`capability::prunable`] lists; one that does not prune needs no
+    /// name.
     pub fn grammar(mut self, name: &str) -> Self {
         self.grammar = Some(name.into());
         self

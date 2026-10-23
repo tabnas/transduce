@@ -4,7 +4,7 @@
 //! stream, and a document can be hundreds of megabytes, so the matcher
 //! does no per-event allocation and never spells out a path: the
 //! selectors are compiled into one trie of [`Step`]s, and the matcher
-//! walks the document with a stack of open containers (a [`Level`] per
+//! walks the document with a stack of open containers (a `Level` per
 //! container: its kind, how many values it has started, the current
 //! member's key) and, per level, the set of trie nodes that named that
 //! container. A value's position names at most one child per node
