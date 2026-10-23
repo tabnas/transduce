@@ -6,7 +6,7 @@
         "go",
         "ts"
       ],
-      "reason": "TypeScript and Go still read a CSV document a line at a time through LinesSource and LineFormat, which parse each line with csv's grammar: ts/src/lines.ts loads '@tabnas/csv' (an optional peer) and go/lines.go imports github.com/tabnas/csv/go. Rust retired LinesSource and LineFormat in step 12 of alchemy's streaming plan (#66): a host reads CSV through csv's transducer part, alchemy's transduce-records, which the Rust routers run natively (#65). So in Rust tabnas-csv is only a dev-dependency, for the tests that read CSV (#67).",
+      "reason": "TypeScript and Go still read a CSV document a line at a time through LinesSource and LineFormat, which parse each line with csv's grammar: ts/src/lines.ts loads '@tabnas/csv' (an optional peer) and go/lines.go imports github.com/tabnas/csv/go. Rust retired LinesSource and LineFormat in step 12 of alchemy's streaming plan (tabnas/transduce#66): a host reads CSV through csv's transducer part, alchemy's transduce-records, which the Rust routers run natively (tabnas/transduce#65). So in Rust tabnas-csv is only a dev-dependency, for the tests that read CSV (tabnas/transduce#67).",
       "repair": "Step 12 in the ports. Once TypeScript and Go read CSV through csv's part and retire LinesSource and LineFormat, ts/package.json and go/go.mod drop csv as a runtime dependency. That is a dependency change, made on the maintainer's instruction (ADR-22), and this entry goes with it."
     },
     "json": {
@@ -14,7 +14,7 @@
         "go",
         "ts"
       ],
-      "reason": "TypeScript and Go still read a JSON Lines document a line at a time through LinesSource and LineFormat, which parse each line with JSON's grammar: ts/src/lines.ts loads '@tabnas/json' (an optional peer), and go/lines.go and go/rule_events.go's jsonlIncremental import github.com/tabnas/json/go. Rust retired LinesSource and LineFormat in step 12 of alchemy's streaming plan (#66): a host reads JSON Lines through jsonl's transducer part. So in Rust tabnas-json is only a dev-dependency, for the tests that read JSON (#67).",
+      "reason": "TypeScript and Go still read a JSON Lines document a line at a time through LinesSource and LineFormat, which parse each line with JSON's grammar: ts/src/lines.ts loads '@tabnas/json' (an optional peer), and go/lines.go and go/rule_events.go's jsonlIncremental import github.com/tabnas/json/go. Rust retired LinesSource and LineFormat in step 12 of alchemy's streaming plan (tabnas/transduce#66): a host reads JSON Lines through jsonl's transducer part. So in Rust tabnas-json is only a dev-dependency, for the tests that read JSON (tabnas/transduce#67).",
       "repair": "Step 12 in the ports. Once TypeScript and Go read JSON Lines through jsonl's part and retire LinesSource and LineFormat, ts/package.json and go/go.mod drop json as a runtime dependency. That is a dependency change, made on the maintainer's instruction (ADR-22), and this entry goes with it."
     }
   }
