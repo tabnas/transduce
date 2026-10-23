@@ -225,3 +225,31 @@ What the table says:
   The maintainer ruled on 2026-10-23 that step 12 retires `LinesSource`
   for JSON Lines, and that CSV keeps it until its part has a native
   route, which is a step of its own.
+
+## Records, natively
+
+A probe wrote tabnas-csv's transducer part natively, the state machine
+`TransduceRecords` now is. It read the generated CSV (`tests/support`'s
+`records_csv`) from a file, pruned, into a table (`TableFromJson`, its
+schema inferred). These are the median of three interleaved runs on a
+shared two-vCPU VM (Arm Neoverse-N1), 2026-10-23. Instructions are from
+`perf stat` at 100,000 rows.
+
+| Route | 100,000 rows (3.6 MB) | 700,000 rows (26.9 MB) | Peak | Instructions |
+|---|---|---|---|---|
+| `LinesSource` | 3.93 s | 27.8 s | 12.3 MB | 24.0 G |
+| the native records route | 5.25 s | 36.9 s | 6.8 MB | 32.6 G |
+| `transduce-tree` over the passes, no header | 5.35 s | 37.6 s | 6.8 MB | 32.4 G |
+| the engine alone, `parse_reader`, the tree kept | 3.75 s | | 73 MB | 22.7 G |
+| `ParserEventSource`, into a sink that keeps nothing | 5.00 s | | 6.8 MB | 31.5 G |
+
+What the table says:
+
+- **The native route costs a third more than the line source** and
+  holds half its memory, flat with the file's size. csv's interpreted
+  part took four times as long ("From a reader").
+- **The third is the source's passes, not the records.**
+  `ParserEventSource` alone takes 5.00 s, and the records and the table
+  add a quarter of a second. In a profile of the source, the engine's
+  notification and this crate's pass building take 23% of the run, and
+  allocation about 29%. tabnas/parser#258 is that cost.

@@ -137,7 +137,7 @@ every other run the value is exactly the grammar's.
 | Path | What it is |
 |---|---|
 | `rs/src/lib.rs` | re-exports alchemy's shared types at their old paths: `event`, `sink`, `error` (`Code`, `Fail`), `limits`, `datum`, `selector`, `table`; they live in `tabnas_alchemy::shared`, which this crate depends on with `default-features = false` |
-| `rs/src/routers.rs` | `TransduceRouters` (`routers()`): this crate's router, table transducer, `scan-emit` and guard as alchemy's `Routers` |
+| `rs/src/routers.rs` | `TransduceRouters` (`routers()`): this crate's router, table transducer, `scan-emit`, guard and natives as alchemy's `Routers` |
 | `rs/src/matcher.rs` | shared-prefix matching of many selectors in one pass |
 | `rs/src/route.rs` | captures: materialize or observe selected scopes, deliver in order |
 | `rs/src/table_from_json.rs` | the metadata-first table transducer |
@@ -149,8 +149,10 @@ every other run the value is exactly the grammar's.
 | `rs/src/source/capability.rs` | the verified list `capability::prunable` answers from |
 | `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
 | `rs/src/transduce_tree.rs` | `TransduceTree`: alchemy's `transduce-tree` natively, offered through `Routers::transduce_tree` |
+| `rs/src/transduce_records.rs` | `TransduceRecords`: alchemy's `transduce-records` natively, offered through `Routers::transduce_records`; tabnas-csv's part is its spec |
 | `rs/tests/prune_test.rs` | the differential suite behind `capability::prunable`, both ways, and ten times the records leaving the pruned tree as it was |
 | `rs/tests/retention_test.rs` | ten times the rows of a JSON document, read through JSON's part and pruned, leave the retained high-water and the engine's tree flat |
+| `rs/tests/records_test.rs` | `TransduceRecords` over the csv grammar's own passes, held to the walk of its value: tabnas-csv's corpus, the CSV fixtures and the generated records, from a text and from a reader |
 | `rs/tests/reader_test.rs` | `ParserEventSource::from_reader` against the same text read whole: every fixture of a grammar the harness builds, a few bytes at a time, and a reader that fails |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
