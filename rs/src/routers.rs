@@ -3,8 +3,8 @@
 //!
 //! alchemy's runtime lowers a plan onto a [`Router`] for a program's
 //! captures, the [`TableFromJson`] transducer, the [`ScanEmit`] operator,
-//! the source's [`Guarded`] limits and the native [`TransduceTree`], and
-//! constructs none of them: the
+//! the source's [`Guarded`] limits and the natives [`TransduceTree`] and
+//! [`TransduceRecords`], and constructs none of them: the
 //! host passes [`routers()`] to `tabnas_alchemy::compile`, and each stage is
 //! made through it, exactly as the constructor named would make it.
 
@@ -12,14 +12,15 @@ use std::sync::Arc;
 
 use tabnas_alchemy::shared::{
     AbortFlag, CaptureId, CaptureSpec, Duplicates, Fail, Flow, Limits, Metrics, ParserSink,
-    RouteSink, Routers, ScanEmitter, ScanFinish, ScanOut, ScanStep, Selected, Sink, TableBinding,
-    TableSink, Transition, TreeSpec,
+    RecordsSpec, RouteSink, Routers, ScanEmitter, ScanFinish, ScanOut, ScanStep, Selected, Sink,
+    TableBinding, TableSink, Transition, TreeSpec,
 };
 
 use crate::route::Router;
 use crate::scan::ScanEmit;
 use crate::source::Guarded;
 use crate::table_from_json::TableFromJson;
+use crate::transduce_records::TransduceRecords;
 use crate::transduce_tree::TransduceTree;
 
 /// The routers this crate implements, for alchemy's `Routers`: every
@@ -95,6 +96,14 @@ impl<V: Send + 'static> Routers<V> for TransduceRouters {
     /// text to the spec's `max_text_bytes` as it grows.
     fn transduce_tree_reads_member_and_text(&self) -> bool {
         true
+    }
+
+    fn transduce_records(
+        &self,
+        spec: RecordsSpec,
+        downstream: Box<dyn Sink + Send>,
+    ) -> Result<Box<dyn ParserSink + Send>, Box<dyn Sink + Send>> {
+        Ok(Box::new(TransduceRecords::new(spec, downstream)))
     }
 }
 

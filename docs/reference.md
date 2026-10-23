@@ -210,6 +210,42 @@ in the library's text or here; the passes a source delivers always open
 a rule before they close it. alchemy-cli's differential test
 holds it to the library's text.
 
+### The native transduce-records
+
+`TransduceRecords::new(RecordsSpec, Sink)` is alchemy's
+`transduce-records` run natively: a `ParserSink` that writes the
+`JsonEvents/1` of a document of records to its sink, as the spec says.
+The spec names the rule whose passes begin and end the document, the
+rule whose passes begin and end a record, and the rule whose close
+pass's value is the next cell. It also names a group whose alternates
+are empty cells, the scalar an empty cell holds, whether the first
+record names the columns, and the prefix of a name past them.
+
+`routers()` offers it to alchemy (`Routers::transduce_records`), and
+alchemy's lowering asks for it where a program applies the library's
+`transduce-records` to the host's parser events with a spec of the
+standard shape, the source's guard in front of what it writes.
+tabnas-csv's transducer part is such a spec. The library's text,
+`stdlib/transduce.alc`, is the specification, and alchemy's
+`RecordsSpec` documents what the native does pass for pass.
+
+- With a header, each record after the first is an object. Its cells
+  are keyed by the header's names in order, a cell past them by the
+  prefix and its position from 0, and a name it lacks holds the fill.
+- Without one, each record is an array of its cells.
+- A header that names a column twice streams both cells, where a walk
+  of the grammar's value keeps the last, so a tree's contract after it
+  refuses the document.
+- Its state is the header's names and a count of the current record's
+  cells, held to `max_metadata_bytes` by the measure the library's scan
+  holds its state to, so the two refuse a header at the same pass.
+
+`rs/tests/records_test.rs` holds it, over the csv grammar's own passes
+with csv's part as its spec, to the walk of the value the parse returns:
+every document of tabnas-csv's corpus, the committed CSV fixtures and
+the generated records, from the text and from a reader a few bytes at a
+time. Only Rust has it; TypeScript and Go run the library's text.
+
 ### The rule-event inference, in TypeScript and Go
 
 Until step 13 of alchemy's streaming plan, `ParserSource` had a second
