@@ -48,9 +48,11 @@ source metrics (`events`, `keys`, `scalars`).
 | `ParserSource::new(Tabnas, &str)` | one text | parse, then walk (the TypeScript and Go ports also stream incrementally: "The rule-event inference, in TypeScript and Go", below) | the whole value |
 
 JSON Lines and CSV are read through their parts from a reader
-(`ParserEventSource::from_reader`), a window at a time: tabnas-jsonl's
-part through `TransduceTree`, tabnas-csv's through `TransduceRecords`.
-The line source that read them a record or a chunk of records at a time
+(`ParserEventSource::from_reader`), a window at a time: each part is
+alchemy's text (tabnas-jsonl's over the library's `transduce-tree`,
+tabnas-csv's over its `transduce-records`), run by alchemy's runtime in
+the host, with the passes this source delivers as its input; this crate
+has no implementation of a part. The line source that read them a record or a chunk of records at a time
 was retired at steps 12 and 13 of alchemy's streaming plan; the
 TypeScript and Go ports keep theirs (`ts/src/lines.ts`, `go/lines.go`)
 until their engines read a reader a window at a time.
@@ -178,81 +180,6 @@ A run that prunes is gated on the list by the grammar's name
 (`ParserEventSource::grammar(name)`): without a listed name it fails with
 `STREAMABILITY_UNKNOWN` before the parse, having sent nothing. `ParserEventSource::unverified()` lifts the
 gate for the suite. A run that does not prune needs no name.
-
-### The native transduce-tree
-
-`TransduceTree::new(TreeSpec, Sink)` is alchemy's `transduce-tree` run
-natively: a `ParserSink` that writes a tree's `JsonEvents/1` to its sink
-as the spec, keyed by rule name, says. `routers()` offers it to alchemy
-(`Routers::transduce_tree`), and alchemy's lowering asks for it where a
-program applies the library's `transduce-tree` to the host's parser
-events with a spec of the standard shape, the source's guard in front of
-what it writes. The library's text, `stdlib/transduce.alc`, is the
-specification, and alchemy's `TreeSpec` documents what the native does
-pass for pass: an open pass announces its `key`, then begins its
-`container` or yields its `scalar` from one of its tokens, then announces
-its `member`; a close pass yields its `text`, when its rule is a `:text`
-rule, then ends its container, or yields its own `value`; a container
-rule replaced by a container rule is one container. A `:text` rule's text
-is the source text of the tokens the passes between its open and its
-close consumed, in order, and a text closed inside another joins it.
-Its state is the count of open containers, whether a close handed its
-container on, and the text each open `:text` rule has gathered, so it
-retains the document's nesting and an open rule's text, and nothing else
-of its width or length. A text is held to the spec's `max_text_bytes`,
-which the lowering sets to `max_scalar_bytes`, at the joins the library's
-`string-join` makes and in their order: a pass's tokens together, then
-the innermost text with them, and a closed text with the text around it.
-`routers()` says the native reads `:member` and `:text`
-(`Routers::transduce_tree_reads_member_and_text`), which is what lets the
-lowering hand it a spec that uses either; routers that do not say so get
-the library's text for such a spec. A pass's events are worked out
-before the first is written, and its failures are the library's, in its
-order: `DSL_TYPE_ERROR` for a key or a member that is not a string, a
-scalar that is a container, a close that ends a container with nothing
-open and a `:text` rule's close with no text open,
-`RESOURCE_LIMIT_EXCEEDED` naming `max_scalar_bytes` for a text past the
-bound, `PROTOCOL_ORDER_ERROR` for passes that end inside a container. A close
-that hands its container on ends none, so it is not held to an open one,
-in the library's text or here; the passes a source delivers always open
-a rule before they close it. alchemy-cli's differential test
-holds it to the library's text.
-
-### The native transduce-records
-
-`TransduceRecords::new(RecordsSpec, Sink)` is alchemy's
-`transduce-records` run natively: a `ParserSink` that writes the
-`JsonEvents/1` of a document of records to its sink, as the spec says.
-The spec names the rule whose passes begin and end the document, the
-rule whose passes begin and end a record, and the rule whose close
-pass's value is the next cell. It also names a group whose alternates
-are empty cells, the scalar an empty cell holds, whether the first
-record names the columns, and the prefix of a name past them.
-
-`routers()` offers it to alchemy (`Routers::transduce_records`), and
-alchemy's lowering asks for it where a program applies the library's
-`transduce-records` to the host's parser events with a spec of the
-standard shape, the source's guard in front of what it writes.
-tabnas-csv's transducer part is such a spec. The library's text,
-`stdlib/transduce.alc`, is the specification, and alchemy's
-`RecordsSpec` documents what the native does pass for pass.
-
-- With a header, each record after the first is an object. Its cells
-  are keyed by the header's names in order, a cell past them by the
-  prefix and its position from 0, and a name it lacks holds the fill.
-- Without one, each record is an array of its cells.
-- A header that names a column twice streams both cells, where a walk
-  of the grammar's value keeps the last, so a tree's contract after it
-  refuses the document.
-- Its state is the header's names and a count of the current record's
-  cells, held to `max_metadata_bytes` by the measure the library's scan
-  holds its state to, so the two refuse a header at the same pass.
-
-`rs/tests/records_test.rs` holds it, over the csv grammar's own passes
-with csv's part as its spec, to the walk of the value the parse returns:
-every document of tabnas-csv's corpus, the committed CSV fixtures and
-the generated records, from the text and from a reader a few bytes at a
-time. Only Rust has it; TypeScript and Go run the library's text.
 
 ### The rule-event inference, in TypeScript and Go
 
@@ -530,17 +457,16 @@ reports.
 
 | Column | Meaning |
 |---|---|
-| `input` | the source text |
+| `input` | the source text; in the `events` mode, the events themselves, in the encoding `events.tsv` expects (below) |
 | `grammar` | `json`, `jsonl`, `json5`, `jsonc`, `jsonic`, `yaml`, `zon`, `csv`, `toml` or `ini`; in `parser-events.tsv`, also `spec`, the serialized grammar in `document` |
 | `document` | `parser-events.tsv`, grammar `spec`: a serialized grammar, installed with `Tabnas::grammar_json` |
-| `mode` | `materialize`: `ParserSource` over the grammar, parsed and walked (the TypeScript and Go harnesses name the grammar with `.grammar(name)` in that mode). `part`: JSON's transducer part, natively (`TransduceTree` with the spec `tree.tsv`'s json rows give), over the passes `ParserEventSource` delivers, behind `Guarded`, its texts held to `max_scalar_bytes`: the document's events as a host reads JSON, lexemes kept; JSON only. `incremental`: the TypeScript and Go ports' incremental mode ("The rule-event inference, in TypeScript and Go"), the grammar named with `.grammar(name)`; the Rust runner skips these rows by their mode, since the crate retired the mode at step 13. `value`: the grammar's parse (an engine error is `Fail::from_tabnas`), then `ValueSource` over the value, which applies no limits. `lines`: the line source (`csv`) on its walking path, and `lines-incremental` on its owned path, which walks the records too: the TypeScript and Go ports' alone since step 12, as the `incremental` rows are, and skipped by the Rust runners |
+| `mode` | `materialize`: `ParserSource` over the grammar, parsed and walked (the TypeScript and Go harnesses name the grammar with `.grammar(name)` in that mode). `events`: the input's events, replayed through `Guarded` under the row's limits into the stage, for what no parse delivers: a member repeated in one object, which the engine's value keeps once, so the duplicates policies are pinned as a format's part streams them. `incremental`: the TypeScript and Go ports' incremental mode ("The rule-event inference, in TypeScript and Go"), the grammar named with `.grammar(name)`; the Rust runner skips these rows by their mode, since the crate retired the mode at step 13. `value`: the grammar's parse (an engine error is `Fail::from_tabnas`), then `ValueSource` over the value, which applies no limits. `lines`: the line source (`csv`) on its walking path, and `lines-incremental` on its owned path, which walks the records too: the TypeScript and Go ports' alone since step 12, as the `incremental` rows are, and skipped by the Rust runners |
 | `prune` | `incremental` rows only: `"all"` to prune every array, a selector to prune the arrays it names, empty to prune none |
 | `options` | the ports' line source: a JSON object of `header` (default `true`), `object`, `number`, `value`, `trim` and `strict` for the CSV grammar, and `chunk_bytes` for the source |
 | `captures` | a JSON array of `{"tag", "select", "mode"}`, `select` a selector, `mode` `materialize` (the default) or `observe` |
 | `binding` | `{"schema": ..., "rows": selector}`, the schema `"infer"`, `{"metadata": selector}` (each descriptor read by `column_from_meta`) or `{"static": [{"label", "source": segments, "missing"}]}`, `missing` `missing` (the default), `null` or `error` |
 | `duplicates` | `reject` (the default), `last_wins` or `first_wins` |
 | `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs. `parser-events.tsv`: `passes`, every event in the encoding below; `tokens`, each pass as `["rule:open", [[name, val, src, row, col]...]]`, its tokens as that encoding writes them; or `names`, each pass as `"rule:open"` or `"rule:close"`; the end is `"end"` in the last two |
-| `spec` | `tree.tsv`: a JSON object of rules, each of `container` (`"object"` or `"array"`), `key` (a string, or a token's index) and `scalar` (a token's index, or `"value"`) |
 | `limits` | a JSON object of `Limits` fields over `Limits::default()` |
 | `path` | on an error row, the failure's `path`, in jq syntax |
 | `limit` | on an error row, the `Limits` field the failure names |
@@ -585,10 +511,8 @@ and `["end"]`, the rule an object of `name`, `d`, `i`, `alt` (`p`, `r`,
 value, src, row, col]`), `forced`, `n` and, on a close pass with a scalar
 node, `value`. The `passes` stage leaves `i` out, and its rows hold no
 fixed token, since the engines differ on both. A token's value is
-written as JSON, so its lexeme is not in the encoding; `tree.tsv`, whose
-events carry it, pins it. `tree.tsv`
-runs `ParserEventSource` into `TransduceTree` behind `Guarded`, as a
-program's `transduce-tree` is lowered, and expects the event stream.
+written as JSON, so its lexeme is not in the encoding; alchemy-cli's
+tests of JSON's part, whose events carry it, pin it.
 
 `scan.tsv` drives `ScanEmit` with a running sum: an integer item adds
 itself and emits `"+<n>"`, `{"emit": [...]}` emits those strings,
@@ -603,13 +527,12 @@ returned (`"continue"` or `"stop"`).
 | File | Rows | What it pins |
 |---|---|---|
 | `events.tsv` | 84 | `JsonEvents/1` from the walk, and from the TypeScript and Go ports' incremental mode over the grammars their lists verify: lexemes, string decoding, repeated members, the refusals and their prefixes, the gate on unverified grammars, pruning |
-| `route.tsv` | 36 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
-| `table.tsv` | 34 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
+| `route.tsv` | 33 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
+| `table.tsv` | 31 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
 | `lines.tsv` | 29 | the TypeScript and Go ports' line source: CSV on both paths, chunk sizes, headers, grammar options, a failure's file line, records cut where the grammar cuts them (a quote inside a field, the engine's own strings, the header as the first record the grammar reads, a lone CR) |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
 | `parser-events.tsv` | 8 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
-| `tree.tsv` | 18 | `TransduceTree` over tabnas-json's passes: the json part's spec and its lexemes, a close pass's value, a container handed on through a replaced rule, the library's refusal of a key that is not a string, the guard in front, a rule's text and a text joined to the one around it, a member after its container's start, the refusal of a member that is not a string, a text held to `max_scalar_bytes` at each of the library's joins and not refused at the bound |
-| `limits.tsv` | 62 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, a token's source text held to `max_scalar_bytes` through a part, and a line source's limit on each record a line holds |
+| `limits.tsv` | 57 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries, and a line source's limit on each record a line holds |
 
 ### What a port must reproduce exactly
 
@@ -617,10 +540,11 @@ returned (`"continue"` or `"stop"`).
   (`é` is 2, `日` 3, `😀` 4); a number its lexeme's length, which is 0
   to `max_scalar_bytes` and 8 to a retained value when there is none; a
   retained node adds `NODE_BYTES` (16). A port on UTF-16 strings that
-  counts code units fails the multibyte rows of `limits.tsv`. Through a
-  part, the source also holds each token's source text, quotes and
-  punctuation included, to `max_scalar_bytes` before the part sees the
-  pass: `["日本"]` is 6 bytes to the guard and 8 to the source.
+  counts code units fails the multibyte rows of `limits.tsv`.
+  `ParserEventSource` also holds each token's source text, quotes and
+  punctuation included, to `max_scalar_bytes` before a sink sees the pass
+  (`parser-events.tsv`): `["日本"]` is 6 bytes to the guard and 8 to the
+  source.
 - **A line source's record counts its line ending** (the TypeScript and
   Go ports'): `\n`, `\r\n`, a lone
   `\r` or a configured separator, and under `record.empty` the whole line

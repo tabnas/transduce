@@ -4,8 +4,8 @@
 //! state with the items to emit; a finish function turns the final state
 //! into the closing items. The operator owns the state and the iteration;
 //! the functions own nothing. This is what the DSL's `scan-emit` lowers to,
-//! and the table transducer is one instance of it (implemented natively for
-//! speed, with the same contract).
+//! and the library's `table-from-json` is one instance of it, written in
+//! alchemy over this operator.
 
 use crate::error::Fail;
 use crate::sink::Flow;

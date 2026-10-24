@@ -35,7 +35,7 @@ import (
 // specFixtures is every fixture file and so every runner: a new file
 // without a runner fails TestEveryFixtureHasARunner rather than passing
 // unread.
-var specFixtures = []string{"events.tsv", "limits.tsv", "lines.tsv", "parser-events.tsv", "route.tsv", "scan.tsv", "table.tsv", "tree.tsv"}
+var specFixtures = []string{"events.tsv", "limits.tsv", "lines.tsv", "parser-events.tsv", "route.tsv", "scan.tsv", "table.tsv"}
 
 // rustIncremental is the Rust crate's verified list as it stood when the
 // crate retired its inference (step 13 of alchemy's streaming plan), which
@@ -283,21 +283,9 @@ func lineOptions(t testing.TB, row *support.Row) (LineFormat, int, bool) {
 	return LineFormat{}, 0, false
 }
 
-// jsonPart is JSON's transducer part, as tabnas-json spells it:
-// transduce-tree over the json grammar's rules, the spec tree.tsv's json
-// rows give.
-func jsonPart() TreeSpec {
-	return TreeSpec{Rules: map[string]TreeRule{
-		"map":  {Container: TreeObject},
-		"list": {Container: TreeArray},
-		"pair": {Key: TreeKey{Set: true, IsToken: true, Token: 0}},
-		"val":  {Scalar: TreeScalar{Set: true, Token: 0}},
-	}}
-}
-
-// drive runs the row's source into sink. The part mode is JSON's
-// transducer part natively over the passes ParserEventSource delivers,
-// through the source's guard, as a host reads JSON.
+// drive runs the row's source into sink. The events mode replays the
+// input's events (eventsInput) through the source's guard under the row's
+// limits: what no parse delivers, a member repeated in one object.
 func drive(t testing.TB, row *support.Row, input string, sink Sink) (Flow, *Fail) {
 	name := row.Named("grammar")
 	limits := limitsOf(t, row)
@@ -308,14 +296,9 @@ func drive(t testing.TB, row *support.Row, input string, sink Sink) (Flow, *Fail
 			m = IncrementalMode(pruneOf(t, row))
 		}
 		return NewParserSource(makeGrammar(name), input).Grammar(name).Mode(m).Limits(limits).Run(sink)
-	case "part":
-		if name != "json" {
-			t.Fatalf("%s: the part mode is JSON's", row.Where())
-		}
+	case "events":
 		guarded := NewGuarded(sink, limits, NewAbortFlag(), NewMetrics())
-		spec := jsonPart()
-		spec.MaxTextBytes = limits.MaxScalarBytes
-		return NewParserEventSource(makeGrammar(name), input).Limits(limits).Run(NewTransduceTree(spec, guarded))
+		return Replay(eventsInput(t, row, input), guarded)
 	case "value":
 		value, err := makeGrammar(name).Parse(input)
 		if err != nil {
@@ -702,7 +685,7 @@ func scanStage(t testing.TB, row *support.Row, script string) (any, *failed) {
 	return map[string]any{"out": out, "flows": flows}, nil
 }
 
-// The parser's rule passes, and the native transduce-tree over them.
+// The parser's rule passes.
 
 // rowParser is the parser a row names: a grammar of the harness's, or,
 // for `spec`, the serialized grammar its `document` column holds.
@@ -790,63 +773,76 @@ func parserEventsStage(t testing.TB, row *support.Row, input string) (any, *fail
 	return out, nil
 }
 
-// treeSpecOf is the row's `spec`: a JSON object of rules, each of
-// `container` ("object" or "array"), `key` and `member` (each a string, or
-// a token's index), `scalar` (a token's index, or "value") and `text` (a
-// boolean).
-func treeSpecOf(t testing.TB, row *support.Row) TreeSpec {
-	rules, ok := jsonCell(t, row, "spec").(map[string]any)
-	if !ok {
-		t.Fatalf("%s: a tree row's spec is a JSON object", row.Where())
+// eventsInput is the events mode's input: the events themselves, in the
+// fixture encoding eventValue writes, for what no parse delivers (a member
+// repeated in one object, which the engine's value keeps once).
+func eventsInput(t testing.TB, row *support.Row, input string) []Event {
+	dec := json.NewDecoder(strings.NewReader(input))
+	dec.UseNumber()
+	var items []any
+	if err := dec.Decode(&items); err != nil {
+		t.Fatalf("%s: the input is JSON events: %v", row.Where(), err)
 	}
-	spec := TreeSpec{Rules: map[string]TreeRule{}}
-	for name, v := range rules {
-		entry, _ := v.(map[string]any)
-		var rule TreeRule
-		switch entry["container"] {
-		case "object":
-			rule.Container = TreeObject
-		case "array":
-			rule.Container = TreeArray
+	events := make([]Event, 0, len(items))
+	for _, item := range items {
+		parts, ok := item.([]any)
+		if !ok || len(parts) == 0 {
+			t.Fatalf("%s: an event is an array: %v", row.Where(), item)
 		}
-		named := func(field string) TreeKey {
-			switch k := entry[field].(type) {
-			case string:
-				return TreeKey{Set: true, Name: k}
-			case json.Number:
-				return TreeKey{Set: true, IsToken: true, Token: asInt(t, k)}
+		text := func(i int) string {
+			if i < len(parts) {
+				if s, ok := parts[i].(string); ok {
+					return s
+				}
 			}
-			return TreeKey{}
+			t.Fatalf("%s: a text is expected in %v", row.Where(), item)
+			return ""
 		}
-		rule.Key = named("key")
-		rule.Member = named("member")
-		if text, ok := entry["text"].(bool); ok {
-			rule.Text = text
+		switch parts[0] {
+		case "object_start":
+			events = append(events, Event{Kind: ObjectStart})
+		case "object_end":
+			events = append(events, Event{Kind: ObjectEnd})
+		case "array_start":
+			events = append(events, Event{Kind: ArrayStart})
+		case "array_end":
+			events = append(events, Event{Kind: ArrayEnd})
+		case "key":
+			events = append(events, Event{Kind: Key, Text: text(1)})
+		case "null":
+			events = append(events, Event{Kind: Null})
+		case "bool":
+			b, ok := parts[1].(bool)
+			if len(parts) < 2 || !ok {
+				t.Fatalf("%s: a boolean is expected in %v", row.Where(), item)
+			}
+			events = append(events, Event{Kind: Bool, Bool: b})
+		case "number":
+			if len(parts) < 2 {
+				t.Fatalf("%s: a number is expected in %v", row.Where(), item)
+			}
+			n, ok := parts[1].(json.Number)
+			if !ok {
+				t.Fatalf("%s: a number is expected in %v", row.Where(), item)
+			}
+			v, err := n.Float64()
+			if err != nil {
+				t.Fatalf("%s: %v", row.Where(), err)
+			}
+			ev := Event{Kind: Number, Value: v}
+			if len(parts) > 2 {
+				if lexeme, ok := parts[2].(string); ok {
+					ev.HasLexeme, ev.Lexeme = true, lexeme
+				}
+			}
+			events = append(events, ev)
+		case "string":
+			events = append(events, Event{Kind: String, Text: text(1)})
+		case "end":
+			events = append(events, Event{Kind: End})
+		default:
+			t.Fatalf("%s: no event %v", row.Where(), item)
 		}
-		switch sc := entry["scalar"].(type) {
-		case string:
-			rule.Scalar = TreeScalar{Set: true, Value: true}
-		case json.Number:
-			rule.Scalar = TreeScalar{Set: true, Token: asInt(t, sc)}
-		}
-		spec.Rules[name] = rule
 	}
-	return spec
-}
-
-// treeStage is tree.tsv: the events the native transduce-tree writes over
-// the passes ParserEventSource delivers, through the source's guard, as a
-// program's transduce-tree is lowered: its texts held to the row's
-// max_scalar_bytes, as the lowering holds them.
-func treeStage(t testing.TB, row *support.Row, input string) (any, *failed) {
-	var rec Recorder
-	limits := limitsOf(t, row)
-	guarded := NewGuarded(&rec, limits, NewAbortFlag(), NewMetrics())
-	spec := treeSpecOf(t, row)
-	spec.MaxTextBytes = limits.MaxScalarBytes
-	_, f := NewParserEventSource(rowParser(t, row), input).Limits(limits).Run(NewTransduceTree(spec, guarded))
-	if f != nil {
-		return nil, &failed{fail: f, prefix: eventsValue(rec.Events), hasPre: true}
-	}
-	return eventsValue(rec.Events), nil
+	return events
 }

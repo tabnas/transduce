@@ -2,26 +2,24 @@
 //! compiled alchemy program makes its routing stages through.
 //!
 //! alchemy's runtime lowers a plan onto a [`Router`] for a program's
-//! captures, the [`TableFromJson`] transducer, the [`ScanEmit`] operator,
-//! the source's [`Guarded`] limits and the natives [`TransduceTree`] and
-//! [`TransduceRecords`], and constructs none of them: the
-//! host passes [`routers()`] to `tabnas_alchemy::compile`, and each stage is
-//! made through it, exactly as the constructor named would make it.
+//! captures, the [`ScanEmit`] operator and the source's [`Guarded`]
+//! limits, and constructs none of them: the host passes [`routers()`] to
+//! `tabnas_alchemy::compile`, and each stage is made through it, exactly
+//! as the constructor named would make it. The standard library's
+//! `table-from-json`, `csv`, `transduce-tree` and `transduce-records` are
+//! alchemy's own text, run by its interpreter over these stages in every
+//! runtime; this crate offers nothing in their place.
 
 use std::sync::Arc;
 
 use tabnas_alchemy::shared::{
-    AbortFlag, CaptureId, CaptureSpec, Duplicates, Fail, Flow, Limits, Metrics, ParserSink,
-    RecordsSpec, RouteSink, Routers, ScanEmitter, ScanFinish, ScanOut, ScanStep, Selected, Sink,
-    TableBinding, TableSink, Transition, TreeSpec,
+    AbortFlag, CaptureId, CaptureSpec, Duplicates, Fail, Flow, Limits, Metrics, RouteSink, Routers,
+    ScanEmitter, ScanFinish, ScanOut, ScanStep, Selected, Sink, Transition,
 };
 
 use crate::route::Router;
 use crate::scan::ScanEmit;
 use crate::source::Guarded;
-use crate::table_from_json::TableFromJson;
-use crate::transduce_records::TransduceRecords;
-use crate::transduce_tree::TransduceTree;
 
 /// The routers this crate implements, for alchemy's `Routers`: every
 /// method is the constructor of the same name.
@@ -51,19 +49,6 @@ impl<V: Send + 'static> Routers<V> for TransduceRouters {
         )?))
     }
 
-    fn table_from_json(
-        &self,
-        binding: TableBinding,
-        limits: &Limits,
-        duplicates: Duplicates,
-        metrics: Arc<Metrics>,
-        sink: Box<dyn TableSink + Send>,
-    ) -> Result<Box<dyn Sink + Send>, Fail> {
-        Ok(Box::new(TableFromJson::new(
-            binding, limits, duplicates, metrics, sink,
-        )?))
-    }
-
     fn scan_emit(
         &self,
         initial: V,
@@ -82,28 +67,6 @@ impl<V: Send + 'static> Routers<V> for TransduceRouters {
         metrics: Arc<Metrics>,
     ) -> Box<dyn Sink + Send> {
         Box::new(Guarded::new(inner, limits, abort, metrics))
-    }
-
-    fn transduce_tree(
-        &self,
-        spec: TreeSpec,
-        downstream: Box<dyn Sink + Send>,
-    ) -> Result<Box<dyn ParserSink + Send>, Box<dyn Sink + Send>> {
-        Ok(Box::new(TransduceTree::new(spec, downstream)))
-    }
-
-    /// [`TransduceTree`] reads a spec's `:member` and `:text`, and holds a
-    /// text to the spec's `max_text_bytes` as it grows.
-    fn transduce_tree_reads_member_and_text(&self) -> bool {
-        true
-    }
-
-    fn transduce_records(
-        &self,
-        spec: RecordsSpec,
-        downstream: Box<dyn Sink + Send>,
-    ) -> Result<Box<dyn ParserSink + Send>, Box<dyn Sink + Send>> {
-        Ok(Box::new(TransduceRecords::new(spec, downstream)))
     }
 }
 

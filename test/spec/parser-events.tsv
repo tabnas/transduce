@@ -5,8 +5,8 @@ input	grammar	document	stage	limits	expected	limit	prefix
 # the fixture encoding docs/reference.md gives; `tokens` each pass as
 # ["rule:open", [[name, val, src, row, col]...]]; `names` each pass as
 # "rule:open" or "rule:close". The end is "end" in the last two. A token's
-# value is written as JSON, so its lexeme is not in the encoding; tree.tsv
-# pins it.
+# value is written as JSON, so its lexeme is not in the encoding;
+# alchemy-cli's tests of JSON's part, whose events carry it, pin it.
 # A root scalar: the open pass consumed the number, the close the end of
 # the source, which has no value, and carries the node's value.
 2.50	json		passes		[["open",{"name":"val","d":0,"i":1,"alt":{"p":"","r":"","b":0,"g":["json","val"]},"tokens":[["#NR",2.5,"2.50",1,1]],"forced":false,"n":{}}],["close",{"name":"val","d":0,"i":1,"alt":{"p":"","r":"","b":0,"g":["end","json"]},"tokens":[["#ZZ",null,"",1,5]],"forced":false,"n":{},"value":2.5}],["end"]]

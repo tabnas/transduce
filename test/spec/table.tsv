@@ -11,63 +11,60 @@ input	grammar	mode	binding	duplicates	expected	path
 #
 # The spec's worked example: the schema from the metadata, rows projected
 # into schema order whatever their member order, lexemes kept.
-{"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	part	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["Identifier","Full name","Balance"]],["row",[["number",123,"123"],"Alice",["number",50.25,"50.25"]]],["row",[["number",456,"456"],"Bob",["number",72,"72"]]],["end"]]
 {"response":{"metadata":{"fields":[{"title":"Identifier","path":["id"]},{"title":"Full name","path":["person","name"]},{"title":"Balance","path":["account","balance"]}]},"payload":{"deep":{"records":[{"id":123,"person":{"name":"Alice"},"account":{"balance":50.25}},{"account":{"balance":72},"id":456,"person":{"name":"Bob"}}]}}}}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["Identifier","Full name","Balance"]],["row",[["number",123,null],"Alice",["number",50.25,null]]],["row",[["number",456,null],"Bob",["number",72,null]]],["end"]]
 # A row that begins before the metadata completed is refused at its start;
 # metadata selected twice is the same violation.
-{"response":{"payload":{"deep":{"records":[{"id":1}]}},"metadata":{"fields":[{"title":"Id","path":["id"]}]}}}	json	part	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_ORDER_VIOLATION	.response.payload.deep.records[0]
-[{"response":{"metadata":{"fields":[]}}},{"response":{"metadata":{"fields":[]}}}]	json	part	{"schema":{"metadata":[{"each":"index"},"response","metadata","fields"]},"rows":["rows",{"each":"index"}]}		ERROR:INPUT_ORDER_VIOLATION	[1].response.metadata.fields
+{"response":{"payload":{"deep":{"records":[{"id":1}]}},"metadata":{"fields":[{"title":"Id","path":["id"]}]}}}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_ORDER_VIOLATION	.response.payload.deep.records[0]
+[{"response":{"metadata":{"fields":[]}}},{"response":{"metadata":{"fields":[]}}}]	json	materialize	{"schema":{"metadata":[{"each":"index"},"response","metadata","fields"]},"rows":["rows",{"each":"index"}]}		ERROR:INPUT_ORDER_VIOLATION	[1].response.metadata.fields
 # Metadata that never arrives, a descriptor without a title, a
 # descriptor list that is not an array, a negative index segment.
-{"other":1}	json	part	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields
-{"response":{"metadata":{"fields":[{"title":"Id","path":["id"]},{"path":["x"]}]},"payload":{"deep":{"records":[]}}}}	json	part	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields[1]
-{"response":{"metadata":{"fields":{"title":"Id"}},"payload":{"deep":{"records":[]}}}}	json	part	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields
-{"response":{"metadata":{"fields":[{"title":"x","path":["a",-1]}]},"payload":{"deep":{"records":[]}}}}	json	part	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields[0]
-{"response":{"metadata":{"fields":[{"title":"First","path":["tags",0]},{"title":"Second","path":["tags",1]}]},"payload":{"deep":{"records":[{"tags":["a","b"]},{"tags":["c"]}]}}}}	json	part	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["First","Second"]],["row",["a","b"]],["row",["c",["missing"]]],["end"]]
+{"other":1}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields
+{"response":{"metadata":{"fields":[{"title":"Id","path":["id"]},{"path":["x"]}]},"payload":{"deep":{"records":[]}}}}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields[1]
+{"response":{"metadata":{"fields":{"title":"Id"}},"payload":{"deep":{"records":[]}}}}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields
+{"response":{"metadata":{"fields":[{"title":"x","path":["a",-1]}]},"payload":{"deep":{"records":[]}}}}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		ERROR:INPUT_INVALID	.response.metadata.fields[0]
+{"response":{"metadata":{"fields":[{"title":"First","path":["tags",0]},{"title":"Second","path":["tags",1]}]},"payload":{"deep":{"records":[{"tags":["a","b"]},{"tags":["c"]}]}}}}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["First","Second"]],["row",["a","b"]],["row",["c",["missing"]]],["end"]]
 # Metadata and rows that may overlap are refused when the table is built.
-{"a":[]}	json	part	{"schema":{"metadata":["a"]},"rows":["a",{"each":"index"}]}		ERROR:CAPTURE_OVERLAP_UNSUPPORTED
+{"a":[]}	json	materialize	{"schema":{"metadata":["a"]},"rows":["a",{"each":"index"}]}		ERROR:CAPTURE_OVERLAP_UNSUPPORTED
 # Missing and an explicit null are told apart by the column's policy.
-{"rows":[{"a":null},{}]}	json	part	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["A"]],["row",[null]],["row",[["missing"]]],["end"]]
-{"rows":[{"a":null},{}]}	json	part	{"schema":{"static":[{"label":"A","source":["a"],"missing":"null"}]},"rows":["rows",{"each":"index"}]}		[["schema",["A"]],["row",[null]],["row",[null]],["end"]]
-{"rows":[{"a":null},{}]}	json	part	{"schema":{"static":[{"label":"A","source":["a"],"missing":"error"}]},"rows":["rows",{"each":"index"}]}		ERROR:MISSING_VALUE	.rows[1].a
+{"rows":[{"a":null},{}]}	json	materialize	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["A"]],["row",[null]],["row",[["missing"]]],["end"]]
+{"rows":[{"a":null},{}]}	json	materialize	{"schema":{"static":[{"label":"A","source":["a"],"missing":"null"}]},"rows":["rows",{"each":"index"}]}		[["schema",["A"]],["row",[null]],["row",[null]],["end"]]
+{"rows":[{"a":null},{}]}	json	materialize	{"schema":{"static":[{"label":"A","source":["a"],"missing":"error"}]},"rows":["rows",{"each":"index"}]}		ERROR:MISSING_VALUE	.rows[1].a
 # Zero rows is an empty table with its schema.
-{"response":{"metadata":{"fields":[{"title":"Id","path":["id"]}]},"payload":{"deep":{"records":[]}}}}	json	part	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["Id"]],["end"]]
-[]	json	part	{"schema":{"static":[{"label":"x","source":["x"]}]},"rows":[{"each":"index"}]}		[["schema",["x"]],["end"]]
-[]	json	part	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",[]],["end"]]
-{}	json	part	{"schema":"infer","rows":["rows",{"each":"index"}]}		[["schema",[]],["end"]]
+{"response":{"metadata":{"fields":[{"title":"Id","path":["id"]}]},"payload":{"deep":{"records":[]}}}}	json	materialize	{"schema":{"metadata":["response","metadata","fields"]},"rows":["response","payload","deep","records",{"each":"index"}]}		[["schema",["Id"]],["end"]]
+[]	json	materialize	{"schema":{"static":[{"label":"x","source":["x"]}]},"rows":[{"each":"index"}]}		[["schema",["x"]],["end"]]
+[]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",[]],["end"]]
+{}	json	materialize	{"schema":"infer","rows":["rows",{"each":"index"}]}		[["schema",[]],["end"]]
 # Infer: the columns are the first row's, by its kind. An object row gives
 # its member names in its order; a later row's extra members are dropped
 # and its absent ones are missing.
-[{"b":1,"a":"x"},{"a":"y","c":true},{"b":3}]	json	part	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["b","a"]],["row",[["number",1,"1"],"x"]],["row",[["missing"],"y"]],["row",[["number",3,"3"],["missing"]]],["end"]]
+[{"b":1,"a":"x"},{"a":"y","c":true},{"b":3}]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["b","a"]],["row",[["number",1,null],"x"]],["row",[["missing"],"y"]],["row",[["number",3,null],["missing"]]],["end"]]
 # An array row gives positional columns labelled "0", "1", ... up to its
 # length, each sourced at its index; a later row's extra elements are
 # dropped and its absent ones are missing. An empty array row is a table
 # of no columns, whose rows are empty.
-[[1,"x"],["y",true,3],[2]]	json	part	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0","1"]],["row",[["number",1,"1"],"x"]],["row",["y",true]],["row",[["number",2,"2"],["missing"]]],["end"]]
 [[1,"x"],["y",true,3],[2]]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0","1"]],["row",[["number",1,null],"x"]],["row",["y",true]],["row",[["number",2,null],["missing"]]],["end"]]
-[[],[1]]	json	part	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",[]],["row",[]],["row",[]],["end"]]
+[[],[1]]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",[]],["row",[]],["row",[]],["end"]]
 # A scalar row (null, a boolean, a number or a string) gives one column,
 # "value", sourced at the row itself.
-[1,"s",true,null]	json	part	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["value"]],["row",[["number",1,"1"]]],["row",["s"]],["row",[true]],["row",[null]],["end"]]
+[1,"s",true,null]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["value"]],["row",[["number",1,null]]],["row",["s"]],["row",[true]],["row",[null]],["end"]]
 # A later row of another kind projects through the first row's paths and
 # lands empty where they miss: a key path on an array or a scalar, an
 # index path on an object or a scalar. The empty path of a value column
 # finds every row, a container as its compact JSON text.
-[{"a":1},[2],3]	json	part	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a"]],["row",[["number",1,"1"]]],["row",[["missing"]]],["row",[["missing"]]],["end"]]
-[[1],{"0":2},3]	json	part	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0"]],["row",[["number",1,"1"]]],["row",[["missing"]]],["row",[["missing"]]],["end"]]
-[1,{"a":2},[3]]	json	part	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["value"]],["row",[["number",1,"1"]]],["row",["{\"a\":2}"]],["row",["[3]"]],["end"]]
+[{"a":1},[2],3]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["a"]],["row",[["number",1,null]]],["row",[["missing"]]],["row",[["missing"]]],["end"]]
+[[1],{"0":2},3]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["0"]],["row",[["number",1,null]]],["row",[["missing"]]],["row",[["missing"]]],["end"]]
+[1,{"a":2},[3]]	json	materialize	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["value"]],["row",[["number",1,null]]],["row",["{\"a\":2}"]],["row",["[3]"]],["end"]]
 # A static schema projects nested paths and indexes, in schema order.
-{"rows":[{"p":{"n":"a"},"id":1,"tags":["t0","t1"]},{"tags":["u0"],"id":2,"p":{"n":"b"}}]}	json	part	{"schema":{"static":[{"label":"Id","source":["id"]},{"label":"Name","source":["p","n"]},{"label":"First tag","source":["tags",0]},{"label":"Second tag","source":["tags",1]}]},"rows":["rows",{"each":"index"}]}		[["schema",["Id","Name","First tag","Second tag"]],["row",[["number",1,"1"],"a","t0","t1"]],["row",[["number",2,"2"],"b","u0",["missing"]]],["end"]]
+{"rows":[{"p":{"n":"a"},"id":1,"tags":["t0","t1"]},{"tags":["u0"],"id":2,"p":{"n":"b"}}]}	json	materialize	{"schema":{"static":[{"label":"Id","source":["id"]},{"label":"Name","source":["p","n"]},{"label":"First tag","source":["tags",0]},{"label":"Second tag","source":["tags",1]}]},"rows":["rows",{"each":"index"}]}		[["schema",["Id","Name","First tag","Second tag"]],["row",[["number",1,null],"a","t0","t1"]],["row",[["number",2,null],"b","u0",["missing"]]],["end"]]
 # A container cell is its compact JSON text, lexemes kept; a column whose
 # path is another's prefix still gets its value; the empty path is the
 # row itself.
-{"rows":[{"p":{"n":"a","v":1.50},"id":1},{"p":[true,null],"id":2}]}	json	part	{"schema":{"static":[{"label":"P","source":["p"]},{"label":"N","source":["p","n"]},{"label":"Id","source":["id"]},{"label":"Id again","source":["id"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["P","N","Id","Id again"]],["row",["{\"n\":\"a\",\"v\":1.50}","a",["number",1,"1"],["number",1,"1"]]],["row",["[true,null]",["missing"],["number",2,"2"],["number",2,"2"]]],["end"]]
 {"rows":[{"p":{"n":"a","v":1.50},"id":1},{"p":[true,null],"id":2}]}	json	materialize	{"schema":{"static":[{"label":"P","source":["p"]},{"label":"N","source":["p","n"]},{"label":"Id","source":["id"]},{"label":"Id again","source":["id"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["P","N","Id","Id again"]],["row",["{\"n\":\"a\",\"v\":1.5}","a",["number",1,null],["number",1,null]]],["row",["[true,null]",["missing"],["number",2,null],["number",2,null]]],["end"]]
-[1,"s",true,null,{"a":"q\"\\\\"}]	json	part	{"schema":{"static":[{"label":"Row","source":[]}]},"rows":[{"each":"index"}]}		[["schema",["Row"]],["row",[["number",1,"1"]]],["row",["s"]],["row",[true]],["row",[null]],["row",["{\"a\":\"q\\\"\\\\\"}"]],["end"]]
+[1,"s",true,null,{"a":"q\"\\\\"}]	json	materialize	{"schema":{"static":[{"label":"Row","source":[]}]},"rows":[{"each":"index"}]}		[["schema",["Row"]],["row",[["number",1,null]]],["row",["s"]],["row",[true]],["row",[null]],["row",["{\"a\":\"q\\\"\\\\\"}"]],["end"]]
 # Repeated members inside a row follow the duplicates policy.
-{"rows":[{"a":1,"a":2}]}	json	part	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	reject	ERROR:DUPLICATE_MEMBER	.rows[0]
-{"rows":[{"a":1,"a":2}]}	json	part	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	last_wins	[["schema",["A"]],["row",[["number",2,"2"]]],["end"]]
-{"rows":[{"a":1,"a":2}]}	json	part	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	first_wins	[["schema",["A"]],["row",[["number",1,"1"]]],["end"]]
+[["object_start"],["key","rows"],["array_start"],["object_start"],["key","a"],["number",1,"1"],["key","a"],["number",2,"2"],["object_end"],["array_end"],["object_end"],["end"]]	json	events	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	reject	ERROR:DUPLICATE_MEMBER	.rows[0]
+[["object_start"],["key","rows"],["array_start"],["object_start"],["key","a"],["number",1,"1"],["key","a"],["number",2,"2"],["object_end"],["array_end"],["object_end"],["end"]]	json	events	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	last_wins	[["schema",["A"]],["row",[["number",2,"2"]]],["end"]]
+[["object_start"],["key","rows"],["array_start"],["object_start"],["key","a"],["number",1,"1"],["key","a"],["number",2,"2"],["object_end"],["array_end"],["object_end"],["end"]]	json	events	{"schema":{"static":[{"label":"A","source":["a"]}]},"rows":["rows",{"each":"index"}]}	first_wins	[["schema",["A"]],["row",[["number",1,"1"]]],["end"]]
 # Any source: the line source, and yaml.
 id,name\n1,"a, b"\n2,c\n	csv	lines	{"schema":"infer","rows":[{"each":"index"}]}		[["schema",["id","name"]],["row",["1","a, b"]],["row",["2","c"]],["end"]]
 rows:\n  - id: 1\n    n: x\n  - n: y\n	yaml	materialize	{"schema":{"static":[{"label":"Id","source":["id"]},{"label":"N","source":["n"]}]},"rows":["rows",{"each":"index"}]}		[["schema",["Id","N"]],["row",[["number",1,null],"x"]],["row",[["missing"],"y"]],["end"]]

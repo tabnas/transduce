@@ -98,7 +98,6 @@ func TestSpecLimits(t *testing.T) { runSpec(t, "limits.tsv", "input", stagedStag
 func TestSpecParserEvents(t *testing.T) {
 	runSpec(t, "parser-events.tsv", "input", parserEventsStage)
 }
-func TestSpecTree(t *testing.T) { runSpec(t, "tree.tsv", "input", treeStage) }
 
 // TestEveryFixtureHasARunner fails when a fixture appears without a
 // runner, rather than letting it pass unread.

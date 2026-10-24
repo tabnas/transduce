@@ -2,13 +2,15 @@
 //! document. Run with `cargo bench`; each group prints a line before it
 //! starts so a long run is never silent.
 //!
-//! The groups separate the costs: the engine alone (`parse_only`), JSON's
-//! transducer part over the engine's passes (`part`, with and without
-//! pruning), the walk over an already parsed value (`walk`), the router
-//! and table transducer fed from a recording (`table_from_recording`: the
-//! stages without the parse), and the whole chain from text to table rows
-//! (`table_from_text`). Throughput is bytes of source per second, so the
-//! groups compare directly with BENCH.md.
+//! The groups separate the costs: the engine alone (`parse_only`), the
+//! walk over an already parsed value (`walk`), the router and table
+//! transducer fed from a recording (`table_from_recording`: the stages
+//! without the parse), and the whole chain from text to table rows, the
+//! parse and its value walked (`table_from_text`). Throughput is bytes of
+//! source per second, so the groups compare directly with BENCH.md. A
+//! format's transducer part is alchemy's text, run by alchemy's runtime,
+//! so its cost is measured where it runs: in aless and alchemy-cli, over
+//! this crate's `ParserEventSource`.
 
 #[path = "../tests/support/mod.rs"]
 mod support;
@@ -17,9 +19,9 @@ use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use tabnas_transduce::{
-    column_from_meta, replay, AbortFlag, Cell, CountSink, Duplicates, Fail, Flow, Guarded, Limits,
-    Metrics, OwnedJsonEvent, ParserEventSource, Schema, Selector, Sink, Source, TableBinding,
-    TableEvent, TableFromJson, TableSink, TransduceTree, ValueSource,
+    column_from_meta, replay, Cell, CountSink, Duplicates, Fail, Flow, Limits, Metrics,
+    OwnedJsonEvent, ParserSource, Schema, Selector, Source, TableBinding, TableEvent,
+    TableFromJson, TableSink, ValueSource,
 };
 
 /// 20k records in a release measurement; under `cargo test` (a debug
@@ -80,14 +82,6 @@ fn table(sink: CountTable) -> TableFromJson<CountTable> {
     .expect("the worked-example binding is valid")
 }
 
-/// JSON's part writing to `sink` through a guard, as a host reads JSON.
-fn part_into<S: Sink>(sink: S) -> TransduceTree<Guarded<S>> {
-    TransduceTree::new(
-        support::json_part(),
-        Guarded::new(sink, &Limits::default(), AbortFlag::new(), Metrics::new()),
-    )
-}
-
 fn progress(group: &str, src: &str) {
     eprintln!(
         "bench: {group} on {RECORDS} records ({:.1} MB)",
@@ -104,34 +98,6 @@ fn parse_only(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(src.len() as u64));
     group.bench_function("json", |b| {
         b.iter(|| parser.parse(&src).expect("the generated document parses"))
-    });
-    group.finish();
-}
-
-fn part(c: &mut Criterion) {
-    let src = support::records_json(RECORDS);
-    progress("part", &src);
-    let parser = tabnas_json::make();
-    let mut group = c.benchmark_group("part");
-    group.sample_size(10);
-    group.throughput(Throughput::Bytes(src.len() as u64));
-    group.bench_function("events_into_count_sink", |b| {
-        b.iter(|| {
-            let (r, tree) = ParserEventSource::new(parser.clone(), &src)
-                .run_owned(part_into(CountSink::default()));
-            r.expect("the run succeeds");
-            tree.into_inner().into_inner().events
-        })
-    });
-    group.bench_function("events_pruned_into_count_sink", |b| {
-        b.iter(|| {
-            let (r, tree) = ParserEventSource::new(parser.clone(), &src)
-                .grammar("json")
-                .prune()
-                .run_owned(part_into(CountSink::default()));
-            r.expect("the run succeeds");
-            tree.into_inner().into_inner().events
-        })
     });
     group.finish();
 }
@@ -182,14 +148,12 @@ fn table_from_text(c: &mut Criterion) {
     let mut group = c.benchmark_group("table_from_text");
     group.sample_size(10);
     group.throughput(Throughput::Bytes(src.len() as u64));
-    group.bench_function("part_pruned_into_table", |b| {
+    group.bench_function("parsed_and_walked_into_table", |b| {
         b.iter(|| {
-            let (r, tree) = ParserEventSource::new(parser.clone(), &src)
-                .grammar("json")
-                .prune()
-                .run_owned(part_into(table(CountTable::default())));
+            let (r, t) =
+                ParserSource::new(parser.clone(), &src).run_owned(table(CountTable::default()));
             r.expect("the run succeeds");
-            tree.into_inner().into_inner().into_inner().rows
+            t.into_inner().rows
         })
     });
     group.finish();
@@ -198,7 +162,6 @@ fn table_from_text(c: &mut Criterion) {
 criterion_group!(
     benches,
     parse_only,
-    part,
     walk_parsed_value,
     table_from_recording,
     table_from_text
