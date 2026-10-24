@@ -2,7 +2,7 @@
 
 > The protocol modules this design sketches (`event`, `sink`, `error`, `limits`, `datum`, `selector`, `table`) are now alchemy's shared types, [`tabnas_alchemy::shared`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared), and the renderer-facing types (`TextOut`, the CSV and JSON options) moved there from render. transduce and render depend on them and re-export them; alchemy's runtime takes transduce's `Routers` and render's `Renderers` from its host.
 >
-> Since step 13 of alchemy's streaming plan, a format streams through the transducer part its package ships, over the parser's rule passes (`ParserEventSource`), and the Rust crate has retired the rule-event adapter (2.2), its verified list and `ParserSource`'s incremental mode: every format the list named has a part, or reads whole as markdown's manifest declares. `ParserSource` parses and walks; pruning is `ParserEventSource::prune`, gated on `capability::prunable`. The TypeScript and Go ports keep their adapters while their JSON Lines line sources read through them. Since step 12, JSON Lines and CSV stream through their parts from a reader as every other format does (CSV's through the native `TransduceRecords`), and the Rust crate has retired `LinesSource` and `LineFormat`; the ports keep their line sources until their engines read a reader. The design is otherwise as written.
+> Since step 13 of alchemy's streaming plan, a format streams through the transducer part its package ships, over the parser's rule passes (`ParserEventSource`), and the Rust crate has retired the rule-event adapter (2.2), its verified list and `ParserSource`'s incremental mode: every format the list named has a part, or reads whole as markdown's manifest declares. `ParserSource` parses and walks; pruning is `ParserEventSource::prune`, gated on `capability::prunable`. The TypeScript and Go ports keep their adapters while their JSON Lines line sources read through them. Since step 12, JSON Lines and CSV stream through their parts from a reader as every other format does, and the Rust crate has retired `LinesSource` and `LineFormat`; the ports keep their line sources until their engines read a reader. Since the ruling of 2026-10-24 (admin ADR-31: correctness and architectural uniformity first), a part and the standard library's compositions have one implementation, their alchemy text, run by alchemy's interpreter in every runtime: the native `TransduceTree` and `TransduceRecords` this crate offered alchemy, and the native paths 4.4 below describes, are gone, and `routers()` answers the router, `scan-emit` and the guard alone. The design is otherwise as written.
 
 Status: implementation brief, 2026-09-27. Derived from the maintainer's design
 document "Declarative Streaming Transducers and Renderers" (the "spec" below)
@@ -391,13 +391,16 @@ spec §15.5 report from the `EffectSummary`.
 
 Tree-walking evaluator. Stream plans lower to transduce/render sinks:
 `route` → `Router`; `scan-emit` → `ScanEmit` calling the DSL step per item;
-`csv` → `CsvRenderer`; `map/filter/concat-map/join/concat/replace-text` →
-their sinks/text combinators. The two standard compositions are recognized
-and run natively for speed: `table-from-json BINDING input` → `TableFromJson`,
-and `csv OPTIONS table-events` → `CsvRenderer`. The DSL sources of both live in
-`stdlib/*.alc`, are embedded with `include_str!`, are parsed and checked in
-tests, and a differential test proves the interpreted definition and the
-native fast path produce identical bytes on the fixtures.
+`json` → `JsonRenderer`; `map/filter/concat-map/join/concat/replace-text` →
+their sinks/text combinators. The two standard compositions,
+`table-from-json BINDING input` and `csv OPTIONS table-events`, are the
+library's own text: `stdlib/*.alc`, embedded with `include_str!`, parsed
+and checked in tests, and run as written in every runtime (a route and a
+scan, a `csv-table` validator and the text algebra). Until the ruling of
+2026-10-24 the runtime recognized both and ran `TableFromJson` and
+`CsvRenderer` in their place, held equal by a differential test; one
+implementation is the rule now, and the host's `CsvRenderer` renders only
+a program's table result.
 
 Stdlib natives (data last): `get`, `get-path`, `as-path`, `as-vector`,
 `record`, `entry`, `vector`, `path`, `each-index`, `each-member`, `root`,
@@ -453,8 +456,9 @@ for the lexer (the only route to bounded memory on one huge JSON document).
 
 1. `ci/rust/run.sh` green in transduce, render, alchemy; aless gates green.
 2. Differential suites: incremental vs walk per grammar (transduce);
-   interpreted stdlib vs native (alchemy); rendered CSV re-parsed by an
-   independent reader (render); rendered JSON re-parsed equals input.
+   the library's text against the shared fixtures (alchemy-cli); rendered
+   CSV re-parsed by an independent reader (render); rendered JSON
+   re-parsed equals input.
 3. The spec's worked example runs end to end through aless with the spec's
    `api-binding` program and prints the spec's CSV bytes (CRLF, all quoted).
 4. Retention high-water flat across 10× rows; pruned incremental JSON export

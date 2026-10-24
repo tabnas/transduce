@@ -11,9 +11,8 @@
 // - sources that produce it from a parsed value, from a live tabnas parse
 //   through the engine's rule events, or from line-delimited input, and
 //   the source of the parser's rule passes themselves (`ParserEventSource`,
-//   `ParserEvents/1`), what a transducer part reads;
-// - `TransduceTree`, alchemy's `transduce-tree` run natively over those
-//   passes;
+//   `ParserEvents/1`), what a transducer part reads (the part is alchemy's
+//   text, which alchemy's runtime runs over them);
 // - `Selector`s and the matcher and router that recognize selected scopes
 //   in one pass and materialize them under a byte limit;
 // - the table protocol `TableEvent` (`TableRows/1`) and the standard
@@ -77,20 +76,8 @@ export type { Source } from './source'
 export { Guarded } from './guard'
 export { ParserSource } from './parser-source'
 export { ParserEventSource } from './parser-event-source'
-export { TransduceTree } from './transduce-tree'
-export { isTreeContainer, parserEventFromJSON, parserEventToJSON, treeTextRefusal } from '@tabnas/alchemy/shared'
-export type {
-  ParserEvent,
-  ParserSink,
-  PassAlt,
-  PassToken,
-  RulePass,
-  TreeContainer,
-  TreeKey,
-  TreeRule,
-  TreeScalar,
-  TreeSpec,
-} from '@tabnas/alchemy/shared'
+export { parserEventFromJSON, parserEventToJSON } from '@tabnas/alchemy/shared'
+export type { ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
 export { DEFAULT_CHUNK_BYTES, LineFormat, LinesSource } from './lines'
 export type { LinesChunk, LinesInput, LinesWriter } from './lines'
 export { INCREMENTAL, PRUNABLE, capability, isIncremental, isPrunable } from './capability'

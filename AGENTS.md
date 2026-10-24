@@ -91,11 +91,12 @@ tree nests) or replaces the current one (`alt.r`: the same frame, for the
 next item of a sequence); an alternate that only matches its tokens, or pops the frame to end the rule, does neither. Every repetition in a grammar, the elements
 of a list, the members of a map, the records of a file, a `*A` in a
 compiled grammar, is a replace loop: the loop is `r`, the item may be `p`, and the loop's
-iterations add nothing to the engine's rule depth `d`. Real recursion still nests with its input, as it should: a grammar with `node = "(" node ")" / "x"` is as deep as its brackets. What a repetition may never do is make rule depth grow with a list's length. A part's
-`transduce-tree` rests on it ([`rs/src/transduce_tree.rs`](rs/src/transduce_tree.rs)):
-a container whose rule is replaced by a rule the spec names a container
-is one container, so a list's items stream at one depth. So did the
-rule-event adapter this crate retired at step 13, and so do the
+iterations add nothing to the engine's rule depth `d`. Real recursion still nests with its input, as it should: a grammar with `node = "(" node ")" / "x"` is as deep as its brackets. What a repetition may never do is make rule depth grow with a list's length. alchemy's
+`transduce-tree`, the text every tree-shaped part is written over
+(`stdlib/transduce.alc` in tabnas/alchemy, its one implementation), rests
+on it: a container whose rule is replaced by a rule the spec names a
+container is one container, so a list's items stream at one depth. So did
+the rule-event adapter this crate retired at step 13, and so do the
 TypeScript and Go ports' adapters, which are built on exactly that.
 Each opens a frame at the `d` of the rule whose node first
 shows a container and ends it when a rule at that `d` closes on the
@@ -136,7 +137,7 @@ every other run the value is exactly the grammar's.
 | Path | What it is |
 |---|---|
 | `rs/src/lib.rs` | re-exports alchemy's shared types at their old paths: `event`, `sink`, `error` (`Code`, `Fail`), `limits`, `datum`, `selector`, `table`; they live in `tabnas_alchemy::shared`, which this crate depends on with `default-features = false` |
-| `rs/src/routers.rs` | `TransduceRouters` (`routers()`): this crate's router, table transducer, `scan-emit`, guard and natives as alchemy's `Routers` |
+| `rs/src/routers.rs` | `TransduceRouters` (`routers()`): this crate's router, `scan-emit` and guard as alchemy's `Routers`; the library's compositions and the parts are alchemy's text, with nothing of this crate's in their place |
 | `rs/src/matcher.rs` | shared-prefix matching of many selectors in one pass |
 | `rs/src/route.rs` | captures: materialize or observe selected scopes, deliver in order |
 | `rs/src/table_from_json.rs` | the metadata-first table transducer |
@@ -146,18 +147,15 @@ every other run the value is exactly the grammar's.
 | `rs/src/source/parser.rs` | `ParserSource`: one text, parsed, then its value walked |
 | `rs/src/source/capability.rs` | the verified list `capability::prunable` answers from |
 | `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
-| `rs/src/transduce_tree.rs` | `TransduceTree`: alchemy's `transduce-tree` natively, offered through `Routers::transduce_tree` |
-| `rs/src/transduce_records.rs` | `TransduceRecords`: alchemy's `transduce-records` natively, offered through `Routers::transduce_records`; tabnas-csv's part is its spec |
 | `rs/tests/prune_test.rs` | the differential suite behind `capability::prunable`, both ways, and ten times the records leaving the pruned tree as it was |
-| `rs/tests/retention_test.rs` | ten times the rows of a JSON document, read through JSON's part and pruned, leave the retained high-water and the engine's tree flat |
-| `rs/tests/records_test.rs` | `TransduceRecords` over the csv grammar's own passes, held to the walk of its value: tabnas-csv's corpus, the CSV fixtures and the generated records, from a text and from a reader |
+| `rs/tests/retention_test.rs` | ten times the rows of a JSON document, parsed and walked into the table transducer, leave the retained high-water flat |
 | `rs/tests/reader_test.rs` | `ParserEventSource::from_reader` against the same text read whole: every fixture of a grammar the harness builds, a few bytes at a time, and a reader that fails |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
-| `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML, XML, PGN) and JSON's part, shared with the benches |
-| `rs/benches/` | criterion throughput benches: parse only, JSON's part, walk, router and table |
+| `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML, XML, PGN), shared with the benches |
+| `rs/benches/` | criterion throughput benches: parse only, walk, router and table, text to table through the parse |
 | `docs/` | `architecture.md` (the design), `reference.md`, `translation.md` (any format to any other: the parts a format ships and the host composes) |
-| `test/spec/*.tsv` | the shared fixtures every runtime runs (the incremental and line-source rows the TypeScript and Go ports' alone, which the Rust runners skip by mode, `common::rust_rows`): events, routes, tables, the line sources, scan-emit, limits, the parser's rule passes and the native transduce-tree over them (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
+| `test/spec/*.tsv` | the shared fixtures every runtime runs (the incremental and line-source rows the TypeScript and Go ports' alone, which the Rust runners skip by mode, `common::rust_rows`): events, routes, tables, the line sources, scan-emit, limits and the parser's rule passes (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
 | `DIVERGENCE.md` | what a runtime may do differently, and what the fixtures leave out on purpose |
 | `ci/rust/run.sh` | the gate `.github/workflows/rust.yml` runs |
 

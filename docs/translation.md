@@ -6,6 +6,14 @@ sections 2 to 5 (the transducer, the renderers, alchemy, aless),
 [`reference.md`](reference.md) for the protocols, and
 [the alchemy reference](https://github.com/tabnas/alchemy/blob/main/docs/language.md).
 
+> Since the ruling of 2026-10-24 (admin ADR-31: correctness and
+> architectural uniformity first), a part, and the standard library's
+> `csv` and `table-from-json`, have one implementation: their alchemy
+> text, run by alchemy's interpreter in every runtime. Where this design
+> says a composition or a part runs natively, or names a differential test
+> holding a native to the text, it records the history it was written in.
+> The `json` renderer is a primitive of the render crate, and stays one.
+
 ## The problem
 
 The fleet reads N formats. A viewer that can also write a document out

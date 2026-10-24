@@ -20,24 +20,14 @@ assert_eq!(count.events, 9); // { key [ 1 2 3 ] } end
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The whole chain, from a text to table rows: the parser's rule passes
-through JSON's transducer part, natively, with the rows streamed from the
-parse and the engine's arrays emptied behind them as they go:
+The whole chain, from a text to table rows: the parse, its value walked
+into the source's guard, the table transducer and a table:
 
 ```rust
 use tabnas_transduce::{
-    column_from_meta, AbortFlag, Duplicates, Guarded, Limits, Metrics, ParserEventSource, Schema,
-    Selector, Table, TableBinding, TableFromJson, TransduceTree, TreeContainer, TreeKey, TreeRule,
-    TreeScalar, TreeSpec,
+    column_from_meta, AbortFlag, Duplicates, Guarded, Limits, Metrics, ParserSource, Schema,
+    Selector, Table, TableBinding, TableFromJson,
 };
-
-// JSON's part, as tabnas-json spells it: what each rule's passes make.
-let rule = |container, key, scalar| TreeRule { container, key, scalar, ..TreeRule::default() };
-let json = TreeSpec::new()
-    .with("map", rule(Some(TreeContainer::Object), None, None))
-    .with("list", rule(Some(TreeContainer::Array), None, None))
-    .with("pair", rule(None, Some(TreeKey::Token(0)), None))
-    .with("val", rule(None, None, Some(TreeScalar::Token(0))));
 
 let text = r#"{"meta":[{"title":"Id","path":["id"]}],"rows":[{"id":1},{"id":2}]}"#;
 let binding = TableBinding {
@@ -50,20 +40,20 @@ let binding = TableBinding {
 let limits = Limits::default();
 let table = TableFromJson::new(binding, &limits, Duplicates::Reject, Metrics::new(), Table::default())?;
 let guarded = Guarded::new(table, &limits, AbortFlag::new(), Metrics::new());
-let (outcome, tree) = ParserEventSource::new(tabnas_json::make(), text)
-    .grammar("json")
-    .prune()
-    .run_owned(TransduceTree::new(json, guarded));
+let (outcome, guarded) = ParserSource::new(tabnas_json::make(), text).run_owned(guarded);
 outcome?;
-let table = tree.into_inner().into_inner().into_inner();
+let table = guarded.into_inner().into_inner();
 assert_eq!(table.columns.len(), 1);
 assert_eq!(table.rows.len(), 2);
 assert!(table.ended);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-A format with no part is parsed whole and its value walked
-(`ParserSource`), into the same chain.
+A format with a transducer part streams instead: the part is alchemy's
+text, which alchemy's runtime runs over the parser's rule passes
+(`ParserEventSource`, pruned), into the same stages; aless and alchemy-cli
+compose that chain. A format with no part is parsed whole and its value
+walked (`ParserSource`), as above.
 
 alchemy's shared types, the engine and the grammars are sibling
 checkouts named by path in `Cargo.toml`. From this directory:

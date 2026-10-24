@@ -9,7 +9,10 @@ import (
 // Routers is this package's implementation of alchemy's shared.Routers:
 // the stages alchemy's runtime builds on the transducer side, each made by
 // this package's constructor of the same name. A host hands it to
-// alchemy's Compile, with render's Renderers.
+// alchemy's Compile, with render's Renderers. The standard library's
+// table-from-json, csv, transduce-tree and transduce-records are alchemy's
+// own text, run by its interpreter over these stages in every runtime;
+// this package offers nothing in their place.
 func Routers() shared.Routers { return routers{} }
 
 type routers struct{}
@@ -23,15 +26,6 @@ func (routers) Router(specs []CaptureSpec, limits Limits, duplicates Duplicates,
 	return router, nil
 }
 
-// TableFromJSON is NewTableFromJSON.
-func (routers) TableFromJSON(binding TableBinding, limits Limits, duplicates Duplicates, metrics *Metrics, sink TableSink) (Sink, *Fail) {
-	table, f := NewTableFromJSON(binding, limits, duplicates, metrics, sink)
-	if f != nil {
-		return nil, f
-	}
-	return table, nil
-}
-
 // ScanEmit is NewScanEmit, over values of any type.
 func (routers) ScanEmit(initial any, step func(any, any) (Transition[any, any], *Fail), finish func(any) ([]any, *Fail), out func(any) (Flow, *Fail)) shared.ScanEmitter {
 	return NewScanEmit[any, any, any](initial, step, finish, out)
@@ -40,17 +34,4 @@ func (routers) ScanEmit(initial any, step func(any, any) (Transition[any, any], 
 // Guarded is NewGuarded.
 func (routers) Guarded(inner Sink, limits Limits, abort *AbortFlag, metrics *Metrics) Sink {
 	return NewGuarded(inner, limits, abort, metrics)
-}
-
-// TransduceTree is NewTransduceTree: alchemy's optional
-// shared.TreeRouters, the library's transduce-tree run natively.
-func (routers) TransduceTree(spec TreeSpec, downstream Sink) ParserSink {
-	return NewTransduceTree(spec, downstream)
-}
-
-// TransduceTreeReadsMemberAndText is alchemy's optional
-// shared.TreeTextRouters: NewTransduceTree reads a spec's :member and
-// :text, and holds a text to the spec's MaxTextBytes as it grows.
-func (routers) TransduceTreeReadsMemberAndText() bool {
-	return true
 }

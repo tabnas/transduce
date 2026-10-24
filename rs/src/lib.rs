@@ -8,10 +8,8 @@
 //!   boundary [`Sink`];
 //! - [`source`]s that produce it from a parsed value, and the source of
 //!   the parser's rule passes ([`ParserEventSource`], `ParserEvents/1`),
-//!   what a transducer part reads, from which a format streams;
-//! - [`TransduceTree`] and [`TransduceRecords`], alchemy's
-//!   `transduce-tree` and `transduce-records` run natively over those
-//!   passes;
+//!   what a transducer part reads, from which a format streams (the part
+//!   is alchemy's text, which alchemy's runtime runs over them);
 //! - [`Selector`]s and the matcher and router that recognize selected
 //!   scopes in one pass and materialize them under a byte limit;
 //! - the table protocol [`TableEvent`] (`TableRows/1`) and the standard
@@ -44,16 +42,12 @@ pub mod routers;
 pub mod scan;
 pub mod source;
 pub mod table_from_json;
-pub mod transduce_records;
-pub mod transduce_tree;
 
 /// The protocol modules, which are alchemy's shared types.
 pub use tabnas_alchemy::shared::{datum, error, event, limits, selector, sink, table};
 
 pub use tabnas_alchemy::shared::{
-    parser_event, records, records_name, records_state_bytes, records_state_refusal, tree,
-    tree_text_refusal, ParserEvent, ParserSink, PassAlt, PassToken, RecordsPhase, RecordsSpec,
-    RulePass, TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec,
+    parser_event, ParserEvent, ParserSink, PassAlt, PassToken, RulePass,
 };
 
 pub use datum::{
@@ -76,8 +70,6 @@ pub use table::{
     TableBinding, TableEvent, TableSink,
 };
 pub use table_from_json::TableFromJson;
-pub use transduce_records::TransduceRecords;
-pub use transduce_tree::TransduceTree;
 
 /// This crate's version, as `Cargo.toml` declares it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
