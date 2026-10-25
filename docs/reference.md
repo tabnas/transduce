@@ -511,8 +511,8 @@ and `["end"]`, the rule an object of `name`, `d`, `i`, `alt` (`p`, `r`,
 value, src, row, col]`), `forced`, `n` and, on a close pass with a scalar
 node, `value`. The `passes` stage leaves `i` out, and its rows hold no
 fixed token, since the engines differ on both. A token's value is
-written as JSON, so its lexeme is not in the encoding; alchemy-cli's
-tests of JSON's part, whose events carry it, pin it.
+written as JSON, so its lexeme is not in the encoding; dmog's tests
+of JSON's part, whose events carry it, pin it.
 
 `scan.tsv` drives `ScanEmit` with a running sum: an integer item adds
 itself and emits `"+<n>"`, `{"emit": [...]}` emits those strings,

@@ -130,7 +130,7 @@ says, in the terms of the engine table above:
   against 1.21 s; about a fifth on the Xeon, 1.35 s against 1.10 s, on
   2026-09-27), and text to table rows took 1.58 s where the part takes
   1.87 s. aless has read JSON through its part since rjrodger/aless#82
-  (step 9), and alchemy-cli since tabnas/alchemy-cli#50, so step 13
+  (step 9), and dmog since tabnas/alchemy-cli#50, so step 13
   removes a route no host took; the hosts have paid this since then.
 - **The stages downstream are not where the time goes.** Walking the
   parsed value is 183 MiB/s and the router plus the table transducer,
