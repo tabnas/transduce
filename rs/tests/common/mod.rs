@@ -18,11 +18,11 @@ use std::rc::Rc;
 use tabnas::Tabnas;
 use tabnas_support::{find_spec_dir, Failure, Row, Runner, SpecFile, Value};
 use tabnas_transduce::{
-    column_from_meta, AbortFlag, BoundColumn, CaptureSpec, Cell, Code, Datum, Duplicates, Fail,
-    Flow, Guarded, Limits, Metrics, MissingPolicy, OwnedJsonEvent, ParserEvent, ParserEventSource,
-    ParserSink, ParserSource, RouteSink, Router, ScanEmit, Schema, Segment, Selected, Selector,
-    Sink, Source, TableBinding, TableEvent, TableFromJson, TableSink, TransduceTree, Transition,
-    TreeContainer, TreeKey, TreeRule, TreeScalar, TreeSpec, ValueSource,
+    column_from_meta, replay, AbortFlag, BoundColumn, CaptureSpec, Cell, Code, Datum, Duplicates,
+    Fail, Flow, Guarded, Limits, Metrics, MissingPolicy, OwnedJsonEvent, ParserEvent,
+    ParserEventSource, ParserSink, ParserSource, RouteSink, Router, ScanEmit, Schema, Segment,
+    Selected, Selector, Sink, Source, TableBinding, TableEvent, TableFromJson, TableSink,
+    Transition, ValueSource,
 };
 
 /// The shared `test/spec` directory, found by walking up from the crate.
@@ -33,7 +33,7 @@ pub fn spec_dir() -> PathBuf {
 
 /// The fixture files and the runner each has: a new file without a runner
 /// fails `every_fixture_has_a_runner` rather than passing unread.
-pub const FIXTURES: [&str; 8] = [
+pub const FIXTURES: [&str; 7] = [
     "events.tsv",
     "limits.tsv",
     "lines.tsv",
@@ -41,7 +41,6 @@ pub const FIXTURES: [&str; 8] = [
     "route.tsv",
     "scan.tsv",
     "table.tsv",
-    "tree.tsv",
 ];
 
 /// A run that failed: the failure, and for an event stream the events
@@ -244,28 +243,12 @@ pub fn rust_rows(file: &str, runner: &Runner) -> SpecFile {
 // ---------------------------------------------------------------------
 // Driving a source.
 
-/// JSON's transducer part, as tabnas-json spells it: `transduce-tree` over
-/// the json grammar's rules, the spec `tree.tsv`'s json rows give.
-fn json_part() -> TreeSpec {
-    let rule = |container, key, scalar| TreeRule {
-        container,
-        key,
-        scalar,
-        ..TreeRule::default()
-    };
-    TreeSpec::new()
-        .with("map", rule(Some(TreeContainer::Object), None, None))
-        .with("list", rule(Some(TreeContainer::Array), None, None))
-        .with("pair", rule(None, Some(TreeKey::Token(0)), None))
-        .with("val", rule(None, None, Some(TreeScalar::Token(0))))
-}
-
 /// Run the row's source into `sink`: `grammar` and `mode` name it.
 ///
 /// - `materialize`: `ParserSource` over the grammar: its value, walked.
-/// - `part`: JSON's transducer part ([`json_part`]) natively over the
-///   passes `ParserEventSource` delivers, through the source's guard, as a
-///   host reads JSON: the document's events, lexemes kept. JSON only.
+/// - `events`: the input is the events themselves ([`events_input`]),
+///   replayed through the source's guard under the row's limits: what no
+///   parse delivers, a member repeated in one object.
 /// - `value`: the grammar's parse (an engine error is `Fail::from_tabnas`),
 ///   then `ValueSource` over the value. No limits apply on this path.
 ///
@@ -278,16 +261,10 @@ pub fn drive<S: Sink + Send + 'static>(row: &Row, input: &str, sink: S) -> (Resu
         "materialize" => ParserSource::new(grammar(name)(), input)
             .limits(limits)
             .run_owned(sink),
-        "part" => {
-            assert_eq!(name, "json", "{}: the part mode is JSON's", row.location());
-            let guarded = Guarded::new(sink, &limits, AbortFlag::new(), Metrics::new());
-            let (outcome, tree) = ParserEventSource::new(grammar(name)(), input)
-                .limits(limits.clone())
-                .run_owned(TransduceTree::new(
-                    json_part().with_max_text_bytes(limits.max_scalar_bytes),
-                    guarded,
-                ));
-            (outcome, tree.into_inner().into_inner())
+        "events" => {
+            let mut guarded = Guarded::new(sink, &limits, AbortFlag::new(), Metrics::new());
+            let outcome = replay(&events_input(row, input), &mut guarded);
+            (outcome, guarded.into_inner())
         }
         "value" => {
             let mut sink = sink;
@@ -300,6 +277,55 @@ pub fn drive<S: Sink + Send + 'static>(row: &Row, input: &str, sink: S) -> (Resu
         }
         other => panic!("{}: no mode {other:?}", row.location()),
     }
+}
+
+/// The `events` mode's input: the events themselves, in the fixture
+/// encoding [`event`] writes, for what no parse delivers (a member
+/// repeated in one object, which the engine's value keeps once).
+fn events_input(row: &Row, input: &str) -> Vec<OwnedJsonEvent> {
+    let json: serde_json::Value = serde_json::from_str(input)
+        .unwrap_or_else(|e| panic!("{}: the input is JSON events: {e}", row.location()));
+    let items = json
+        .as_array()
+        .unwrap_or_else(|| panic!("{}: the input is an array of events", row.location()));
+    items
+        .iter()
+        .map(|item| {
+            let parts = item
+                .as_array()
+                .filter(|parts| !parts.is_empty())
+                .unwrap_or_else(|| panic!("{}: an event is an array: {item}", row.location()));
+            let text = |i: usize| -> Box<str> {
+                parts
+                    .get(i)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| panic!("{}: a text is expected in {item}", row.location()))
+                    .into()
+            };
+            match parts[0].as_str() {
+                Some("object_start") => OwnedJsonEvent::ObjectStart,
+                Some("object_end") => OwnedJsonEvent::ObjectEnd,
+                Some("array_start") => OwnedJsonEvent::ArrayStart,
+                Some("array_end") => OwnedJsonEvent::ArrayEnd,
+                Some("key") => OwnedJsonEvent::Key(text(1)),
+                Some("null") => OwnedJsonEvent::Null,
+                Some("bool") => {
+                    OwnedJsonEvent::Bool(parts.get(1).and_then(|v| v.as_bool()).unwrap_or_else(
+                        || panic!("{}: a boolean is expected in {item}", row.location()),
+                    ))
+                }
+                Some("number") => OwnedJsonEvent::Number {
+                    value: parts.get(1).and_then(|v| v.as_f64()).unwrap_or_else(|| {
+                        panic!("{}: a number is expected in {item}", row.location())
+                    }),
+                    lexeme: parts.get(2).and_then(|v| v.as_str()).map(Into::into),
+                },
+                Some("string") => OwnedJsonEvent::String(text(1)),
+                Some("end") => OwnedJsonEvent::End,
+                _ => panic!("{}: no event {item}", row.location()),
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------
@@ -602,7 +628,7 @@ pub fn scan(row: &Row, script: &str) -> Result<Value, Failed> {
 }
 
 // ---------------------------------------------------------------------
-// The parser's rule passes, and the native transduce-tree over them.
+// The parser's rule passes.
 
 /// The parser a row names: a grammar of the harness's, or, for `spec`, the
 /// serialized grammar its `document` column holds.
@@ -670,86 +696,6 @@ pub fn parser_events(row: &Row, input: &str) -> Result<Value, Failed> {
         other => panic!("{}: no stage {other:?}", row.location()),
     };
     let recorded = Value::Array(seen.0.iter().map(encode).collect());
-    match outcome {
-        Ok(_) => Ok(recorded),
-        Err(fail) => Err(Failed {
-            fail: Box::new(fail),
-            prefix: Some(recorded),
-        }),
-    }
-}
-
-/// The row's `spec`: a JSON object of rules, each of `container`
-/// (`"object"` or `"array"`), `key` and `member` (each a string, or a
-/// token's index), `scalar` (a token's index, or `"value"`) and `text` (a
-/// boolean).
-pub fn tree_spec(row: &Row) -> TreeSpec {
-    let json = json_cell(row, "spec")
-        .unwrap_or_else(|| panic!("{}: a tree row has a spec", row.location()));
-    let rules = json
-        .as_object()
-        .unwrap_or_else(|| panic!("{}: spec is a JSON object", row.location()));
-    let index = |v: &serde_json::Value| {
-        v.as_u64()
-            .unwrap_or_else(|| panic!("{}: an index is a count: {v}", row.location()))
-            as usize
-    };
-    rules.iter().fold(TreeSpec::new(), |spec, (name, rule)| {
-        let container = match rule.get("container").and_then(|v| v.as_str()) {
-            None => None,
-            Some("object") => Some(TreeContainer::Object),
-            Some("array") => Some(TreeContainer::Array),
-            Some(other) => panic!("{}: no container {other:?}", row.location()),
-        };
-        let named = |field: &str| {
-            rule.get(field).map(|v| match v.as_str() {
-                Some(name) => TreeKey::Name(name.into()),
-                None => TreeKey::Token(index(v)),
-            })
-        };
-        let key = named("key");
-        let member = named("member");
-        let text = rule.get("text").is_some_and(|v| {
-            v.as_bool()
-                .unwrap_or_else(|| panic!("{}: text is a boolean: {v}", row.location()))
-        });
-        let scalar = rule.get("scalar").map(|v| match v.as_str() {
-            Some("value") => TreeScalar::Value,
-            Some(other) => panic!("{}: no scalar {other:?}", row.location()),
-            None => TreeScalar::Token(index(v)),
-        });
-        spec.with(
-            name,
-            TreeRule {
-                container,
-                key,
-                scalar,
-                member,
-                text,
-            },
-        )
-    })
-}
-
-/// `tree.tsv`: the events the native `transduce-tree` writes over the
-/// passes `ParserEventSource` delivers, through the source's guard, as a
-/// program's `transduce-tree` is lowered: its texts held to the row's
-/// `max_scalar_bytes`, as the lowering holds them.
-pub fn tree(row: &Row, input: &str) -> Result<Value, Failed> {
-    let limits = limits(row);
-    let guarded = Guarded::new(
-        Vec::<OwnedJsonEvent>::new(),
-        &limits,
-        AbortFlag::new(),
-        Metrics::new(),
-    );
-    let (outcome, native) = ParserEventSource::new(row_parser(row), input)
-        .limits(limits.clone())
-        .run_owned(TransduceTree::new(
-            tree_spec(row).with_max_text_bytes(limits.max_scalar_bytes),
-            guarded,
-        ));
-    let recorded = Value::Array(native.into_inner().into_inner().iter().map(event).collect());
     match outcome {
         Ok(_) => Ok(recorded),
         Err(fail) => Err(Failed {

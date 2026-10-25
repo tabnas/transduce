@@ -64,8 +64,10 @@ What the table says:
 - JSON Lines and CSV, which `LinesSource` read a record or a chunk of
   records at a time until step 12, are read through their parts from a
   reader, a window at a time, so their memory is bounded whatever the
-  file size: JSON Lines through `TransduceTree` ("From a reader" below),
-  CSV through `TransduceRecords` ("Records, natively").
+  file size ("From a reader" below). The parts ran natively here
+  (`TransduceTree`, `TransduceRecords`) until the ruling of 2026-10-24;
+  since then a part is alchemy's text alone, run by alchemy's runtime in
+  the host, and the measurements that named the natives are history.
 - Throughput through this crate is the engine's: about 1 MB/s for
   record-shaped data. The stages downstream (events, router, table, CSV)
   are measured separately by `cargo bench` and are not the bottleneck.
@@ -101,16 +103,21 @@ the rest on the same machine, with their own `parse_only` (1.21 s).
 | Group | What runs | Time | Throughput |
 |---|---|---|---|
 | `parse_only/json` | `tabnas_json::make().parse` alone | 1.22 s | 1.30 MiB/s |
-| `part/events_into_count_sink` | JSON's part, natively (`TransduceTree`), over `ParserEventSource`'s passes, behind `Guarded`, into `CountSink` | 1.90 s | 0.83 MiB/s |
-| `part/events_pruned_into_count_sink` | the same, the engine's arrays emptied behind the stream | 1.79 s | 0.89 MiB/s |
+| `part/events_into_count_sink` (retired 2026-10-24) | JSON's part, natively (`TransduceTree`), over `ParserEventSource`'s passes, behind `Guarded`, into `CountSink` | 1.90 s | 0.83 MiB/s |
+| `part/events_pruned_into_count_sink` (retired 2026-10-24) | the same, the engine's arrays emptied behind the stream | 1.79 s | 0.89 MiB/s |
 | `walk/value_source_into_count_sink` | `ValueSource` over the parsed value | 8.6 ms | 183 MiB/s |
 | `table_from_recording/router_and_table_into_count_table` | `Router` + `TableFromJson` from a recording, no parse | 33.5 ms | 47.4 MiB/s |
-| `table_from_text/part_pruned_into_table` | text to table rows through JSON's part, pruned | 1.87 s | 0.85 MiB/s |
+| `table_from_text/part_pruned_into_table` (retired 2026-10-24) | text to table rows through JSON's part, pruned | 1.87 s | 0.85 MiB/s |
 | `incremental/events_into_count_sink` (retired) | the rule-event adapter, no pruning, into `CountSink` | 1.58 s | 1.00 MiB/s |
 | `incremental/events_pruned_into_count_sink` (retired) | the same with `Prune::Under(records)` | 1.51 s | 1.05 MiB/s |
 | `table_from_text/incremental_pruned_into_table` (retired) | text to table rows, incremental and pruned | 1.58 s | 1.01 MiB/s |
 
-What the table says, in the terms of the engine table above:
+The `part` groups and `table_from_text/part_pruned_into_table` went with
+the native `TransduceTree` on 2026-10-24 (admin ADR-31: a part has one
+implementation, its alchemy text); `table_from_text` now measures the
+parse and its value walked into the table, and a part's cost is measured
+where the text runs, in aless ("Through aless" below). What the table
+says, in the terms of the engine table above:
 
 - **The part costs about half again the bare parse** (1.90 s against
   1.22 s): the source copies each pass the engine completes, its rule's

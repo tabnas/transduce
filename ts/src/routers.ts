@@ -1,11 +1,13 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
 // This package's stages as alchemy's `Routers`: what an alchemy program's
-// runtime builds its routes, tables, scans and guards from, and the native
-// `transduce-tree` it runs over the parser's rule passes. Alchemy
-// declares the interface (`@tabnas/alchemy/shared`) and imports no
-// transducer; a host passes `routers` to its `compile`, with render's
-// `renderers`: `compile(src, file, { routers, renderers })`.
+// runtime builds its routes, scans and guards from. Alchemy declares the
+// interface (`@tabnas/alchemy/shared`) and imports no transducer; a host
+// passes `routers` to its `compile`, with render's `renderers`:
+// `compile(src, file, { routers, renderers })`. The standard library's
+// `table-from-json`, `csv`, `transduce-tree` and `transduce-records` are
+// alchemy's own text, run by its interpreter over these stages in every
+// runtime; this package offers nothing in their place.
 
 import {
   AbortFlag,
@@ -14,22 +16,16 @@ import {
   Flow,
   Limits,
   Metrics,
-  ParserSink,
   RouteSink,
   Routers,
   Scan,
   Sink,
-  TableBinding,
-  TableSink,
   Transition,
-  TreeSpec,
 } from '@tabnas/alchemy/shared'
 
 import { Guarded } from './guard'
 import { Router } from './route'
 import { ScanEmit } from './scan'
-import { TableFromJson } from './table-from-json'
-import { TransduceTree } from './transduce-tree'
 
 // Each method constructs the stage it names with the same parameters.
 export const routers: Routers = Object.freeze({
@@ -43,16 +39,6 @@ export const routers: Routers = Object.freeze({
     return new Router(specs, limits, duplicates, metrics, downstream)
   },
 
-  tableFromJson(
-    binding: TableBinding,
-    limits: Limits,
-    duplicates: Duplicates,
-    metrics: Metrics,
-    sink: TableSink,
-  ): Sink {
-    return new TableFromJson(binding, limits, duplicates, metrics, sink)
-  },
-
   scanEmit<S, I, O>(
     initial: S,
     step: (state: S, item: I) => Transition<S, O>,
@@ -64,15 +50,5 @@ export const routers: Routers = Object.freeze({
 
   guarded(inner: Sink, limits: Limits, abort: AbortFlag, metrics: Metrics): Sink {
     return new Guarded(inner, limits, abort, metrics)
-  },
-
-  transduceTree(spec: TreeSpec, downstream: Sink): ParserSink {
-    return new TransduceTree(spec, downstream)
-  },
-
-  // TransduceTree reads a spec's `:member` and `:text`, and holds a text to
-  // the spec's `maxTextBytes` as it grows.
-  transduceTreeReadsMemberAndText(): boolean {
-    return true
   },
 })
