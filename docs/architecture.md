@@ -454,12 +454,12 @@ for the lexer (the only route to bounded memory on one huge JSON document).
 
 ## 7. Acceptance
 
-1. `ci/rust/run.sh` green in transduce, render, alchemy; aless gates green.
+1. `ci/rust/run.sh` green in transduce, render, alchemy; dmog gates green.
 2. Differential suites: incremental vs walk per grammar (transduce);
-   the library's text against the shared fixtures (alchemy-cli); rendered
+   the library's text against the shared fixtures (dmog); rendered
    CSV re-parsed by an independent reader (render); rendered JSON
    re-parsed equals input.
-3. The spec's worked example runs end to end through aless with the spec's
+3. The spec's worked example runs end to end through dmog with the spec's
    `api-binding` program and prints the spec's CSV bytes (CRLF, all quoted).
 4. Retention high-water flat across 10× rows; pruned incremental JSON export
    of a 30 MB document holds RSS near source size + O(record); JSONL/CSV via

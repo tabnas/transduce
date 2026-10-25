@@ -9,8 +9,8 @@
 //! parse and its value walked (`table_from_text`). Throughput is bytes of
 //! source per second, so the groups compare directly with BENCH.md. A
 //! format's transducer part is alchemy's text, run by alchemy's runtime,
-//! so its cost is measured where it runs: in aless and alchemy-cli, over
-//! this crate's `ParserEventSource`.
+//! so its cost is measured where it runs: in dmog, over this crate's
+//! `ParserEventSource`.
 
 #[path = "../tests/support/mod.rs"]
 mod support;

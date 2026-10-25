@@ -15,7 +15,7 @@
 //! through its transducer part (alchemy's text over `ParserEventSource`'s
 //! passes, pruned) hands the same events to the same stages. What pruning
 //! leaves of the engine's tree is `tests/prune_test.rs`'s to hold flat,
-//! for every grammar; alchemy-cli, which runs the parts, holds a part's
+//! for every grammar; dmog, which runs the parts, holds a part's
 //! run to it.
 
 mod support;

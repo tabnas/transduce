@@ -6,9 +6,9 @@ scopes that matter; the table transducer turns selected metadata and rows
 into a flat, budgeted table protocol that a renderer such as
 [tabnas-render](https://github.com/tabnas/render) writes as CSV or JSON.
 The declarative language that composes all of this is
-[tabnas-alchemy](https://github.com/tabnas/alchemy), and
-[aless](https://github.com/rjrodger/aless) exposes it from the command
-line.
+[tabnas-alchemy](https://github.com/tabnas/alchemy), and the `dmog`
+command ([tabnas/dmog](https://github.com/tabnas/dmog)) exposes it from
+the command line.
 
 ```
 tabnas parse ──rule passes──▶ format's part ──▶ JsonEvents/1 ──▶ router/captures ──▶ TableRows/1 ──▶ renderer ──▶ text

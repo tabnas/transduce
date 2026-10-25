@@ -51,8 +51,8 @@ assert!(table.ended);
 
 A format with a transducer part streams instead: the part is alchemy's
 text, which alchemy's runtime runs over the parser's rule passes
-(`ParserEventSource`, pruned), into the same stages; aless and alchemy-cli
-compose that chain. A format with no part is parsed whole and its value
+(`ParserEventSource`, pruned), into the same stages; dmog composes that
+chain. A format with no part is parsed whole and its value
 walked (`ParserSource`), as above.
 
 alchemy's shared types, the engine and the grammars are sibling
