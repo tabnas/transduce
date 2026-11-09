@@ -75,7 +75,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
-use tabnas::{Rule, RuleDone, RuleState, Tabnas, Value};
+use tabnas::{Context, Rule, RuleDone, RuleState, Tabnas, Value};
 
 use crate::datum::Datum;
 use crate::error::{Code, Fail};
@@ -315,7 +315,7 @@ impl<S: ParserSink> Relay<S> {
     }
 
     /// One pass the engine completed.
-    fn on_done(&mut self, rule: &Rule, done: &RuleDone) {
+    fn on_done(&mut self, rule: &Rule, context: &Context, done: &RuleDone) {
         if done.probe || !matches!(self.status, Status::Running) {
             return;
         }
@@ -335,7 +335,7 @@ impl<S: ParserSink> Relay<S> {
         };
         match self.send(&ev) {
             Ok(Flow::Continue) => {
-                if self.prune && !open {
+                if self.prune && !open && !pruning_held(context) {
                     empty_array(rule);
                 }
             }
@@ -358,9 +358,9 @@ fn install<S: ParserSink + Send + 'static>(
     abort: AbortFlag,
     stop: AbortFlag,
 ) {
-    parser.subscribe_rule_done(move |rule, _ctx, done| {
+    parser.subscribe_rule_done(move |rule, context, done| {
         if let Some(relay) = relay.upgrade() {
-            lock(&relay).on_done(rule, done);
+            lock(&relay).on_done(rule, context, done);
         }
     });
     parser.parse_guard(GUARD, move |_ctx| !abort.is_aborted() && !stop.is_aborted());
@@ -373,6 +373,19 @@ fn lock<S>(relay: &Mutex<Relay<S>>) -> MutexGuard<'_, Relay<S>> {
     relay
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// The key in the parse context's bag (`Context::u`) under which a grammar
+/// holds pruning: while its count is above zero the source empties no
+/// array. A grammar raises it while its actions may still read what an
+/// array holds after the array's close pass, as tabnas-yaml does while an
+/// anchored value is open, since it records the anchor only when the value
+/// closes (tabnas/yaml#138). The same key in every runtime.
+pub const PRUNE_HOLD: &str = "pruneHold";
+
+/// Whether a grammar holds pruning at this pass ([`PRUNE_HOLD`]).
+fn pruning_held(context: &Context) -> bool {
+    matches!(context.u.get(PRUNE_HOLD), Some(Value::Number(n)) if *n > 0.0)
 }
 
 /// Empty the array `rule`'s node is, when the source can empty it alone.

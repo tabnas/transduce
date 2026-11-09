@@ -129,7 +129,10 @@ prunes (`ParserEventSource::prune`), which is a verified capability,
 never an assumption: `source::capability::prunable(grammar)` answers
 from a list `rs/tests/prune_test.rs` keeps honest both ways, every
 document of every grammar run pruned and not, the passes and outcomes
-compared. The value the engine hands back afterwards is not used. In
+compared. A grammar holds the pruning off while it still needs what its
+arrays hold, by a count in the parse context's bag (`pruneHold`, which
+yaml raises while a value with an anchor is open, so an alias copies the
+whole node). The value the engine hands back afterwards is not used. In
 every other run the value is exactly the grammar's.
 
 ## Repository map

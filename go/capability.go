@@ -44,7 +44,7 @@ func AdapterBuilt() bool { return adapterBuilt }
 // not, on every document the suite reads them. Pruning needs no adapter,
 // so the list is the same in either build.
 var prunableGrammars = []string{
-	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "xml", "yaml", "zon",
+	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "yaml", "zon",
 }
 
 // PrunableGrammars is the grammars a ParserEventSource may prune, by the

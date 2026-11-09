@@ -42,7 +42,7 @@ use std::path::PathBuf;
 
 use tabnas::{Tabnas, Value};
 use tabnas_transduce::{
-    capability, Datum, Fail, Flow, ParserEvent, ParserEventSource, ParserSink, RulePass,
+    capability, Datum, Fail, Flow, ParserEvent, ParserEventSource, ParserSink, RulePass, PRUNE_HOLD,
 };
 
 /// The generated documents' records in the differential: as many shapes
@@ -491,4 +491,45 @@ leaves_the_pruned_tree_as_it_was! {
     ten_times_the_xml_records_leave_the_pruned_tree_as_it_was: "xml" "records.xml",
     ten_times_the_csv_records_leave_the_pruned_tree_as_it_was: "csv" "records.csv",
     ten_times_the_pgn_games_leave_the_pruned_tree_as_it_was: "pgn" "records.pgn",
+}
+
+/// What the tree of a JSON document of [`RECORDS`] records holds after a
+/// run that prunes, with the parse context's bag holding `hold` under
+/// [`PRUNE_HOLD`] from the parse's start, or nothing there.
+fn left_held(hold: Option<f64>) -> usize {
+    let mut parser = tabnas_json::make();
+    if let Some(count) = hold {
+        parser.parse_prepare(move |context| {
+            context
+                .u
+                .insert(PRUNE_HOLD.to_string(), Value::Number(count));
+        });
+    }
+    let text = generated("records.json", RECORDS);
+    let (result, _, value) = ParserEventSource::new(parser, &text)
+        .prune()
+        .unverified()
+        .run_owned_with_value(Passes::default());
+    assert_eq!(result.unwrap(), Flow::Continue);
+    elements(&value.expect("a parse that completed returns a value"))
+}
+
+/// A grammar holds the pruning off with a count above zero under
+/// [`PRUNE_HOLD`] in the parse context's bag, as tabnas-yaml does while a
+/// value with an anchor is open: while it is held the source empties no
+/// array, so the tree is the one a run that does not prune leaves, and a
+/// count of zero holds nothing.
+#[test]
+fn a_held_pruning_empties_no_array() {
+    let text = generated("records.json", RECORDS);
+    let (result, _, value) = run(tabnas_json::make, &text, false);
+    assert_eq!(result.unwrap(), Flow::Continue);
+    let whole = elements(&value.expect("a parse that completed returns a value"));
+    let (pruned, held, zero) = (left_held(None), left_held(Some(1.0)), left_held(Some(0.0)));
+    assert!(
+        pruned < whole,
+        "pruning empties the records' arrays: {pruned} of {whole} elements left"
+    );
+    assert_eq!(held, whole, "a hold of 1 empties nothing");
+    assert_eq!(zero, pruned, "a hold of 0 holds nothing");
 }

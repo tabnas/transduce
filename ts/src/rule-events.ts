@@ -572,7 +572,7 @@ function member(node: unknown, key: string): { found: boolean; value: unknown } 
 export function prepare(
   parser: Tabnas,
   proceed: () => boolean,
-  onDone?: (rule: Rule, done: RuleDone) => void,
+  onDone?: (rule: Rule, done: RuleDone, ctx: Context) => void,
 ): void {
   // The engine's `options` answers a `Record<string, any>`; what it holds
   // under `parse` is what `TabnasOptions` describes.
@@ -595,7 +595,7 @@ export function prepare(
     },
   } satisfies TabnasOptions)
   if (onDone) {
-    const ruleDone: RuleDoneSub = (rule, _ctx, done) => onDone(rule, done)
+    const ruleDone: RuleDoneSub = (rule, ctx, done) => onDone(rule, done, ctx)
     parser.sub({ ruleDone })
   }
 }

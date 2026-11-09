@@ -75,7 +75,7 @@ export { Prune, SourceMode, ValueSource, engineFailure, walkValue } from './sour
 export type { Source } from './source'
 export { Guarded } from './guard'
 export { ParserSource } from './parser-source'
-export { ParserEventSource } from './parser-event-source'
+export { PRUNE_HOLD, ParserEventSource } from './parser-event-source'
 export { parserEventFromJSON, parserEventToJSON } from '@tabnas/alchemy/shared'
 export type { ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
 export { DEFAULT_CHUNK_BYTES, LineFormat, LinesSource } from './lines'
