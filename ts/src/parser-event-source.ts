@@ -227,6 +227,8 @@ export class ParserEventSource {
     const abort = this.abortFlag
     const stop = new AbortFlag()
     const relay = new Relay(sink, this.sourceLimits.max_scalar_bytes, abort, stop, this.pruning)
+    // A stream keeps no more of the rules behind it than a grammar reads.
+    boundHistory(this.parser)
     prepare(
       this.parser,
       () => !abort.isAborted() && !stop.isAborted(),
@@ -317,6 +319,27 @@ class Relay {
 // is open, since it records the anchor only when the value closes
 // (tabnas/yaml#138). The same key in every runtime.
 export const PRUNE_HOLD = 'pruneHold'
+
+// The rule history a source leaves the engine: three predecessors. The
+// engine links each rule to the rule it replaced and the rule that pushed
+// it, and the TypeScript engine keeps the whole chain by default, so a
+// parse of a long flat document keeps every rule it made reachable until
+// the document ends, and its memory grows with the document's length
+// whatever the stream prunes (tabnas/parser doc/rule-history-bound.md).
+// Three is the most any grammar in the fleet reads back through the links,
+// and what the Rust engine bounds the history at by default. The same in
+// every runtime.
+export const STREAM_RULE_HISTORY = 3
+
+// Bound `parser`'s rule history at `STREAM_RULE_HISTORY` where the grammar
+// or the host left it unbounded (`null`, the default, or `false`); a bound
+// already set is left as it is.
+function boundHistory(parser: Tabnas): void {
+  const history = parser.options?.rule?.history
+  if (null == history || false === history) {
+    parser.options({ rule: { history: STREAM_RULE_HISTORY } })
+  }
+}
 
 // Whether a grammar holds pruning at this pass (`PRUNE_HOLD`).
 function pruningHeld(ctx: Context): boolean {
