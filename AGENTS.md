@@ -78,12 +78,11 @@ grammars a differential suite had verified (`capability::INCREMENTAL`),
 by inferring a document's events from the value cells the grammar's rules
 built. Every format on that list ships a transducer part now, which
 declares its events where the inference guessed them, or reads whole as
-markdown's manifest declares, so the Rust crate retired the inference,
-its list and its suite (`git log` has them). The TypeScript and Go ports
-keep theirs (`ts/src/rule-events.ts`, `go/rule_events.go`, and the shared
-fixtures' incremental rows, which the Rust runner skips) while their JSON
-Lines line sources read through it, until their engines read a reader a
-window at a time as Rust's does.
+markdown's manifest declares, so every port retired the inference, its
+list and its suite (`git log` has them): the Rust crate first, and the
+TypeScript and Go ports with their line sources once their engines read a
+reader a window at a time as Rust's does (step 19 of the plan's section
+13).
 
 **Repetition is replacement, never a push chain.** When a tabnas alternate hands control to another rule, it
 either pushes a child rule (`alt.p`: a new stack frame, for something the
@@ -96,30 +95,29 @@ iterations add nothing to the engine's rule depth `d`. Real recursion still nest
 (`stdlib/transduce.alc` in tabnas/alchemy, its one implementation), rests
 on it: a container whose rule is replaced by a rule the spec names a
 container is one container, so a list's items stream at one depth. So did
-the rule-event adapter this crate retired at step 13, and so do the
-TypeScript and Go ports' adapters, which are built on exactly that.
-Each opens a frame at the `d` of the rule whose node first
-shows a container and ends it when a rule at that `d` closes on the
-frame's cell, or the rule that started it closes, unless the close's
-alternate replaces the rule: a replaced rule hands its cell to its
-successor and the container goes on (the refinement over the prototype
+the rule-event adapters every port retired at step 13, which were built
+on exactly that. Each opened a frame at the `d` of the rule whose node
+first showed a container and ended it when a rule at that `d` closed on
+the frame's cell, or the rule that started it closed, unless the close's
+alternate replaced the rule: a replaced rule handed its cell to its
+successor and the container went on (the refinement over the prototype
 that made `yaml` verifiable; `docs/architecture.md` has the measurement).
-So a list's items are the closes of successive same-depth rules in one
-frame, and they stream at one depth.
+So a list's items were the closes of successive same-depth rules in one
+frame, and they streamed at one depth.
 
 A grammar that pushed a rule per item, spelling a star as right
-recursion, would grow `d` with the item count and the adapter would
-follow it: an item that builds its own node opens a frame inside the
-last, so the stream is a staircase, a `Start` for every item and every
-`End` at the file's end, nested where the source is flat, until `Guarded`
-fails the run with `RESOURCE_LIMIT_EXCEEDED` naming `max_depth` past the
-256th; items that share the parent's cell stream flat until a depth guard
-of the grammar's, where it has one, cancels the parse (`INPUT_INVALID`,
+recursion, would grow `d` with the item count, and the adapter followed
+it: an item that built its own node opened a frame inside the last, so
+the stream was a staircase, a `Start` for every item and every `End` at
+the file's end, nested where the source is flat, until `Guarded` failed
+the run with `RESOURCE_LIMIT_EXCEEDED` naming `max_depth` past the 256th;
+items that shared the parent's cell streamed flat until a depth guard of
+the grammar's, where it had one, cancelled the parse (`INPUT_INVALID`,
 naming the guard).
 Such a grammar is wrong even when it parses, and the fix is the grammar's
 or its compiler's (tabnas-bnf's `desugar` spelled every star that way
-until 2026-09-27), never the adapter's: no port lifts `max_depth` for it,
-flattens a staircase, or lists the grammar as verified. Rule depth over a
+until 2026-09-27), never this crate's: no port lifts `max_depth` for it
+or flattens a staircase. Rule depth over a
 repetition is constant; a test that repeats an item ten thousand times
 and asserts the maximum `d` stays what a single item needs is the proof.
 
@@ -152,13 +150,13 @@ every other run the value is exactly the grammar's.
 | `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; the engine's arrays emptied behind the stream when it prunes |
 | `rs/tests/prune_test.rs` | the differential suite behind `capability::prunable`, both ways, and ten times the records leaving the pruned tree as it was |
 | `rs/tests/retention_test.rs` | ten times the rows of a JSON document, parsed and walked into the table transducer, leave the retained high-water flat |
-| `rs/tests/reader_test.rs` | `ParserEventSource::from_reader` against the same text read whole: every fixture of a grammar the harness builds, a few bytes at a time, and a reader that fails |
+| `rs/tests/reader_test.rs` | `ParserEventSource::from_reader` against the same text read whole: every fixture of a grammar the harness builds, a few bytes at a time, and a reader that fails; its ports are `ts/test/reader.test.ts` (`ParserEventSource.fromReader`) and `go/reader_test.go` (`ParserEventSourceFromReader`) |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |
 | `rs/tests/fixtures/` | aless's fixtures and the OpenAPI YAML, one file per format at least |
 | `rs/tests/support/` | the generated worked-example documents (JSON, JSON Lines, CSV, YAML, XML, PGN), shared with the benches |
 | `rs/benches/` | criterion throughput benches: parse only, walk, router and table, text to table through the parse |
 | `docs/` | `architecture.md` (the design), `reference.md`, `translation.md` (any format to any other: the parts a format ships and the host composes) |
-| `test/spec/*.tsv` | the shared fixtures every runtime runs (the incremental and line-source rows the TypeScript and Go ports' alone, which the Rust runners skip by mode, `common::rust_rows`): events, routes, tables, the line sources, scan-emit, limits and the parser's rule passes (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
+| `test/spec/*.tsv` | the shared fixtures every runtime runs, row for row: events, routes, tables, scan-emit, limits and the parser's rule passes (`docs/reference.md`, "Shared fixtures", has the columns and encodings) |
 | `DIVERGENCE.md` | what a runtime may do differently, and what the fixtures leave out on purpose |
 | `ci/rust/run.sh` | the gate `.github/workflows/rust.yml` runs |
 
@@ -178,7 +176,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 plugin gates use, and needs the sibling checkouts its header lists.
 
 The shared fixtures in `test/spec/` are the contract the TypeScript and
-Go ports will run too. A behaviour a row can express gets a row, and a
+Go ports run too. A behaviour a row can express gets a row, and a
 row's expected value is checked against what the behaviour should be,
 not copied from what the code does: a fixture that pins a bug pins it
 for every runtime.
@@ -196,18 +194,18 @@ here) and written in `SCREAMING_SNAKE_CASE`:
 |---|---|
 | `DSL_PARSE_ERROR`, `DSL_TYPE_ERROR` | reserved for alchemy, which shares this enum |
 | `STREAM_REUSED` | a one-shot stream was consumed twice |
-| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; a run that prunes an unnamed or unverified grammar (refused before the parse); a stream `TreeContract` finds is no tree's (a value where a key is due, a close with nothing open, a second root, `End` out of place); in the TypeScript and Go ports, an incremental run of an unnamed or unverified grammar (refused before the parse), or one their adapter refuses mid-way: a list wrapped around a root already streamed (at the wrapping container, or when the root rule closes over a value that is not the streamed root), a map rewritten after streaming, a container opened inside a map before the member's key, a member announced and never stored |
+| `STREAMABILITY_UNKNOWN` | strict mode could not establish a plan's streamability; a run that prunes an unnamed or unverified grammar (refused before the parse); a stream `TreeContract` finds is no tree's (a value where a key is due, a close with nothing open, a second root, `End` out of place) |
 | `INPUT_ORDER_VIOLATION` | a row began before its metadata completed |
 | `CAPTURE_OVERLAP_UNSUPPORTED` | two captures select overlapping scopes |
 | `MISSING_VALUE` | a required value is absent and the policy is `Error` |
-| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy; a key repeated in one object of a stream `TreeContract` holds to a tree's events; in the TypeScript and Go ports, an incremental run whose grammar merged a repeated member's containers after the first was streamed |
+| `DUPLICATE_MEMBER` | a repeated member name under the `Reject` policy; a key repeated in one object of a stream `TreeContract` holds to a tree's events |
 | `INVALID_NUMBER` | a number lexeme the target cannot take |
 | `PROTOCOL_ORDER_ERROR` | a protocol event out of sequence |
 | `TARGET_VALUE_UNREPRESENTABLE` | the target format cannot carry the value |
 | `RESOURCE_LIMIT_EXCEEDED` | a `Limits` field was passed; `Fail::limit` names it |
-| `INPUT_INVALID` | the input did not parse, or could not be read (the engine's `unreadable`, from `ParserEventSource::from_reader`, at the character the reader failed at or the bytes that are not UTF-8); the engine's code and position ride along, from every source alike: a run that streams a document the grammar refuses fails with the same code and position after the prefix it streamed. A grammar's own guard cancelling the parse (tabnas-json refuses nesting past 128, below `Limits::max_depth`) is this too, and the message names the grammar's guard |
+| `INPUT_INVALID` | the input did not parse, or could not be read (the engine's `unreadable`, from `ParserEventSource::from_reader`, `ParserEventSource.fromReader` in TypeScript and `ParserEventSourceFromReader` in Go, at the character the reader failed at or the bytes that are not UTF-8); the engine's code and position ride along, from every source alike: a run that streams a document the grammar refuses fails with the same code and position after the prefix it streamed. A grammar's own guard cancelling the parse (tabnas-json refuses nesting past 128, below `Limits::max_depth`) is this too, and the message names the grammar's guard |
 | `OUTPUT_FAILED` | writing failed |
-| `ABORTED` | the run was cancelled; from the TypeScript and Go ports' line sources, `row` names the line the record or chunk it was reading starts on |
+| `ABORTED` | the run was cancelled |
 
 A code is never renamed, removed or repurposed. A failure also says
 whether output had already been committed (`output: "partial"`), because

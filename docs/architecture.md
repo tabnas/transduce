@@ -2,7 +2,7 @@
 
 > The protocol modules this design sketches (`event`, `sink`, `error`, `limits`, `datum`, `selector`, `table`) are now alchemy's shared types, [`tabnas_alchemy::shared`](https://github.com/tabnas/alchemy/blob/main/rs/src/shared), and the renderer-facing types (`TextOut`, the CSV and JSON options) moved there from render. transduce and render depend on them and re-export them; alchemy's runtime takes transduce's `Routers` and render's `Renderers` from its host.
 >
-> Since step 13 of alchemy's streaming plan, a format streams through the transducer part its package ships, over the parser's rule passes (`ParserEventSource`), and the Rust crate has retired the rule-event adapter (2.2), its verified list and `ParserSource`'s incremental mode: every format the list named has a part, or reads whole as markdown's manifest declares. `ParserSource` parses and walks; pruning is `ParserEventSource::prune`, gated on `capability::prunable`. The TypeScript and Go ports keep their adapters while their JSON Lines line sources read through them. Since step 12, JSON Lines and CSV stream through their parts from a reader as every other format does, and the Rust crate has retired `LinesSource` and `LineFormat`; the ports keep their line sources until their engines read a reader. Since the ruling of 2026-10-24 (admin ADR-31: correctness and architectural uniformity first), a part and the standard library's compositions have one implementation, their alchemy text, run by alchemy's interpreter in every runtime: the native `TransduceTree` and `TransduceRecords` this crate offered alchemy, and the native paths 4.4 below describes, are gone, and `routers()` answers the router, `scan-emit` and the guard alone. The design is otherwise as written.
+> Since step 13 of alchemy's streaming plan, a format streams through the transducer part its package ships, over the parser's rule passes (`ParserEventSource`), and the Rust crate has retired the rule-event adapter (2.2), its verified list and `ParserSource`'s incremental mode: every format the list named has a part, or reads whole as markdown's manifest declares. `ParserSource` parses and walks; pruning is `ParserEventSource::prune`, gated on `capability::prunable`. Since step 12, JSON Lines and CSV stream through their parts from a reader as every other format does, and the Rust crate has retired `LinesSource` and `LineFormat`. The TypeScript and Go ports retired their adapters and their line sources once their engines read a reader (the plan's step 19). Since the ruling of 2026-10-24 (admin ADR-31: correctness and architectural uniformity first), a part and the standard library's compositions have one implementation, their alchemy text, run by alchemy's interpreter in every runtime: the native `TransduceTree` and `TransduceRecords` this crate offered alchemy, and the native paths 4.4 below describes, are gone, and `routers()` answers the router, `scan-emit` and the guard alone. The design is otherwise as written.
 
 Status: implementation brief, 2026-09-27. Derived from the maintainer's design
 document "Declarative Streaming Transducers and Renderers" (the "spec" below)
@@ -239,10 +239,10 @@ pub mod capability { pub fn prunable(grammar: &str) -> bool }  // the verified l
 ### 2.2 The rule-event adapter (source/rule_events.rs)
 
 Retired from the Rust crate at step 13 of alchemy's streaming plan, once
-every format it streamed had a transducer part; the TypeScript and Go
-ports keep theirs (`ts/src/rule-events.ts`, `go/rule_events.go`). As it
-was designed: exactly the prototype's algorithm (section 0),
-productionized:
+every format it streamed had a transducer part, and from the TypeScript
+and Go ports (`ts/src/rule-events.ts`, `go/rule_events.go`) at the plan's
+step 19. As it was designed: exactly the prototype's algorithm (section
+0), productionized:
 
 - Installed on a `Tabnas` with `subscribe_rule_done`; state behind
   `Arc<Mutex<…>>` because the subscriber must be `Fn + Send + Sync`. The parse

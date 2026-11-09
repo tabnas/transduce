@@ -9,7 +9,6 @@ package tabnastransduce
 // fixture's expected JSON. This reproduces rs/tests/common/mod.rs.
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -35,30 +34,7 @@ import (
 // specFixtures is every fixture file and so every runner: a new file
 // without a runner fails TestEveryFixtureHasARunner rather than passing
 // unread.
-var specFixtures = []string{"events.tsv", "limits.tsv", "lines.tsv", "parser-events.tsv", "route.tsv", "scan.tsv", "table.tsv"}
-
-// rustIncremental is the Rust crate's verified list as it stood when the
-// crate retired its inference (step 13 of alchemy's streaming plan), which
-// the fixtures' incremental rows were written against: a row that streams
-// one of these grammars incrementally needs the adapter.
-var rustIncremental = map[string]bool{
-	"json": true, "json5": true, "jsonc": true, "jsonic": true,
-	"jsonl": true, "markdown": true, "yaml": true, "zon": true,
-}
-
-// needsAdapter reports whether a row runs the rule-event adapter: an
-// incremental run of a grammar the Rust list verifies, or JSON Lines on
-// the line source's incremental path. Such a row is skipped, by name, in
-// a build without the adapter.
-func needsAdapter(row *support.Row) bool {
-	switch row.Named("mode") {
-	case "incremental":
-		return rustIncremental[row.Named("grammar")]
-	case "lines-incremental":
-		return row.Named("grammar") == "jsonl"
-	}
-	return false
-}
+var specFixtures = []string{"events.tsv", "limits.tsv", "parser-events.tsv", "route.tsv", "scan.tsv", "table.tsv"}
 
 func specDir(t *testing.T) string {
 	t.Helper()
@@ -243,59 +219,18 @@ func duplicatesOf(t testing.TB, row *support.Row) Duplicates {
 	return Reject
 }
 
-func pruneOf(t testing.TB, row *support.Row) Prune {
-	switch v := jsonCell(t, row, "prune").(type) {
-	case nil:
-		return Prune{}
-	case string:
-		if v == "all" {
-			return Prune{Kind: PruneAllArrays}
-		}
-	}
-	return PruneUnderSelector(selectorOf(t, jsonCell(t, row, "prune")))
-}
-
-// lineOptions is the line format and chunk size from the row's
-// `options` column.
-func lineOptions(t testing.TB, row *support.Row) (LineFormat, int, bool) {
-	opts, _ := jsonCell(t, row, "options").(map[string]any)
-	chunk, hasChunk := 0, false
-	if c, ok := opts["chunk_bytes"]; ok {
-		chunk, hasChunk = asInt(t, c), true
-	}
-	switch row.Named("grammar") {
-	case "jsonl":
-		return JSONLFormat(), chunk, hasChunk
-	case "csv":
-		options := map[string]any{}
-		header := true
-		for _, name := range []string{"object", "strict", "number", "value", "trim"} {
-			if b, ok := opts[name].(bool); ok {
-				options[name] = b
-			}
-		}
-		if b, ok := opts["header"].(bool); ok {
-			header = b
-		}
-		return CSVFormatWith(header, options), chunk, hasChunk
-	}
-	t.Fatalf("%s: no line format for grammar %q", row.Where(), row.Named("grammar"))
-	return LineFormat{}, 0, false
-}
-
-// drive runs the row's source into sink. The events mode replays the
-// input's events (eventsInput) through the source's guard under the row's
-// limits: what no parse delivers, a member repeated in one object.
+// drive runs the row's source into sink: `grammar` and `mode` name it.
+// materialize is ParserSource over the grammar, its value walked; value is
+// the grammar's parse, then ValueSource over the value, which applies no
+// limits; and events replays the input's events (eventsInput) through the
+// source's guard under the row's limits: what no parse delivers, a member
+// repeated in one object.
 func drive(t testing.TB, row *support.Row, input string, sink Sink) (Flow, *Fail) {
 	name := row.Named("grammar")
 	limits := limitsOf(t, row)
-	switch mode := row.Named("mode"); mode {
-	case "materialize", "incremental":
-		m := MaterializeMode()
-		if mode == "incremental" {
-			m = IncrementalMode(pruneOf(t, row))
-		}
-		return NewParserSource(makeGrammar(name), input).Grammar(name).Mode(m).Limits(limits).Run(sink)
+	switch row.Named("mode") {
+	case "materialize":
+		return NewParserSource(makeGrammar(name), input).Limits(limits).Run(sink)
 	case "events":
 		guarded := NewGuarded(sink, limits, NewAbortFlag(), NewMetrics())
 		return Replay(eventsInput(t, row, input), guarded)
@@ -305,16 +240,6 @@ func drive(t testing.TB, row *support.Row, input string, sink Sink) (Flow, *Fail
 			return Continue, failFromError(err)
 		}
 		return ValueSource{Value: value}.Run(sink)
-	case "lines", "lines-incremental":
-		format, chunk, hasChunk := lineOptions(t, row)
-		src := NewLinesSource(bytes.NewReader([]byte(input)), format).Limits(limits)
-		if hasChunk {
-			src = src.ChunkBytes(chunk)
-		}
-		if mode == "lines" {
-			return src.Run(sink)
-		}
-		return src.RunIncremental(sink)
 	}
 	t.Fatalf("%s: no mode %q", row.Where(), row.Named("mode"))
 	return Continue, nil

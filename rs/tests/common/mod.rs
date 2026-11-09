@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use tabnas::Tabnas;
-use tabnas_support::{find_spec_dir, Failure, Row, Runner, SpecFile, Value};
+use tabnas_support::{find_spec_dir, Failure, Row, Value};
 use tabnas_transduce::{
     column_from_meta, replay, AbortFlag, BoundColumn, CaptureSpec, Cell, Code, Datum, Duplicates,
     Fail, Flow, Guarded, Limits, Metrics, MissingPolicy, OwnedJsonEvent, ParserEvent,
@@ -33,10 +33,9 @@ pub fn spec_dir() -> PathBuf {
 
 /// The fixture files and the runner each has: a new file without a runner
 /// fails `every_fixture_has_a_runner` rather than passing unread.
-pub const FIXTURES: [&str; 7] = [
+pub const FIXTURES: [&str; 6] = [
     "events.tsv",
     "limits.tsv",
-    "lines.tsv",
     "parser-events.tsv",
     "route.tsv",
     "scan.tsv",
@@ -223,23 +222,6 @@ pub fn duplicates(row: &Row) -> Duplicates {
     }
 }
 
-/// The modes a row may name that this crate has retired, whose rows are
-/// the TypeScript and Go ports' alone: the rule-event inference's
-/// (`incremental`, step 13 of alchemy's streaming plan) and the line
-/// source's (`lines` and `lines-incremental`, step 12). The Rust runners
-/// skip those rows, by their mode.
-pub const PORTS_ONLY: [&str; 3] = ["incremental", "lines", "lines-incremental"];
-
-/// The rows of the fixture `file` this crate runs: every row but those
-/// whose mode [`PORTS_ONLY`] names, loaded as `runner` loads a file.
-pub fn rust_rows(file: &str, runner: &Runner) -> SpecFile {
-    let mut spec = tabnas_support::load_spec(spec_dir().join(file), runner.load_options())
-        .unwrap_or_else(|e| panic!("{file} loads: {e}"));
-    spec.rows
-        .retain(|row| !PORTS_ONLY.contains(&row.named("mode")));
-    spec
-}
-
 // ---------------------------------------------------------------------
 // Driving a source.
 
@@ -251,9 +233,6 @@ pub fn rust_rows(file: &str, runner: &Runner) -> SpecFile {
 ///   parse delivers, a member repeated in one object.
 /// - `value`: the grammar's parse (an engine error is `Fail::from_tabnas`),
 ///   then `ValueSource` over the value. No limits apply on this path.
-///
-/// The ports' modes ([`PORTS_ONLY`]) are not this crate's: [`rust_rows`]
-/// leaves their rows out.
 pub fn drive<S: Sink + Send + 'static>(row: &Row, input: &str, sink: S) -> (Result<Flow, Fail>, S) {
     let name = row.named("grammar");
     let limits = limits(row);

@@ -38,15 +38,12 @@ import {
   Fail,
   Flow,
   JsonEvent,
-  LineFormat,
   Limits,
-  LinesSource,
   Metrics,
   ParserEvent,
   ParserEventSource,
   ParserSink,
   ParserSource,
-  Prune,
   RouteSink,
   Router,
   ScanEmit,
@@ -55,7 +52,6 @@ import {
   Selected,
   Selector,
   Sink,
-  SourceMode,
   TableBinding,
   TableEvent,
   TableFromJson,
@@ -83,7 +79,6 @@ export function specDir(): string {
 export const FIXTURES = [
   'events.tsv',
   'limits.tsv',
-  'lines.tsv',
   'parser-events.tsv',
   'route.tsv',
   'scan.tsv',
@@ -246,57 +241,23 @@ export function duplicates(row: Row): Duplicates {
   throw new Error(`${row.where()}: no duplicates policy ${JSON.stringify(d)}`)
 }
 
-function prune(row: Row): Prune {
-  const json = jsonCell(row, 'prune')
-  if (undefined === json) return Prune.never()
-  if ('all' === json) return Prune.allArrays()
-  return Prune.under(selector(json))
-}
-
-// The line format and chunk size from the row's `options` column:
-// `header` (default true), `object`, `number`, `value`, `trim` and
-// `strict` for the CSV grammar, and `chunk_bytes` for the source.
-function lineOptions(row: Row): { format: LineFormat; chunk?: number } {
-  const json = jsonCell(row, 'options') ?? {}
-  const chunk = 'number' === typeof json.chunk_bytes ? json.chunk_bytes : undefined
-  const name = row.named('grammar')
-  if ('jsonl' === name) return { format: LineFormat.jsonl(), chunk }
-  if ('csv' === name) {
-    const options: Record<string, unknown> = {}
-    for (const flag of ['object', 'strict', 'number', 'value', 'trim']) {
-      if ('boolean' === typeof json[flag]) options[flag] = json[flag]
-    }
-    const header = 'boolean' === typeof json.header ? json.header : true
-    return { format: LineFormat.csv(header, options), chunk }
-  }
-  throw new Error(`${row.where()}: no line format for grammar ${JSON.stringify(name)}`)
-}
-
 // ---------------------------------------------------------------------
 // Driving a source.
 
 // Run the row's source into `sink`: `grammar` and `mode` name it.
 //
-// - `materialize` and `incremental`: `ParserSource` over the grammar,
-//   named with `.grammar`, in that mode (`prune` column for incremental).
+// - `materialize`: `ParserSource` over the grammar: its value, walked.
 // - `events`: the input is the events themselves (`eventsInput`), replayed
 //   through the source's guard under the row's limits: what no parse
 //   delivers, a member repeated in one object.
 // - `value`: the grammar's parse (an engine error is `Fail.fromTabnas`),
 //   then `ValueSource` over the value. No limits apply on this path.
-// - `lines` and `lines-incremental`: `LinesSource` over the text, the
-//   walking path (`run`) and the incremental path (`runIncremental`).
 export function drive(row: Row, input: string, sink: Sink): Flow {
   const name = row.named('grammar')
   const mode = row.named('mode')
   switch (mode) {
     case 'materialize':
-    case 'incremental':
-      return new ParserSource(grammar(name), input)
-        .grammar(name)
-        .mode('materialize' === mode ? SourceMode.materialize() : SourceMode.incremental(prune(row)))
-        .limits(limits(row))
-        .run(sink)
+      return new ParserSource(grammar(name), input).limits(limits(row)).run(sink)
     case 'events': {
       const guarded = new Guarded(sink, limits(row), new AbortFlag(), new Metrics())
       return replay(eventsInput(row, input), guarded)
@@ -309,13 +270,6 @@ export function drive(row: Row, input: string, sink: Sink): Flow {
         throw Fail.fromTabnas(err)
       }
       return new ValueSource(value).run(sink)
-    }
-    case 'lines':
-    case 'lines-incremental': {
-      const { format, chunk } = lineOptions(row)
-      const source = new LinesSource(Buffer.from(input, 'utf8'), format).limits(limits(row))
-      if (undefined !== chunk) source.chunkBytes(chunk)
-      return 'lines' === mode ? source.run(sink) : source.runIncremental(sink)
     }
     default:
       throw new Error(`${row.where()}: no mode ${JSON.stringify(mode)}`)

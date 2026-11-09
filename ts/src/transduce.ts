@@ -8,11 +8,11 @@
 //
 // - the source protocol `JsonEvent` (`JsonEvents/1`) and the push boundary
 //   `Sink`;
-// - sources that produce it from a parsed value, from a live tabnas parse
-//   through the engine's rule events, or from line-delimited input, and
-//   the source of the parser's rule passes themselves (`ParserEventSource`,
-//   `ParserEvents/1`), what a transducer part reads (the part is alchemy's
-//   text, which alchemy's runtime runs over them);
+// - sources that produce it from a parsed value, and the source of the
+//   parser's rule passes (`ParserEventSource`, `ParserEvents/1`), what a
+//   transducer part reads, from a text or from a reader, from which a
+//   format streams (the part is alchemy's text, which alchemy's runtime
+//   runs over them);
 // - `Selector`s and the matcher and router that recognize selected scopes
 //   in one pass and materialize them under a byte limit;
 // - the table protocol `TableEvent` (`TableRows/1`) and the standard
@@ -71,16 +71,14 @@ export { Path, Selector, keyText, pathText } from '@tabnas/alchemy/shared'
 export type { Segment, Step } from '@tabnas/alchemy/shared'
 export { CountSink, EventRecorder, FnSink, TreeContract, replay } from '@tabnas/alchemy/shared'
 export type { Flow, Sink } from '@tabnas/alchemy/shared'
-export { Prune, SourceMode, ValueSource, engineFailure, walkValue } from './source'
+export { ValueSource, engineFailure, walkValue } from './source'
 export type { Source } from './source'
 export { Guarded } from './guard'
 export { ParserSource } from './parser-source'
 export { PRUNE_HOLD, ParserEventSource } from './parser-event-source'
 export { parserEventFromJSON, parserEventToJSON } from '@tabnas/alchemy/shared'
 export type { ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
-export { DEFAULT_CHUNK_BYTES, LineFormat, LinesSource } from './lines'
-export type { LinesChunk, LinesInput, LinesWriter } from './lines'
-export { INCREMENTAL, PRUNABLE, capability, isIncremental, isPrunable } from './capability'
+export { PRUNABLE, capability, isPrunable } from './capability'
 export { Cell, Schema, Table, boundColumn, columnFromMeta } from '@tabnas/alchemy/shared'
 export type {
   BoundColumn,

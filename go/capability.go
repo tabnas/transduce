@@ -2,47 +2,23 @@
 
 package tabnastransduce
 
-// Which grammars the incremental source is verified for.
+// Which grammars a ParserEventSource may prune behind its stream
+// (rs/src/source/capability.rs): a verified capability, never an
+// assumption, earned per runtime. prune_test.go runs every document of
+// every grammar module the tests depend on pruned and not, compares the
+// passes and the outcomes, and asserts the list in both directions, so it
+// can rot in neither.
 //
-// Incremental streaming is a per-grammar VERIFIED capability, never an
-// assumption, and it is earned per runtime: incremental_test.go runs
-// every fixture of every grammar module the tests depend on through both
-// ModeIncremental and ModeMaterialize and compares the recordings. A
-// grammar is listed only when no fixture produced a completed stream
-// that disagrees with the walk, and the test asserts the list in both
-// directions, so it can rot in neither. A grammar not listed still works
-// through ModeMaterialize and ValueSource; it just retains the whole
-// value, and ParserSource refuses to run it incrementally.
-//
-// The adapter needs the engine's node-cell identity, built only with the
-// tabnas_nodecell tag (see the package documentation); without it the
-// list is empty.
-
-// IncrementalGrammars is the grammars whose incremental events never
-// contradict the whole-value walk on any fixture, by the name their
-// module uses (github.com/tabnas/<name>/go). The slice is a copy.
-func IncrementalGrammars() []string {
-	return append([]string(nil), incrementalGrammars...)
-}
-
-// Incremental reports whether grammar may be run with ModeIncremental.
-func Incremental(grammar string) bool {
-	for _, name := range incrementalGrammars {
-		if name == grammar {
-			return true
-		}
-	}
-	return false
-}
-
-// AdapterBuilt reports whether this build has the rule-event adapter
-// (the tabnas_nodecell build tag).
-func AdapterBuilt() bool { return adapterBuilt }
+// The incremental list, the grammars whose rule events the inference in
+// rule_events.go turned into a document's events, is gone with the
+// inference (alchemy's streaming plan, step 13, in Rust first and then in
+// this port): every format on it has a transducer part now, or reads whole
+// as markdown declares, and a part makes the events.
 
 // prunableGrammars are the grammars prune_test.go verified in this
 // runtime: their passes are the same whether ParserEventSource prunes or
-// not, on every document the suite reads them. Pruning needs no adapter,
-// so the list is the same in either build.
+// not, on every document the suite reads them. Go's omits pgn, which its
+// suite does not run (DIVERGENCE.md 4).
 var prunableGrammars = []string{
 	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "yaml", "zon",
 }

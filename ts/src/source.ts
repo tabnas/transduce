@@ -4,22 +4,30 @@
 //
 // - `ValueSource` walks a parsed engine value. Always correct, retains the
 //   whole value: the fallback for every grammar.
-// - `ParserSource` drives a tabnas parse of one text and, in incremental
-//   mode, turns its rule events into source events as they happen, for the
-//   grammars the differential suite has verified (`capability`); in
-//   materialize mode it parses and walks.
-// - `LinesSource` reads JSON Lines or CSV a record (or a chunk of records)
-//   at a time, bounding memory whatever the input's size.
+// - `ParserSource` parses one text with a tabnas parser and walks its
+//   value: the whole value, for every grammar. A format whose package ships
+//   a transducer part streams through it instead, over `ParserEventSource`;
+//   the rule-event inference that streamed the verified grammars before the
+//   parts was retired with alchemy's streaming plan's step 13, in Rust
+//   first and then here.
+// - `ParserEventSource` drives a tabnas parse of one text, or of what a
+//   reader gives (`ParserEventSource.fromReader`), and relays its rule
+//   passes as `ParserEvents/1`, the input a transducer part reads. A
+//   line-delimited format, JSON Lines and CSV, streams through its part
+//   from a reader, a window at a time where the grammar declares
+//   `lex.window`; the line source that read them a record or a chunk at a
+//   time was retired with alchemy's step 12.
 //
-// Every source emits through `Guarded`, which enforces the source limits,
-// polls the abort flag and counts the source metrics.
+// Every JSON-events source emits through `Guarded`, which enforces the
+// source limits, polls the abort flag and counts the source metrics;
+// `ParserEventSource` holds `max_scalar_bytes` on each pass as it builds
+// it, and polls the flag and counts its events the same way.
 
 import {
   AbortFlag,
   Ev,
   Fail,
   Flow,
-  Selector,
   Sink,
   engineCode,
   engineDetail,
@@ -27,44 +35,7 @@ import {
   engineScalar,
   isEngineMap,
 } from '@tabnas/alchemy/shared'
-
-// Which arrays the incremental source empties as it streams them: none
-// (`never`), the array whose elements the selector names (`under`: a
-// trailing `[*]` names the elements; without one the selector names the
-// array), or every array (`all_arrays`). Pruning alters the value the
-// engine returns, which the incremental source discards; it is never
-// applied in materialize mode.
-export type Prune =
-  | { type: 'never' }
-  | { type: 'under'; selector: Selector }
-  | { type: 'all_arrays' }
-
-export const Prune = Object.freeze({
-  never(): Prune {
-    return { type: 'never' }
-  },
-  under(selector: Selector): Prune {
-    return { type: 'under', selector }
-  },
-  allArrays(): Prune {
-    return { type: 'all_arrays' }
-  },
-})
-
-// How `ParserSource` produces its events: parse the whole text, then walk
-// the value (`materialize`, sound for every grammar), or emit from the
-// engine's rule events as the parse proceeds (`incremental`, sound for the
-// grammars `capability.incremental` lists).
-export type SourceMode = { type: 'materialize' } | { type: 'incremental'; prune: Prune }
-
-export const SourceMode = Object.freeze({
-  materialize(): SourceMode {
-    return { type: 'materialize' }
-  },
-  incremental(prune: Prune = Prune.never()): SourceMode {
-    return { type: 'incremental', prune }
-  },
-})
+import type { Context, Rule, RuleDone, RuleDoneSub, Tabnas, TabnasOptions } from '@tabnas/parser'
 
 // Something that can drive a sink with one document's events. `run`
 // returns `'stop'` when the sink stopped it (the document was not
@@ -93,6 +64,44 @@ export function engineFailure(error: unknown, abort: AbortFlag): Fail {
     `the grammar stopped the parse with a guard of its own (${engineCode(error)}: ` +
     `${engineDetail(error)}); a grammar may refuse nesting or size below this crate's Limits`
   return fail
+}
+
+// The parse budget on `parser`, and with `onDone` a rule-done subscriber:
+// the budget cancels the parse as soon as `proceed` answers false, while
+// still consulting any budget check the grammar installed at its own
+// cadence, and the subscriber hands every rule pass to `onDone`. Member
+// order is recorded on the engine's maps (`map.ordered`), which leaves the
+// values' shape alone. The engine has no way to take either back, so a
+// parser is given to one source.
+export function prepare(
+  parser: Tabnas,
+  proceed: () => boolean,
+  onDone?: (rule: Rule, done: RuleDone, ctx: Context) => void,
+): void {
+  // The engine's `options` answers a `Record<string, any>`; what it holds
+  // under `parse` is what `TabnasOptions` describes.
+  const parse: TabnasOptions['parse'] = parser.options?.parse
+  const budget = parse?.budget ?? {}
+  const prev = 'function' === typeof budget.onCheck ? budget.onCheck : null
+  const every = budget.checkEveryN ?? 0
+  const prevN = null !== prev && 0 < every ? every : 0
+  parser.options({
+    map: { ordered: true },
+    parse: {
+      budget: {
+        checkEveryN: 1,
+        onCheck: (ctx: Context) => {
+          if (!proceed()) return false
+          if (null !== prev && 0 < prevN && 0 === ctx.kI % prevN) return prev(ctx)
+          return true
+        },
+      },
+    },
+  } satisfies TabnasOptions)
+  if (onDone) {
+    const ruleDone: RuleDoneSub = (rule, ctx, done) => onDone(rule, done, ctx)
+    parser.sub({ ruleDone })
+  }
 }
 
 // Emit one engine value's events (without `end`). `undefined` is `null`,

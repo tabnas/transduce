@@ -55,8 +55,7 @@ input	grammar	mode	captures	duplicates	expected	path
 [["object_start"],["key","a"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","a"],["object_start"],["key","x"],["number",2,"2"],["object_end"],["object_end"],["end"]]	json	events	[{"tag":"a","select":["a"]}]	first_wins	[["a",".a",["object",["x",["number",1,"1"]]]],["a",".a",["object",["x",["number",2,"2"]]]],"end"]
 [["object_start"],["key","a"],["object_start"],["key","x"],["number",1,"1"],["object_end"],["key","a"],["object_start"],["key","x"],["number",2,"2"],["object_end"],["object_end"],["end"]]	json	events	[{"tag":"a","select":["a"]}]	reject	[["a",".a",["object",["x",["number",1,"1"]]]],["a",".a",["object",["x",["number",2,"2"]]]],"end"]
 a: 1\na: 2\nb: [3]\n	yaml	materialize	[{"tag":"root","select":[]}]	last_wins	[["root",".",["object",["a",["number",2,null]],["b",["array",["number",3,null]]]]],"end"]
-# Any source: yaml, and CSV a chunk at a time.
+# Any source: yaml.
 a:\n  - x: 1\n  - x: 2.0\n	yaml	materialize	[{"tag":"row","select":["a",{"each":"index"}]}]		[["row",".a[0]",["object",["x",["number",1,null]]]],["row",".a[1]",["object",["x",["number",2,null]]]],"end"]
-id,n\n1,x\n	csv	lines	[{"tag":"row","select":[{"each":"index"}]}]		[["row","[0]",["object",["id","1"],["n","x"]]],"end"]
 # A source failure reaches the route unchanged.
 {"rows":[{"a":1},\n{"a": }]}	json	materialize	[{"tag":"row","select":["rows",{"each":"index"}]}]		ERROR:INPUT_INVALID@2:7
