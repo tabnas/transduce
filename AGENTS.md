@@ -69,7 +69,7 @@ The two sources, in order of preference:
 
 | Source | When | Memory |
 |---|---|---|
-| `ParserEventSource` and the format's transducer part | a format whose package ships a part | the engine's own per-parse state, plus one selected scope; from a reader, a window of the input when the grammar declares `lex.window` |
+| `ParserEventSource` and the format's transducer part | a format whose package ships a part | the engine's own per-parse state, its rule history bounded at three predecessors (by the Rust engine's default and TypeScript's `STREAM_RULE_HISTORY`; Go's is unbounded, `DIVERGENCE.md` entry 5), plus one selected scope; from a reader, a window of the input when the grammar declares `lex.window` |
 | `ParserSource` / `ValueSource` | every other grammar | the whole parsed value |
 
 **A format streams through its part, never through inference.** Until
