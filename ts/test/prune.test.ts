@@ -31,6 +31,7 @@ import {
   Datum,
   Flow,
   PRUNABLE,
+  PRUNE_HOLD,
   ParserEvent,
   ParserEventSource,
   ParserSink,
@@ -296,5 +297,29 @@ describe('pruning', () => {
     assert.deepStrictEqual(pruned.passes.exact, whole.passes.exact)
     assert.deepStrictEqual(json(whole.value), JSON.parse(src))
     assert.deepStrictEqual(json(pruned.value), { a: [], b: [], d: { e: 'f' } })
+  })
+
+  // A grammar holds the pruning off with a count above zero under
+  // PRUNE_HOLD in the parse context's bag, as @tabnas/yaml does while a
+  // value with an anchor is open: while it is held the source empties no
+  // array, and a count of zero holds nothing.
+  it('a held pruning empties no array', () => {
+    const src = '{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}'
+    const json = (value: unknown) => JSON.parse(JSON.stringify(value))
+    const held = (count: number) => {
+      const parser = GRAMMARS.json()
+      parser.options({ parse: { prepare: { hold: (_: unknown, ctx: any) => (ctx.u[PRUNE_HOLD] = count) } } })
+      const source = new ParserEventSource(parser, src).prune().unverified()
+      const passes = new Passes()
+      const { flow, value } = source.runWithValue(passes)
+      assert.strictEqual(`${flow}`, 'continue')
+      return { passes, value: json(value) }
+    }
+    const whole = run('json', src, false)
+    const one = held(1)
+    const zero = held(0)
+    assert.deepStrictEqual(one.passes.exact, whole.passes.exact)
+    assert.deepStrictEqual(one.value, JSON.parse(src))
+    assert.deepStrictEqual(zero.value, { a: [], b: [], d: { e: 'f' } })
   })
 })

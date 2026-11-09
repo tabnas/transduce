@@ -250,9 +250,31 @@ func (r *relay) onDone(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleD
 	case flow == Stop:
 		r.status = relayStopped
 		r.stop.Abort()
-	case r.prune && !open:
+	case r.prune && !open && !pruningHeld(ctx):
 		emptyList(rule)
 	}
+}
+
+// PruneHold is the key in the parse context's bag (ctx.U) under which a
+// grammar holds pruning: while its count is above zero the source empties
+// no list. A grammar raises it while its actions may still read what a list
+// holds after the list's close pass, as tabnas/yaml does while an anchored
+// value is open, since it records the anchor only when the value closes
+// (tabnas/yaml#138). The same key in every runtime.
+const PruneHold = "pruneHold"
+
+// pruningHeld is whether a grammar holds pruning at this pass (PruneHold).
+func pruningHeld(ctx *tabnas.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	switch hold := ctx.U[PruneHold].(type) {
+	case int:
+		return hold > 0
+	case float64:
+		return hold > 0
+	}
+	return false
 }
 
 // emptyList truncates the list rule's node belongs to, in place, in the

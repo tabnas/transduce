@@ -61,8 +61,8 @@ export function isIncremental(grammar: string): boolean {
 // The grammars whose passes a `ParserEventSource` relays alike whether it
 // prunes or not, on every document `test/prune.test.ts` reads them, by the
 // name of the format each reads, as `INCREMENTAL` names them. The suite
-// asserts the list in both directions; `toml` is not on it, since its
-// message for a key defined twice quotes the value, which pruning empties.
+// asserts the list in both directions. `toml` joined it with @tabnas/toml
+// 0.5.20, whose message for a key defined twice names no value.
 export const PRUNABLE: readonly string[] = Object.freeze([
   'csv',
   'feed',
@@ -74,6 +74,7 @@ export const PRUNABLE: readonly string[] = Object.freeze([
   'jsonl',
   'markdown',
   'pgn',
+  'toml',
   'xml',
   'yaml',
   'zon',

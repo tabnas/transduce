@@ -81,7 +81,7 @@ import {
   utf8Bytes,
 } from '@tabnas/alchemy/shared'
 import type { Flow, ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
-import type { Rule, RuleDone, Tabnas } from '@tabnas/parser'
+import type { Context, Rule, RuleDone, Tabnas } from '@tabnas/parser'
 
 import { isPrunable } from './capability'
 import { prepare } from './rule-events'
@@ -194,7 +194,7 @@ export class ParserEventSource {
     prepare(
       this.parser,
       () => !abort.isAborted() && !stop.isAborted(),
-      (rule, done) => relay.onDone(rule, done),
+      (rule, done, ctx) => relay.onDone(rule, done, ctx),
     )
     let parsed: { ok: true; value: unknown } | { ok: false; error: unknown }
     try {
@@ -242,7 +242,7 @@ class Relay {
   }
 
   // One pass the engine completed.
-  onDone(rule: Rule, done: RuleDone): void {
+  onDone(rule: Rule, done: RuleDone, ctx: Context): void {
     if (true === done.probe || 'running' !== this.status.type) return
     if (this.abort.isAborted()) {
       this.fail(Fail.aborted())
@@ -261,13 +261,27 @@ class Relay {
       if ('stop' === this.send(ev)) {
         this.status = { type: 'stopped' }
         this.stop.abort()
-      } else if (this.prune && !open) {
+      } else if (this.prune && !open && !pruningHeld(ctx)) {
         emptyArray(rule)
       }
     } catch (error) {
       this.fail(error)
     }
   }
+}
+
+// The key in the parse context's bag (`ctx.u`) under which a grammar holds
+// pruning: while its count is above zero the source empties no array. A
+// grammar raises it while its actions may still read what an array holds
+// after the array's close pass, as @tabnas/yaml does while an anchored value
+// is open, since it records the anchor only when the value closes
+// (tabnas/yaml#138). The same key in every runtime.
+export const PRUNE_HOLD = 'pruneHold'
+
+// Whether a grammar holds pruning at this pass (`PRUNE_HOLD`).
+function pruningHeld(ctx: Context): boolean {
+  const hold = ctx?.u?.[PRUNE_HOLD]
+  return 'number' === typeof hold && 0 < hold
 }
 
 // Empty the array `rule`'s node is, in place, so every holder of it sees

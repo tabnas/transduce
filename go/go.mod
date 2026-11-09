@@ -24,9 +24,9 @@ require (
 	github.com/tabnas/jsonl/go v0.1.19
 	github.com/tabnas/markdown/go v0.7.13
 	github.com/tabnas/support/go v0.3.9
-	github.com/tabnas/toml/go v0.5.18
+	github.com/tabnas/toml/go v0.5.20
 	github.com/tabnas/xml/go v0.7.19
-	github.com/tabnas/yaml/go v0.5.26
+	github.com/tabnas/yaml/go v0.5.28
 	github.com/tabnas/zon/go v0.5.18
 )
 

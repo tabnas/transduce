@@ -150,26 +150,39 @@ elsewhere as it is, since emptying the node's copy would free nothing and
 would copy it. `run_owned_with_value` (`RunWithValue`, `runWithValue`)
 hands back the tree the run left, which exists for a test to measure.
 
+A grammar holds the pruning off while it still needs what its arrays
+hold. It raises a count, `pruneHold`, in the parse context's bag
+(`Context::u` in Rust, `Context.U` in Go, `ctx.u` in TypeScript; the
+source exports the key as `PRUNE_HOLD`, `PruneHold` in Go), and the source
+empties nothing while the count is above zero. yaml raises it when a value
+with an anchor opens and lowers it once the anchor is recorded (tabnas-yaml
+0.5.28), so the node an alias copies is the whole of what the document
+anchored: an alias used as a key is that node's text (`1,2` for `&a [1,
+2]`), pruned or not.
+
 Pruning alters the value the engine returns, so it is sound only for a
 grammar whose passes do not depend on what its arrays hold, and it is a
 verified capability. `capability::PRUNABLE`
 lists `csv`, `feed`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`,
-`markdown`, `pgn`, `xml`, `yaml` and `zon` (Go's omits `pgn`, which its
-suite does not run). `rs/tests/prune_test.rs` and its ports run every
+`markdown`, `pgn`, `toml`, `xml`, `yaml` and `zon` (Go's omits `pgn`,
+which its suite does not run). `rs/tests/prune_test.rs` and its ports run every
 document each grammar reads, pruned and not: the committed fixtures, the
 generated worked-example documents, and every document of the grammar's
 own `test/spec` corpus. A listed grammar's pruned run relays the same
 passes, pass for pass in the fixture encoding, and ends the same way, with
 one difference the contract allows: a token whose value is a container of
 the tree carries what the tree holds when its pass is made, so the arrays
-in it may have been emptied, while its kind and its maps' members are as
-they were. yaml's lexer resolves an alias so, to the anchored node (`a:
-&items [1, 2]` and then `b: *items`), and yaml's part reads such a token's
-kind alone, refusing an alias to a sequence or a mapping as one whose
-members the passes do not show. A part that read the elements of a
-token's arrays would read what pruning left, so none does. `toml` is not
-listed: its message for a key defined twice quotes the earlier value,
-which pruning empties (`cannot define arr, it already has the value []`).
+in it may have been emptied, unless the grammar held the pruning while it
+built them, while its kind and its maps' members are as they were. yaml's
+lexer resolves an alias so, to the anchored node (`a: &items [1, 2]` and
+then `b: *items`), which the hold keeps whole, and yaml's part reads such
+a token's kind alone, refusing an alias to a sequence or a mapping as one
+whose members the passes do not show. A part that read the elements of a
+token's arrays would read what pruning left wherever no hold kept them, so
+none does. `toml` joined the list with tabnas-toml 0.5.20, whose message
+for a key defined twice names the key and says it is already defined:
+before, it quoted the earlier value, which pruning empties (`cannot define
+arr, it already has the value []`).
 The suite asserts the list in both directions, and measures what pruning
 is for: ten times the records of a JSON, JSON Lines, CSV, YAML, XML or PGN
 document leave the pruned tree holding as many elements as before (six

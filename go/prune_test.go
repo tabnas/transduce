@@ -395,3 +395,46 @@ func TestPruningEmptiesTheTreesListsAndLeavesThePasses(t *testing.T) {
 		t.Errorf("the tree without pruning holds %d elements: %v", n, whole)
 	}
 }
+
+// TestAHeldPruningEmptiesNoList: a grammar holds the pruning off with a
+// count above zero under PruneHold in the parse context's bag (ctx.U), as
+// tabnas/yaml does while a value with an anchor is open. While it is held
+// the source empties no list, and a count of zero holds nothing.
+func TestAHeldPruningEmptiesNoList(t *testing.T) {
+	src := `{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}`
+	held := func(count int) ([]string, any) {
+		parser := makeGrammar("json")
+		parser.SetOptions(tabnas.Options{Parse: &tabnas.ParseOptions{
+			Prepare: map[string]func(ctx *tabnas.Context){
+				"hold": func(ctx *tabnas.Context) {
+					if ctx.U == nil {
+						ctx.U = map[string]any{}
+					}
+					ctx.U[PruneHold] = count
+				},
+			},
+		}})
+		source := NewParserEventSource(parser, src).Prune().Unverified()
+		var rec passRecorder
+		flow, f, value := source.RunWithValue(&rec)
+		if f != nil || flow != Continue {
+			t.Fatalf("a hold of %d: %v %v", count, flow, f)
+		}
+		exact := make([]string, len(rec.seen))
+		for i, ev := range rec.seen {
+			exact[i] = ev.JSON()
+		}
+		return exact, value
+	}
+	_, kept, _, _ := prunedRun("json", src, false)
+	passes, one := held(1)
+	if strings.Join(kept, "\n") != strings.Join(passes, "\n") {
+		t.Fatalf("the passes differ:\n%s\n%s", strings.Join(kept, "\n"), strings.Join(passes, "\n"))
+	}
+	if n := treeElements(one); n != 14 {
+		t.Errorf("a hold of 1 left the tree holding %d elements, not 14: %v", n, one)
+	}
+	if _, zero := held(0); treeElements(zero) != 4 {
+		t.Errorf("a hold of 0 left the tree holding %d elements, not 4: %v", treeElements(zero), zero)
+	}
+}

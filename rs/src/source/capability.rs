@@ -16,8 +16,8 @@
 /// (`tabnas-<name>`), but `pgn` for tabnas-chess, the name hosts ask by.
 /// The suite asserts the list in both directions.
 pub const PRUNABLE: &[&str] = &[
-    "csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "pgn", "xml",
-    "yaml", "zon",
+    "csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "pgn", "toml",
+    "xml", "yaml", "zon",
 ];
 
 /// Whether `grammar`'s arrays may be emptied behind a
@@ -37,9 +37,10 @@ mod tests {
         assert!(prunable("xml"));
         assert!(prunable("pgn"));
         assert!(
-            !prunable("toml"),
-            "its message for a key defined twice quotes the value"
+            prunable("toml"),
+            "its message for a key defined twice names no value, since tabnas-toml 0.5.20"
         );
+        assert!(!prunable("css"), "the suite does not run it");
         assert!(!prunable("chess"), "the format's name, not the crate's");
         assert!(!prunable(""));
         for name in PRUNABLE {

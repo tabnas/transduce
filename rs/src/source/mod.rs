@@ -29,7 +29,7 @@ pub mod parser_events;
 
 pub use guard::Guarded;
 pub use parser::ParserSource;
-pub use parser_events::ParserEventSource;
+pub use parser_events::{ParserEventSource, PRUNE_HOLD};
 
 use crate::error::Fail;
 use crate::event::{JsonEvent, Number};

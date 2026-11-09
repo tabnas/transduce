@@ -64,6 +64,7 @@ pub use selector::{Path, Segment, Selector, Step};
 pub use sink::{replay, CountSink, Flow, FnSink, Sink, TreeContract};
 pub use source::{
     capability, walk_value, Guarded, ParserEventSource, ParserSource, Source, ValueSource,
+    PRUNE_HOLD,
 };
 pub use table::{
     column_from_meta, BoundColumn, Cell, ColumnMapper, MissingPolicy, PublicColumn, Schema, Table,
