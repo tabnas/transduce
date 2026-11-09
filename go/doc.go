@@ -9,9 +9,12 @@
 //
 //   - the source protocol [Event] (`JsonEvents/1`) and the push boundary
 //     [Sink];
-//   - sources that produce it from a parsed value ([ValueSource]), from a
-//     tabnas parse ([ParserSource]) and from line-delimited input
-//     ([LinesSource]);
+//   - sources that produce it from a parsed value ([ValueSource]) and from
+//     a tabnas parse, its value walked ([ParserSource]), and the source of
+//     the parser's rule passes ([ParserEventSource], `ParserEvents/1`),
+//     what a transducer part reads, from a text or from a reader
+//     ([ParserEventSourceFromReader]), from which a format streams (the
+//     part is alchemy's text, which alchemy's runtime runs over them);
 //   - [Selector]s and the [Matcher] and [Router] that recognize selected
 //     scopes in one pass and materialize them under a byte limit;
 //   - the table protocol [TableEvent] (`TableRows/1`) and the standard
@@ -35,19 +38,14 @@
 // the contracts, and the shared fixtures in ../test/spec pin them for
 // every runtime.
 //
-// # The incremental source in this build
-//
-// ParserSource's SourceMode Incremental (and LinesSource's JSON Lines
-// RunIncremental) turns the engine's rule events into source events as
-// the parse proceeds, over the engine's node-cell identity
-// (tabnas.Rule.NodeCell and SetNode). The adapter is compiled only with
-// the build tag `tabnas_nodecell`; the identity itself is in every build
-// of the engine since v0.12.10, and ParserEventSource's pruning uses it
-// in either build. Without the tag the verified list
-// ([IncrementalGrammars]) is empty and every incremental run is refused
-// with STREAMABILITY_UNKNOWN before the parse, exactly as an unlisted
-// grammar is refused; Materialize, ValueSource and the walking line
-// sources are complete in either build.
+// The rule-event inference that ParserSource's incremental mode ran, and
+// the line sources that read JSON Lines and CSV a record or a chunk at a
+// time, were retired at alchemy's streaming plan's steps 12 and 13, in
+// Rust first and then in this port. The inference was compiled only with
+// the build tag `tabnas_nodecell`; nothing in the package needs the tag
+// now, and a build with it is the same as one without. ParserEventSource's
+// pruning uses the engine's node-cell identity (tabnas.Rule.NodeCell and
+// SetNode), which is in every build of the engine since v0.12.10.
 package tabnastransduce
 
 // VERSION is this module's version. It must equal rs/Cargo.toml's

@@ -7,8 +7,16 @@
 // retained at their peak depend on the largest row, never on how many rows
 // there are. Ten times the rows of the same size must leave
 // `captured_bytes_high` (and so `retained_bytes_high`) exactly where it
-// was. The engine's tree after the run must hold no row for 200 rows and
-// none for 2000 when pruning, and every row without it.
+// was.
+//
+// The rows reach the table from the parse of a JSON document, its value
+// walked (`ParserSource`), through the source's guard, which counts the
+// events as a source's guard counts them. The transducer's peak does not
+// depend on how the events were made: a host that streams a format through
+// its transducer part (alchemy's text over `ParserEventSource`'s passes,
+// pruned) hands the same events to the same stages. What pruning leaves of
+// the engine's tree is ./prune.test.ts's to hold flat, for every grammar;
+// dmog, which runs the parts, holds a part's run to it.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -16,24 +24,21 @@ import assert from 'node:assert'
 import { make as makeJson } from '@tabnas/json'
 
 import {
-  Datum,
   EventRecorder,
   Limits,
   Metrics,
   ParserSource,
-  Prune,
   Schema,
   Selector,
-  SourceMode,
   Table,
   TableFromJson,
   columnFromMeta,
   isScalar,
 } from '../dist/transduce'
-import { GRAMMARS } from './common'
 import { METADATA, record } from './support'
 
-// The worked example with `rows` copies of one record.
+// The worked example with `rows` copies of one record, so every row has the
+// same size and the peak is the row's, not the count's.
 function sameRows(rows: number): string {
   const one = record(123_456)
   return `{"response":{"metadata":${METADATA},"payload":{"deep":{"records":[${Array(rows).fill(one).join(',')}]}}}}`
@@ -42,7 +47,9 @@ function sameRows(rows: number): string {
 const recordsSelector = () =>
   Selector.root().property('response').property('payload').property('deep').property('records').eachIndex()
 
-function run(rows: number, prune: Prune) {
+// The table over the document's events, the parsed value walked; `metrics`
+// counts the events once, at the source's guard in front of the table.
+function run(rows: number) {
   const metrics = new Metrics()
   const table = new TableFromJson(
     {
@@ -57,172 +64,29 @@ function run(rows: number, prune: Prune) {
     metrics,
     new Table(),
   )
-  const { value } = new ParserSource(makeJson(), sameRows(rows))
-    .grammar('json')
-    .mode(SourceMode.incremental(prune))
-    .metrics(metrics)
-    .runWithValue(table)
+  new ParserSource(makeJson(), sameRows(rows)).metrics(metrics).run(table)
   assert.ok(table.sink.ended)
-  const tree = Datum.fromTabnas(value)
-  const records = Datum.getPath(tree, ['response', 'payload', 'deep', 'records'])
-  assert.ok(undefined !== records && 'array' === records.type)
   return {
     capturedHigh: metrics.captured_bytes_high,
     retainedHigh: metrics.retained_bytes_high,
     rows: table.sink.rows.length,
-    treeRows: records.items.length,
-    treeBytes: Datum.byteSize(tree),
-  }
-}
-
-// The worked example as XML with `rows` copies of one record and nothing
-// between them, so every row is one `<record>` element of the same size,
-// and the records element's children are the rows alone.
-function sameRowsXml(rows: number): string {
-  const one =
-    '<record id="123456"><person><name>Person number 123456</name></person>' +
-    '<account><balance>864192.56</balance></account></record>'
-  return `<?xml version="1.0"?>\n<response><records>${one.repeat(rows)}</records></response>\n`
-}
-
-// The records element's children: the root's first child's `children`.
-const xmlRows = () => Selector.root().property('children').index(0).property('children').eachIndex()
-
-// One run over the XML worked example, a table inferred from the rows,
-// with the grammar the differential suite verified (`GRAMMARS.xml`: jsonic,
-// then the xml plugin).
-function runXml(rows: number, prune: Prune) {
-  const metrics = new Metrics()
-  const table = new TableFromJson(
-    { schema: Schema.infer(), rows: xmlRows() },
-    Limits.default(),
-    'reject',
-    metrics,
-    new Table(),
-  )
-  const { value } = new ParserSource(GRAMMARS.xml(), sameRowsXml(rows))
-    .grammar('xml')
-    .mode(SourceMode.incremental(prune))
-    .metrics(metrics)
-    .runWithValue(table)
-  assert.ok(table.sink.ended)
-  const tree = Datum.fromTabnas(value)
-  const records = Datum.getPath(tree, ['children', 0, 'children'])
-  assert.ok(undefined !== records && 'array' === records.type)
-  return {
-    capturedHigh: metrics.captured_bytes_high,
-    retainedHigh: metrics.retained_bytes_high,
-    rows: table.sink.rows.length,
-    treeRows: records.items.length,
-    treeBytes: Datum.byteSize(tree),
-  }
-}
-
-// A PGN database of `games` copies of one game, so every game is the same
-// size and the database's elements are the games alone.
-function sameGamesPgn(games: number): string {
-  return (
-    '[Event "Records"]\n[Result "1-0"]\n\n' +
-    '1. e4 e5 2. Nf3 {Person number 123456} Nc6 $1 (2... d6 3. d4) 3. Bb5 1-0\n\n'
-  ).repeat(games)
-}
-
-// The database's games.
-const pgnGames = () => Selector.root().eachIndex()
-
-// One run over a PGN database, a table inferred from its games, with the
-// grammar the differential suite verified (`GRAMMARS.pgn`: @tabnas/chess).
-function runPgn(games: number, prune: Prune) {
-  const metrics = new Metrics()
-  const table = new TableFromJson(
-    { schema: Schema.infer(), rows: pgnGames() },
-    Limits.default(),
-    'reject',
-    metrics,
-    new Table(),
-  )
-  const { value } = new ParserSource(GRAMMARS.pgn(), sameGamesPgn(games))
-    .grammar('pgn')
-    .mode(SourceMode.incremental(prune))
-    .metrics(metrics)
-    .runWithValue(table)
-  assert.ok(table.sink.ended)
-  const tree = Datum.fromTabnas(value)
-  assert.ok('array' === tree.type)
-  return {
-    capturedHigh: metrics.captured_bytes_high,
-    retainedHigh: metrics.retained_bytes_high,
-    rows: table.sink.rows.length,
-    treeRows: tree.items.length,
-    treeBytes: Datum.byteSize(tree),
   }
 }
 
 describe('retention', () => {
   it('ten times the rows leave the retained high water flat', () => {
-    const prune = () => Prune.under(recordsSelector())
-    const one = run(200, prune())
-    console.log(`retention: 200 rows, captured high-water ${one.capturedHigh} bytes, tree ${one.treeBytes} bytes`)
-    const ten = run(2000, prune())
-    console.log(`retention: 2000 rows, captured high-water ${ten.capturedHigh} bytes, tree ${ten.treeBytes} bytes`)
+    const one = run(200)
+    console.log(`retention: 200 rows, captured high-water ${one.capturedHigh} bytes`)
+    const ten = run(2000)
+    console.log(`retention: 2000 rows, captured high-water ${ten.capturedHigh} bytes`)
     assert.deepEqual([one.rows, ten.rows], [200, 2000])
     assert.ok(one.capturedHigh > 0)
     assert.equal(ten.capturedHigh, one.capturedHigh, "the peak is one row's, not the count's")
     assert.equal(ten.retainedHigh, one.retainedHigh)
-    assert.deepEqual([one.treeRows, ten.treeRows], [0, 0], "every streamed row was dropped from the engine's tree")
-    assert.equal(ten.treeBytes, one.treeBytes, 'the tree left behind does not grow with the rows')
   })
 
-  // xml streams too: its rules build each element in document order, so
-  // the rows of an XML document reach the table one at a time, and with the
-  // records element's children pruned the engine's tree holds none of them
-  // after the run.
-  it('ten times the rows of an xml document leave the retained high water flat', () => {
-    const one = runXml(200, Prune.under(xmlRows()))
-    console.log(`retention xml: 200 rows, captured high-water ${one.capturedHigh} bytes, tree ${one.treeBytes} bytes`)
-    const ten = runXml(2000, Prune.under(xmlRows()))
-    console.log(`retention xml: 2000 rows, captured high-water ${ten.capturedHigh} bytes, tree ${ten.treeBytes} bytes`)
-    assert.deepEqual([one.rows, ten.rows], [200, 2000])
-    assert.ok(one.capturedHigh > 0)
-    assert.equal(ten.capturedHigh, one.capturedHigh, "the peak is one row's, not the count's")
-    assert.equal(ten.retainedHigh, one.retainedHigh)
-    assert.deepEqual([one.treeRows, ten.treeRows], [0, 0], "every streamed row was dropped from the engine's tree")
-    assert.equal(ten.treeBytes, one.treeBytes, 'the tree left behind does not grow with the rows')
-    // The control: without pruning the tree keeps every row.
-    const kept = runXml(2000, Prune.never())
-    assert.equal(kept.treeRows, 2000)
-    assert.equal(kept.capturedHigh, one.capturedHigh)
-  })
-
-  // pgn streams a game at a time: @tabnas/chess stores a game in the
-  // database only once the game is complete, so each game reaches the table
-  // whole, and with the database's games pruned the engine's tree holds none
-  // of them after the run.
-  it('ten times the games of a pgn database leave the retained high water flat', () => {
-    const one = runPgn(200, Prune.under(pgnGames()))
-    console.log(`retention pgn: 200 games, captured high-water ${one.capturedHigh} bytes, tree ${one.treeBytes} bytes`)
-    const ten = runPgn(2000, Prune.under(pgnGames()))
-    console.log(`retention pgn: 2000 games, captured high-water ${ten.capturedHigh} bytes, tree ${ten.treeBytes} bytes`)
-    assert.deepEqual([one.rows, ten.rows], [200, 2000])
-    assert.ok(one.capturedHigh > 0)
-    assert.equal(ten.capturedHigh, one.capturedHigh, "the peak is one game's, not the count's")
-    assert.equal(ten.retainedHigh, one.retainedHigh)
-    assert.deepEqual([one.treeRows, ten.treeRows], [0, 0], "every streamed game was dropped from the engine's tree")
-    assert.equal(ten.treeBytes, one.treeBytes, 'the tree left behind does not grow with the games')
-    // The control: without pruning the tree keeps every game.
-    const kept = runPgn(2000, Prune.never())
-    assert.equal(kept.treeRows, 2000)
-    assert.equal(kept.capturedHigh, one.capturedHigh)
-  })
-
-  it("without pruning the engine's tree holds every row", () => {
-    const one = run(200, Prune.never())
-    const ten = run(2000, Prune.never())
-    assert.deepEqual([one.treeRows, ten.treeRows], [200, 2000])
-    assert.ok(ten.treeBytes > 9 * one.treeBytes)
-    assert.equal(ten.capturedHigh, one.capturedHigh, "the router's peak is one row with or without pruning")
-  })
-
+  // The README's chain shares one `Metrics` between the source and the
+  // table transducer; the source counts are the source's, once.
   it('a chain sharing one Metrics counts the source events once', () => {
     const text = '{"meta":[{"title":"Id","path":["id"]}],"rows":[{"id":1},{"id":2}]}'
     const rows = Selector.root().property('rows').eachIndex()
@@ -234,11 +98,7 @@ describe('retention', () => {
       metrics,
       new Table(),
     )
-    new ParserSource(makeJson(), text)
-      .grammar('json')
-      .mode(SourceMode.incremental(Prune.under(rows)))
-      .metrics(metrics)
-      .run(table)
+    new ParserSource(makeJson(), text).metrics(metrics).run(table)
     const rec = new EventRecorder()
     new ParserSource(makeJson(), text).run(rec)
     assert.equal(metrics.events, rec.events.length)

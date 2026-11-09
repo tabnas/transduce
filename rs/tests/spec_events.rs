@@ -9,12 +9,12 @@ use tabnas_support::Runner;
 
 #[test]
 fn events() {
-    let runner = Runner::new_with_row(|input, row| {
+    Runner::new_with_row(|input, row| {
         common::events(row, input).map_err(|fail| common::to_failure(&fail, row))
     })
     .input("input")
-    .expected("expected");
-    runner.spec(&common::rust_rows("events.tsv", &runner));
+    .expected("expected")
+    .file(common::spec_dir().join("events.tsv"));
 }
 
 /// Every fixture the directory holds has a runner; a new file added

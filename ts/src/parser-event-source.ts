@@ -1,7 +1,8 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// `ParserEventSource`: `ParserEvents/1` from a tabnas parse of one text,
-// the input a transducer part reads (rs/src/source/parser_events.rs).
+// `ParserEventSource`: `ParserEvents/1` from a tabnas parse of one text, or
+// of what a reader gives, the input a transducer part reads
+// (rs/src/source/parser_events.rs).
 //
 // The source installs one `ruleDone` subscriber, which relays each rule
 // pass the engine completes as a `ParserEvent`, on the thread that parses,
@@ -26,8 +27,7 @@
 //   1-based row and column; a token with no value (the end of the source,
 //   or a fixed token such as `[`) has `null`, and a number carries
 //   its source text as its lexeme when that text is a JSON number spelling
-//   the value (RFC 8259), the rule the incremental source keeps lexemes by,
-//   so a renderer can write it as it stands;
+//   the value (RFC 8259), so a renderer can write it as it stands;
 // - on a close pass, the rule's node when that is a scalar (`value`), a
 //   number with the lexeme of the rule's first open token as above;
 //   nothing on an open pass, nor for a container.
@@ -52,6 +52,16 @@
 // the engine's code and position. A source runs once, as `ParserSource`
 // does: its parser carries the run's subscriber and budget.
 //
+// `ParserEventSource.fromReader` is the same source over a reader, which
+// the parser reads with `tn.parseReader` (admin ADR-30 and ADR-33): a
+// grammar that declares `lex.window` is read a window at a time, so a long
+// document streams holding a window of its text rather than all of it, and
+// any other grammar reads the reader whole first. The passes, the value
+// and the failures are those of the constructor over the same text, and a
+// reader that fails, or bytes that are not UTF-8, end the run with
+// `INPUT_INVALID`, carrying the engine's `unreadable` and the row and
+// column the source failed at.
+//
 // The engine builds its value as it parses, so a long document's tree
 // holds every record, though nothing reads the value the parse returns.
 // `prune()` empties each array behind the stream: once the sink has seen a
@@ -59,8 +69,8 @@
 // in place, so the tree holds the elements of the passes since the last
 // close on it. That alters the value the engine returns, which this source
 // never reads, and it is sound for a grammar whose passes do not depend on
-// what its arrays hold, so it is a verified capability, as the incremental
-// source is: `test/prune.test.ts` runs every document of every grammar in
+// what its arrays hold, so it is a verified capability:
+// `test/prune.test.ts` runs every document of every grammar in
 // the devDependencies pruned and not, and `capability.prunable` lists the
 // grammars whose passes and outcomes never differed
 // (rs/src/source/parser_events.rs has the contract's one difference, a
@@ -81,16 +91,19 @@ import {
   utf8Bytes,
 } from '@tabnas/alchemy/shared'
 import type { Flow, ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
-import type { Context, Rule, RuleDone, Tabnas } from '@tabnas/parser'
+import type { Context, Reader, Rule, RuleDone, Tabnas } from '@tabnas/parser'
 
 import { isPrunable } from './capability'
-import { prepare } from './rule-events'
-import { engineFailure } from './source'
+import { engineFailure, prepare } from './source'
 
-// A tabnas parser applied to one text, as a source of its rule passes.
+// A tabnas parser applied to one text, or to what a reader gives, as a
+// source of its rule passes.
 export class ParserEventSource {
   private parser: Tabnas
   private text: string
+  // A reader the parser reads its source from, in place of `text`
+  // (`ParserEventSource.fromReader`).
+  private reader: Reader | null = null
   private sourceLimits: Limits = Limits.default()
   private abortFlag: AbortFlag = new AbortFlag()
   private sourceMetrics: Metrics = new Metrics()
@@ -106,8 +119,31 @@ export class ParserEventSource {
     this.text = text
   }
 
-  // The grammar the parser implements, by the name of the format it reads,
-  // as `ParserSource.grammar` takes it. A run that prunes needs a name
+  // A source of the rule passes of what `reader` gives, which the parser
+  // reads with `tn.parseReader` (admin ADR-30 and ADR-33): a grammar that
+  // declares `lex.window` a window at a time, so that a long document
+  // streams holding a window of its text rather than all of it, and any
+  // other grammar whole first. `reader` is the engine's synchronous pull
+  // reader, `{ read(buf: Uint8Array): number }`, which writes up to
+  // `buf.length` bytes into `buf` and answers how many, 0 at the end, as
+  // `fs.readSync(fd, buf)` does. The passes, the value and the failures are
+  // those of the constructor over the same text, and a reader that fails,
+  // or bytes that are not UTF-8, end the run with `INPUT_INVALID`, the
+  // engine's `unreadable` and where the source failed.
+  static fromReader(parser: Tabnas, reader: Reader): ParserEventSource {
+    if (null == reader || 'function' !== typeof reader.read) {
+      throw new TypeError(
+        'ParserEventSource.fromReader: the reader must be an object with a read(buffer) method',
+      )
+    }
+    const source = new ParserEventSource(parser, '')
+    source.reader = reader
+    return source
+  }
+
+  // The grammar the parser implements, by the name of the format it reads:
+  // its package's (`@tabnas/<name>`), but `pgn` for @tabnas/chess, as
+  // `capability.PRUNABLE` names them. A run that prunes needs a name
   // `capability.prunable` lists; one that does not prune needs no name.
   grammar(name: string): this {
     this.grammarName = name
@@ -196,9 +232,13 @@ export class ParserEventSource {
       () => !abort.isAborted() && !stop.isAborted(),
       (rule, done, ctx) => relay.onDone(rule, done, ctx),
     )
+    const reader = this.reader
     let parsed: { ok: true; value: unknown } | { ok: false; error: unknown }
     try {
-      parsed = { ok: true, value: this.parser.parse(this.text) }
+      parsed = {
+        ok: true,
+        value: null === reader ? this.parser.parse(this.text) : this.parser.parseReader(reader),
+      }
     } catch (error) {
       parsed = { ok: false, error }
     }

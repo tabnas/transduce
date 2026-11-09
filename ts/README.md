@@ -7,21 +7,14 @@ transducer, including event sources, routing, captures, and protocol checks.
 npm install @tabnas/transduce
 ```
 
-`LinesSource` parses JSON Lines with `@tabnas/json` and CSV with
-`@tabnas/csv`. Both are optional peers, loaded when a line source starts,
-so install the ones your line sources read:
-
-```sh
-npm install @tabnas/transduce @tabnas/json @tabnas/csv
-```
-
-A line source whose grammar is not installed fails with a `TypeError` that
-names the package.
-
-`@tabnas/parser`, the engine, is a required peer. `ParserSource` takes a
-parser made with the engine or with a grammar package, and its
-declarations type it as the engine's `Tabnas`, as the Go and Rust ports
-name the engine's types in theirs. The grammars name the engine as a peer
+`@tabnas/parser`, the engine, is a required peer. `ParserSource` and
+`ParserEventSource` take a parser made with the engine or with a grammar
+package, and their declarations type it as the engine's `Tabnas`, as the
+Go and Rust ports name the engine's types in theirs.
+`ParserEventSource.fromReader(parser, reader)` reads its source from the
+engine's synchronous pull reader (`{ read(buf: Uint8Array): number }`, 0
+at the end, as `fs.readSync(fd, buf)` gives), a window at a time where
+the grammar declares `lex.window`. The grammars name the engine as a peer
 too, so one copy of it serves them all, and TypeScript reads their
 `Tabnas` and this package's as the same class.
 

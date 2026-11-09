@@ -4,6 +4,7 @@ package tabnastransduce
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strconv"
@@ -31,8 +32,9 @@ const (
 	ParserEnd   = shared.ParserEnd
 )
 
-// ParserEventSource is ParserEvents/1 from a tabnas parse of one text, the
-// input a transducer part reads (rs/src/source/parser_events.rs).
+// ParserEventSource is ParserEvents/1 from a tabnas parse of one text, or
+// of what a reader gives, the input a transducer part reads
+// (rs/src/source/parser_events.rs).
 //
 // The source installs one rule-done subscriber, which relays each rule
 // pass the engine completes as a ParserEvent, on the goroutine that
@@ -57,8 +59,7 @@ const (
 //     1-based row and column; a token with no value (the end of the
 //     source, or a fixed token such as `[`) has null, and a number
 //     carries its source text as its lexeme when that text is a JSON
-//     number spelling the value (RFC 8259), the rule the incremental
-//     source keeps lexemes by;
+//     number spelling the value (RFC 8259);
 //   - on a close pass, the rule's node when that is a scalar (Value), a
 //     number with the lexeme of the rule's first open token as above, and
 //     nil as null; nothing on an open pass, for a container, nor for the
@@ -86,6 +87,16 @@ const (
 // it, so a parser is given to one source, and a source runs once (a second
 // Run is STREAM_REUSED, as in TypeScript; Rust's run consumes the source).
 //
+// ParserEventSourceFromReader is the same source over a reader, which the
+// parser reads with (*tabnas.Tabnas).ParseReader (admin ADR-30 and
+// ADR-33): a grammar that declares lex.window is read a window at a time,
+// so a long document streams holding a window of its text rather than all
+// of it, and any other grammar reads the reader whole first. The passes,
+// the value and the failures are those of NewParserEventSource over the
+// same text, and a reader that fails, or bytes that are not UTF-8, end the
+// run with INPUT_INVALID, carrying the engine's unreadable and the row and
+// column the source failed at.
+//
 // The engine builds its value as it parses, so a long document's tree
 // holds every record, though nothing reads the value the parse returns.
 // Prune empties each list behind the stream: once the sink has seen a
@@ -94,18 +105,21 @@ const (
 // the tree holds the elements of the passes since the last close on it.
 // That alters the value the engine returns, which this source never
 // reads, and it is sound for a grammar whose passes do not depend on what
-// its lists hold, so it is a verified capability, as the incremental
-// source is: prune_test.go runs every document of every grammar the tests
-// depend on pruned and not, and PrunableGrammars lists the grammars whose
-// passes and outcomes never differed (rs/src/source/parser_events.rs has
-// the contract's one difference, a token whose value is a container of
-// the tree). A run that prunes is gated on the list, by the grammar's
-// name (Grammar), and without a listed name it fails with
-// STREAMABILITY_UNKNOWN before the parse, having sent nothing; Unverified
-// lifts the gate for the suite.
+// its lists hold, so it is a verified capability: prune_test.go runs every
+// document of every grammar the tests depend on pruned and not, and
+// PrunableGrammars lists the grammars whose passes and outcomes never
+// differed (rs/src/source/parser_events.rs has the contract's one
+// difference, a token whose value is a container of the tree). A run that
+// prunes is gated on the list, by the grammar's name (Grammar), and
+// without a listed name it fails with STREAMABILITY_UNKNOWN before the
+// parse, having sent nothing; Unverified lifts the gate for the suite.
 type ParserEventSource struct {
-	parser     *tabnas.Tabnas
-	text       string
+	parser *tabnas.Tabnas
+	text   string
+	// reader is what the parser reads its source from, in place of text,
+	// when fromReader is set (ParserEventSourceFromReader).
+	reader     io.Reader
+	fromReader bool
 	limits     Limits
 	abort      *AbortFlag
 	metrics    *Metrics
@@ -127,10 +141,27 @@ func NewParserEventSource(parser *tabnas.Tabnas, text string) *ParserEventSource
 	}
 }
 
+// ParserEventSourceFromReader is a source of the rule passes of what r
+// gives, which the parser reads with (*tabnas.Tabnas).ParseReader (admin
+// ADR-30 and ADR-33): a grammar that declares lex.window a window at a
+// time, so that a long document streams holding a window of its text
+// rather than all of it, and any other grammar whole first. The passes, the
+// value and the failures are those of NewParserEventSource over the same
+// text, and a reader that fails, or bytes that are not UTF-8, end the run
+// with INPUT_INVALID, the engine's unreadable and where the source failed.
+// A nil reader fails the same way, as the engine reports it.
+func ParserEventSourceFromReader(parser *tabnas.Tabnas, r io.Reader) *ParserEventSource {
+	p := NewParserEventSource(parser, "")
+	p.reader, p.fromReader = r, true
+	return p
+}
+
 // Grammar names the grammar the parser implements, by the name of the
-// format it reads, as ParserSource.Grammar takes it. A run that prunes
-// needs a name PrunableGrammars lists; one that does not prune needs no
-// name.
+// format it reads: its module's (github.com/tabnas/<name>/go), as
+// PrunableGrammars names them, but pgn for github.com/tabnas/chess/go,
+// which this port's list does not name (DIVERGENCE.md 4). A run that
+// prunes needs a name PrunableGrammars lists; one that does not prune
+// needs no name.
 func (p *ParserEventSource) Grammar(name string) *ParserEventSource {
 	p.grammar = name
 	return p
@@ -331,7 +362,13 @@ func (p *ParserEventSource) RunWithValue(sink ParserSink) (Flow, *Fail, any) {
 		r.onDone(rule, ctx, done)
 	})
 	installGuard(p.parser, func() bool { return !p.abort.IsAborted() && !r.stop.IsAborted() })
-	value, err := p.parser.Parse(p.text)
+	var value any
+	var err error
+	if p.fromReader {
+		value, err = p.parser.ParseReader(p.reader)
+	} else {
+		value, err = p.parser.Parse(p.text)
+	}
 	defer func() { p.metrics.Events.Add(r.events) }()
 	switch r.status {
 	case relayFailed:

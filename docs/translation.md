@@ -30,7 +30,8 @@ keys, scalars) either as the parse proceeds, through the transducer part
 the format's package ships, or by walking the whole value. (Before the
 parts, the grammars a differential suite had verified streamed through
 an inference over the engine's rule events, which the Rust crate retired
-at step 13 of alchemy's streaming plan.) That is the N side of
+at step 13 of alchemy's streaming plan, and the TypeScript and Go ports
+at its step 19.) That is the N side of
 the translation, done: a CSV file, a YAML file and a Markdown file all
 arrive as the same kind of stream. The only question left is writing.
 

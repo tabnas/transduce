@@ -19,56 +19,6 @@ type Source interface {
 	Run(sink Sink) (Flow, *Fail)
 }
 
-// ModeKind names how ParserSource produces its events.
-type ModeKind uint8
-
-const (
-	// ModeMaterialize parses the whole text, then walks the value. Sound
-	// for every grammar.
-	ModeMaterialize ModeKind = iota
-	// ModeIncremental emits from the engine's rule events as the parse
-	// proceeds. Sound for the grammars IncrementalGrammars lists.
-	ModeIncremental
-)
-
-// SourceMode is how ParserSource produces its events, and for
-// ModeIncremental which arrays it prunes.
-type SourceMode struct {
-	Kind  ModeKind
-	Prune Prune
-}
-
-// MaterializeMode is SourceMode{Kind: ModeMaterialize}.
-func MaterializeMode() SourceMode { return SourceMode{Kind: ModeMaterialize} }
-
-// IncrementalMode is ModeIncremental with the given pruning.
-func IncrementalMode(prune Prune) SourceMode { return SourceMode{Kind: ModeIncremental, Prune: prune} }
-
-// PruneKind names which arrays the incremental source empties.
-type PruneKind uint8
-
-const (
-	// PruneNever leaves the tree alone.
-	PruneNever PruneKind = iota
-	// PruneUnder empties the array whose elements the selector names (a
-	// trailing EachIndex names the elements; without one the selector
-	// names the array).
-	PruneUnder
-	// PruneAllArrays empties every array.
-	PruneAllArrays
-)
-
-// Prune is which arrays the incremental source empties as it streams
-// them. Pruning alters the value the engine returns, which the
-// incremental source discards; it is never applied in ModeMaterialize.
-type Prune struct {
-	Kind     PruneKind
-	Selector Selector
-}
-
-// PruneUnderSelector is PruneUnder with its selector.
-func PruneUnderSelector(s Selector) Prune { return Prune{Kind: PruneUnder, Selector: s} }
-
 // cancelCode is the engine's cancel code: what a parse budget that
 // answered false reports, whether the budget is this package's abort or
 // the grammar's own guard.
@@ -299,17 +249,6 @@ func scalarEvent(value any) (Event, bool) {
 		return EvString(v.Str), true
 	}
 	return Event{}, false
-}
-
-// isContainerValue reports whether an engine value is a list or a map.
-func isContainerValue(value any) bool {
-	switch v := value.(type) {
-	case []any, tabnas.ListRef, map[string]any, tabnas.MapRef:
-		return true
-	case *tabnas.OrderedMap:
-		return v != nil
-	}
-	return false
 }
 
 // plainKeys is the order a plain Go map's members are walked in: the
