@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-ini"
-version = "0.5.20"
+version = "0.5.21"
 dependencies = [
  "indexmap",
  "serde_json",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-toml"
-version = "0.5.18"
+version = "0.5.20"
 dependencies = [
  "indexmap",
  "regex",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-transduce"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "criterion",
  "serde_json",
@@ -513,7 +513,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-yaml"
-version = "0.5.26"
+version = "0.5.28"
 dependencies = [
  "indexmap",
  "regex",
