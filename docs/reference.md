@@ -208,24 +208,23 @@ default, so a parse of a long flat document keeps every rule it made
 reachable until the document ends, and the memory grows with the
 document's length whatever the stream prunes: through dmog, 100,000 JSON
 records from standard input held 2.8 GB in Go and ran out of TypeScript's
-2 GB heap. A `ParserEventSource` therefore bounds the history at three
-predecessors (`STREAM_RULE_HISTORY`, `StreamRuleHistory` in Go) before its
-parse, unless the grammar or the host bounded it already, which it leaves
-as it is. Three is the most any grammar in the fleet reads back, and what
-the Rust engine bounds the history at by default, so the Rust source sets
-nothing (tabnas/parser `doc/rule-history-bound.md` has the design and the
-engine's measurements). The same records then hold 221 MB in TypeScript
-and 44 MB in Go, flat over ten times the records, and the output is the
-same. `ts/test/history.test.ts` and `go/history_test.go` hold it: ten
-times the records, read from a reader and pruned, leave the heap's high
-water where it was. A `ParserSource` walks the value the parse returns,
-which holds the whole document anyway, and bounds nothing.
+2 GB heap. A TypeScript `ParserEventSource` therefore bounds the history at
+three predecessors (`STREAM_RULE_HISTORY`) before its parse, unless the
+grammar or the host bounded it already, which it leaves as it is. Three is
+the most any grammar in the fleet reads back, and what the Rust engine
+bounds the history at by default, so the Rust source sets nothing
+(tabnas/parser `doc/rule-history-bound.md` has the design and the engine's
+measurements). The same records then hold 221 MB in TypeScript, against
+214 MB at 10,000, and the output is the same. `ts/test/history.test.ts`
+holds it: ten times the records, read from a reader and pruned, leave the
+heap's high water where it was. A `ParserSource` walks the value the parse
+returns, which holds the whole document anyway, and bounds nothing.
 
-What else a parse keeps is the engine's: the Go lexer keeps every distinct
-short string a parse meets, in a pool nothing empties, so a stream of
-distinct strings grows by them whatever the history (`Lex.internAny`,
-tabnas/parser#324), and the history tests read records whose strings
-repeat.
+The Go source bounds nothing yet, since a bounded Go history loses a
+grammar's writes through the links (`DIVERGENCE.md`, entry 5;
+tabnas/parser#325). The Go lexer also keeps every distinct short string a
+parse meets, in a pool nothing empties (`Lex.internAny`,
+tabnas/parser#324).
 The suite asserts the list in both directions, and measures what pruning
 is for: ten times the records of a JSON, JSON Lines, CSV, YAML, XML or PGN
 document leave the pruned tree holding as many elements as before (six

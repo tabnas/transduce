@@ -11,7 +11,8 @@
 // grammar in the fleet reads and what the Rust engine bounds it at by
 // default, unless the grammar or the host bounded it already. Read from a
 // reader and pruned, ten times the records then leave the heap's high
-// water where it was. The port of this file is go/history_test.go.
+// water where it was. Go's source bounds nothing yet: a bounded Go history
+// loses a grammar's writes through the links (tabnas/parser#325).
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -42,10 +43,8 @@ class HeapSampler implements ParserSink {
 }
 
 // One record whose strings are the same in every record and whose numbers
-// are not, as go/history_test.go's: the Go lexer keeps every distinct short
-// string a parse meets, which is the engine's to bound (tabnas/parser#324),
-// and the two tests measure what a source bounds, the rules, over the same
-// documents.
+// are not: the measure is of what a source bounds, the rules. (The Go lexer
+// keeps every distinct short string a parse meets, tabnas/parser#324.)
 function streamRecord(i: number): string {
   return `{"id":${i},"person":{"name":"Person"},"account":{"balance":${i * 7}.${String(i % 100).padStart(2, '0')}}}`
 }

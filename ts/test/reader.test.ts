@@ -114,7 +114,10 @@ function parser(name: string, window: boolean): any {
   const make = GRAMMARS[name]
   if (undefined === make) throw new Error(`no grammar ${name} in the harness`)
   const parser = make()
-  if (window) parser.options({ lex: { window: true } })
+  // Set either way: a grammar's own constructor may declare the window
+  // (@tabnas/json's make() does from 0.5.20), and a test of the read-whole
+  // route must turn it off.
+  parser.options({ lex: { window } })
   return parser
 }
 

@@ -294,27 +294,6 @@ func (r *relay) onDone(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleD
 // (tabnas/yaml#138). The same key in every runtime.
 const PruneHold = "pruneHold"
 
-// StreamRuleHistory is the rule history a source leaves the engine: three
-// predecessors. The engine links each rule to the rule it replaced and the
-// rule that pushed it, and the Go engine keeps the whole chain by default,
-// so a parse of a long flat document keeps every rule it made reachable
-// until the document ends, and its memory grows with the document's length
-// whatever the stream prunes (tabnas/parser doc/rule-history-bound.md).
-// Three is the most any grammar in the fleet reads back through the links,
-// and what the Rust engine bounds the history at by default. The same in
-// every runtime.
-const StreamRuleHistory = 3
-
-// boundHistory bounds parser's rule history at StreamRuleHistory where the
-// grammar or the host left it unbounded; a bound already set is left as it
-// is.
-func boundHistory(parser *tabnas.Tabnas) {
-	if parser.Config().RuleHistory == 0 {
-		history := StreamRuleHistory
-		parser.SetOptions(tabnas.Options{Rule: &tabnas.RuleOptions{History: &history}})
-	}
-}
-
 // pruningHeld is whether a grammar holds pruning at this pass (PruneHold).
 func pruningHeld(ctx *tabnas.Context) bool {
 	if ctx == nil {
@@ -378,8 +357,6 @@ func (p *ParserEventSource) RunWithValue(sink ParserSink) (Flow, *Fail, any) {
 	if f := p.gate(); f != nil {
 		return Continue, f, nil
 	}
-	// A stream keeps no more of the rules behind it than a grammar reads.
-	boundHistory(p.parser)
 	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag(), prune: p.prune}
 	p.parser.SubRuleDone(func(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleDone) {
 		r.onDone(rule, ctx, done)

@@ -12,7 +12,8 @@ here is re-measured by running its input through each runtime, and an
 entry that closes is deleted together with the test that pins it.
 
 Entry 4 is measured: a verified list that differs, because one runtime's
-suite cannot earn an entry the others' do. The rest is what the shared
+suite cannot earn an entry the others' do. Entry 5 is measured too: what a
+Go stream holds, which an engine defect keeps from being bounded. The rest is what the shared
 fixtures deliberately leave out, because it belongs to the Rust runtime
 or is not yet decided, so that a port does not read the absence of a row
 as coverage, or as licence.
@@ -101,3 +102,28 @@ and not in Go; every port has retired that list.)
 Pinned in Go by `TestEveryGrammarPrunesAsTheListSays` (`go/prune_test.go`),
 and in TypeScript by the prune suite's `pgn` case
 (`ts/test/prune.test.ts`).
+
+## 5. Go's source leaves the rule history unbounded
+
+A TypeScript `ParserEventSource` bounds the engine's rule history at
+three predecessors before its parse (`STREAM_RULE_HISTORY`), where the
+grammar or the host left it unbounded, and the Rust engine bounds it at
+three by default; a Go `ParserEventSource` bounds nothing. The values and
+the passes are the same in every runtime. What differs is what a parse
+holds: a Go stream keeps every rule it made reachable until the document
+ends, so its memory grows with the document's length, pruned or not
+(100,000 JSON records through dmog's Go `translate`: 2.8 GB, against
+276 MB at 10,000).
+
+Why: a bounded link in the Go engine is a copy of the rule, and a Go
+rule's `Node` is a field a copy does not share, so a grammar's write
+through a link (`r.Parent.Node = r.Node` and `r.Prev.Node = r.Node` in
+jsonic's Go grammar, `r.Parent.Node = owner.Node` in the engine's own
+builtins) lands on the copy and is lost: bounded at three, the Go prune suite's unpruned trees of
+jsonc, json5, jsonic, yaml and xml held 6 elements at ten times the
+records. The engine's to repair (tabnas/parser#325); this entry closes,
+and the Go source bounds the history as TypeScript's does, when a bounded
+Go history keeps those writes.
+
+Pinned in TypeScript by `ts/test/history.test.ts`. Go has no test of a
+bound it does not set.

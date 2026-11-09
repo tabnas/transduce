@@ -93,13 +93,12 @@ func readerGrammar(file string) (string, bool, bool) {
 	return "", false, false
 }
 
-var readerWindowOn = true
-
 func readerParser(name string, window bool) *tabnas.Tabnas {
 	j := makeGrammar(name)
-	if window {
-		j.SetOptions(tabnas.Options{Lex: &tabnas.LexOptions{Window: &readerWindowOn}})
-	}
+	// Set either way: a grammar's own constructor may declare the window
+	// (github.com/tabnas/json/go's Make does from v0.5.20), and a test of
+	// the read-whole route must turn it off.
+	j.SetOptions(tabnas.Options{Lex: &tabnas.LexOptions{Window: &window}})
 	return j
 }
 
