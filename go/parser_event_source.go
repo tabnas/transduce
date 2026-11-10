@@ -167,6 +167,9 @@ type ParserEventSource struct {
 	unverified bool
 	// unverifiedMaps empties maps too, whatever the grammar.
 	unverifiedMaps bool
+	// unverifiedHistory bounds the rule history, whatever the grammar, and
+	// whether or not the run prunes.
+	unverifiedHistory bool
 	// tokens sends token items whether or not the sink asks.
 	tokens bool
 	used   bool
@@ -239,6 +242,50 @@ func (p *ParserEventSource) UnverifiedMaps() *ParserEventSource {
 	p.unverified = true
 	p.unverifiedMaps = true
 	return p
+}
+
+// UnverifiedHistory bounds the engine's rule history at StreamRuleHistory,
+// whatever BoundsHistory says and whether or not the run prunes. It exists
+// for the differential suites and for nothing else: a grammar that reads
+// further back through the rule links than the bound keeps may parse
+// otherwise with it.
+func (p *ParserEventSource) UnverifiedHistory() *ParserEventSource {
+	p.unverifiedHistory = true
+	return p
+}
+
+// StreamRuleHistory is the rule history a pruning source leaves the engine,
+// for a grammar BoundsHistory lists: three predecessors. The engine links
+// each rule to the rule it replaced and the rule that pushed it, and the Go
+// engine keeps the whole chain by default, so a parse of a long flat
+// document keeps every rule it made reachable until the document ends, and
+// its memory grows with the document's length whatever the stream prunes
+// (tabnas/parser doc/rule-history-bound.md). Three is what the Rust engine
+// bounds the history at by default. A grammar that reads further back than
+// the bound keeps parses otherwise with it, so the bound is a verified
+// capability, as pruning is (history_test.go), and a run that does not
+// prune keeps the engine's default: the tree it keeps whole is what grows
+// with the document then. The bound costs the Go engine two to three times
+// the parse's time in copies of the rules it links (tabnas/parser#339),
+// which only a pruning run, whose memory it keeps flat, pays. The same in
+// TypeScript.
+const StreamRuleHistory = 3
+
+// boundsHistory is whether the run bounds the engine's rule history: one
+// that prunes a grammar BoundsHistory lists, where the bound buys what
+// pruning is for, a stream whose memory does not grow with the document.
+func (p *ParserEventSource) boundsHistory() bool {
+	return p.unverifiedHistory || (p.prune && p.grammar != "" && BoundsHistory(p.grammar))
+}
+
+// boundHistory bounds parser's rule history at StreamRuleHistory where the
+// grammar or the host left it unbounded; a bound already set is left as it
+// is.
+func boundHistory(parser *tabnas.Tabnas) {
+	if parser.Config().RuleHistory == 0 {
+		history := StreamRuleHistory
+		parser.SetOptions(tabnas.Options{Rule: &tabnas.RuleOptions{History: &history}})
+	}
 }
 
 // gate is why the run may not prune, when it may not.
@@ -591,6 +638,11 @@ func (p *ParserEventSource) RunWithValue(sink ParserSink) (Flow, *Fail, any) {
 	}
 	tokens := p.tokens || shared.WantsTokens(sink)
 	pruneMaps := p.prune && (p.unverifiedMaps || PrunesMaps(p.grammar))
+	// A pruned stream keeps no more of the rules behind it than a grammar
+	// reads, where the grammar is verified to read no further.
+	if p.boundsHistory() {
+		boundHistory(p.parser)
+	}
 	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag(), prune: p.prune,
 		pruneMaps: pruneMaps, tokens: tokens}
 	if tokens {

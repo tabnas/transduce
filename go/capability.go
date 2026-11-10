@@ -73,3 +73,37 @@ func Prunable(grammar string) bool {
 	}
 	return false
 }
+
+// boundsHistoryGrammars are the grammars a pruning ParserEventSource bounds
+// the engine's rule history for (StreamRuleHistory): history_test.go
+// verified in this runtime that every document the suite reads them parses
+// alike with the history bounded and without, the same passes, the same
+// ending and the same value, and asserts the list in both directions.
+// Every one is in prunableGrammars. A grammar off it keeps the engine's
+// default, an unbounded history, because what it reads back through the
+// rule links reaches further than the bound keeps: yaml's childNode reads a
+// child's value at the end of the child's rotation chain, walking the
+// child's Next links, and a bounded history keeps a pusher's child as it
+// ended, with no Next, so a value of several items with nothing between
+// them ("a" "b", a block scalar and the text after it, a stream of JSON
+// objects) keeps its first item alone, though its passes are alike.
+var boundsHistoryGrammars = []string{
+	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "zon",
+}
+
+// BoundsHistoryGrammars is the grammars a pruning ParserEventSource bounds
+// the rule history for: a copy of the list, which the caller may keep.
+func BoundsHistoryGrammars() []string {
+	return append([]string(nil), boundsHistoryGrammars...)
+}
+
+// BoundsHistory reports whether a pruning ParserEventSource bounds the
+// engine's rule history for grammar.
+func BoundsHistory(grammar string) bool {
+	for _, name := range boundsHistoryGrammars {
+		if name == grammar {
+			return true
+		}
+	}
+	return false
+}

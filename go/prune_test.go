@@ -160,7 +160,8 @@ func pruneDocuments(t *testing.T, g pruneGrammar) []prunedDoc {
 
 // prunedRun is one run: how it ended, its passes in the fixture encoding
 // and shaped as a run pruning as shape would leave them, and the engine's
-// tree afterwards.
+// tree afterwards. A run that prunes a grammar BoundsHistory lists bounds
+// the rule history, as a host's does.
 func prunedRun(name, text string, how, shape pruning) (string, []string, []string, any) {
 	source := NewParserEventSource(makeGrammar(name), text)
 	switch how {
@@ -168,6 +169,9 @@ func prunedRun(name, text string, how, shape pruning) (string, []string, []strin
 		source.Prune().Unverified()
 	case pruneMaps:
 		source.Prune().UnverifiedMaps()
+	}
+	if how != pruneNo && BoundsHistory(name) {
+		source.UnverifiedHistory()
 	}
 	var rec passRecorder
 	flow, f, value := source.RunWithValue(&rec)
