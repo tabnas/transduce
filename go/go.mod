@@ -14,7 +14,7 @@ require (
 
 // The protocol types, declared in alchemy's shared package, which alchemy
 // carries from v0.2.0.
-require github.com/tabnas/alchemy/go v0.3.0
+require github.com/tabnas/alchemy/go v0.4.0
 
 // The other grammars the tests run, and the shared fixture runner.
 require (
