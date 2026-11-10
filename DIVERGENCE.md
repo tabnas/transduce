@@ -12,8 +12,9 @@ here is re-measured by running its input through each runtime, and an
 entry that closes is deleted together with the test that pins it.
 
 Entry 4 is measured: a verified list that differs, because one runtime's
-suite cannot earn an entry the others' do. Entry 5 is measured too: what a
-Go stream holds, which an engine defect keeps from being bounded. Entry 6
+suite cannot earn an entry the others' do. Entry 5 is measured too: a
+verified list that differs, because one runtime's grammar reads further
+back than the others'. Entry 6
 is measured: a token's value as two engines give it and the third does
 not. The rest is what the shared
 fixtures deliberately leave out, because it belongs to the Rust runtime
@@ -105,30 +106,34 @@ Pinned in Go by `TestEveryGrammarPrunesAsTheListSays` (`go/prune_test.go`),
 and in TypeScript by the prune suite's `pgn` case
 (`ts/test/prune.test.ts`).
 
-## 5. Go's source leaves the rule history unbounded
+## 5. Go does not bound yaml's rule history
 
-A TypeScript `ParserEventSource` bounds the engine's rule history at
-three predecessors before its parse (`STREAM_RULE_HISTORY`), where the
-grammar or the host left it unbounded, and the Rust engine bounds it at
-three by default; a Go `ParserEventSource` bounds nothing. The values and
-the passes are the same in every runtime. What differs is what a parse
-holds: a Go stream keeps every rule it made reachable until the document
-ends, so its memory grows with the document's length, pruned or not
-(100,000 JSON records through dmog's Go `translate`: 2.8 GB, against
-276 MB at 10,000).
+A TypeScript or Go `ParserEventSource` that prunes a grammar its runtime's
+verified list names (`BOUNDS_HISTORY`, `ts/src/capability.ts`;
+`BoundsHistoryGrammars`, `go/capability.go`) bounds the engine's rule
+history at three predecessors (`STREAM_RULE_HISTORY`, `StreamRuleHistory`),
+and the Rust engine bounds every parse at three by default. TypeScript's
+list names yaml and Go's does not, so a pruned Go yaml stream keeps every
+rule it made reachable until the document ends, and its memory grows with
+the document's length; TypeScript's and Rust's do not. The passes and the
+output are the same in every runtime.
 
-Why: a bounded link in the Go engine is a copy of the rule, and a Go
-rule's `Node` is a field a copy does not share, so a grammar's write
-through a link (`r.Parent.Node = r.Node` and `r.Prev.Node = r.Node` in
-jsonic's Go grammar, `r.Parent.Node = owner.Node` in the engine's own
-builtins) lands on the copy and is lost: bounded at three, the Go prune suite's unpruned trees of
-jsonc, json5, jsonic, yaml and xml held 6 elements at ten times the
-records. The engine's to repair (tabnas/parser#325); this entry closes,
-and the Go source bounds the history as TypeScript's does, when a bounded
-Go history keeps those writes.
+Why: yaml's Go `childNode` reads a child's value at the end of the child's
+rotation chain, walking the child's `Next` links while each `Next.Prev` is
+the rule before (a Go slice is a header, so the rotated rules' appends are
+not seen through the first child's node). A bounded history keeps a
+pusher's child as it ended, with no `Next`, so with the bound a value of
+several items with nothing between them (`"a" "b"`, a block scalar and
+the text after it, a stream of JSON objects) keeps its first item alone:
+12 of the suite's 686 yaml documents differ in value, their passes alike.
+yaml's TypeScript reads `rule.child.node`, an array every rotated rule
+appends to, and every document parses alike bounded and not. The entry
+closes when Go's yaml reads its value without walking `Next`, and the Go
+suite then lists it.
 
-Pinned in TypeScript by `ts/test/history.test.ts`. Go has no test of a
-bound it does not set.
+Pinned in Go by `TestEveryGrammarBoundsTheHistoryAsTheListSays`
+(`go/history_test.go`), and in TypeScript by the history half of the prune
+suite (`ts/test/prune.test.ts`).
 
 ## 6. The engine's own space, line and comment tokens carry their text as their value in Rust
 

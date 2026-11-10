@@ -28,10 +28,12 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 import { loadSpecDir } from '@tabnas/support'
 
 import {
+  BOUNDS_HISTORY,
   Datum,
   Flow,
   PRUNABLE,
@@ -41,6 +43,7 @@ import {
   ParserEventSource,
   ParserSink,
   RulePass,
+  boundsHistory,
   isPrunable,
   parserEventToJSON,
   prunesMaps,
@@ -182,11 +185,14 @@ class Passes implements ParserSink {
 }
 
 // One run: how it ended, its passes, shaped as a run pruning as `shape`
-// would leave them, and the engine's tree afterwards.
+// would leave them, and the engine's tree afterwards. A run that prunes a
+// grammar `capability.boundsHistory` lists bounds the rule history, as a
+// host's does.
 function run(name: string, text: string, pruning: Pruning, shape: Pruning = pruning) {
   const source = new ParserEventSource(GRAMMARS[name](), text)
   if ('arrays' === pruning) source.prune().unverified()
   if ('maps' === pruning) source.prune().unverifiedMaps()
+  if ('no' !== pruning && boundsHistory(name)) source.unverifiedHistory()
   const passes = new Passes('maps' === shape)
   try {
     const { flow, value } = source.runWithValue(passes)
@@ -218,6 +224,54 @@ function compare(name: string, text: string, pruning: Pruning): string {
     }
   }
   return 'shape'
+}
+
+// One run of the history suite: how it ended, its passes in the fixture
+// encoding and the value the parse returned, with the rule history bounded
+// at `STREAM_RULE_HISTORY` or left as the engine leaves it. Neither prunes.
+function historyRun(name: string, text: string, bounded: boolean) {
+  const source = new ParserEventSource(GRAMMARS[name](), text)
+  if (bounded) source.unverifiedHistory()
+  const passes = new Passes()
+  try {
+    const { flow, value } = source.runWithValue(passes)
+    return { ending: `${flow}`, passes: passes.exact, value }
+  } catch (fail: any) {
+    const ending = `${fail?.code} at ${fail?.row}:${fail?.column}: ${fail?.message}`
+    return { ending, passes: passes.exact, value: undefined }
+  }
+}
+
+// A value as a short text, for a message.
+function preview(value: unknown): string {
+  let text: string
+  try {
+    text = JSON.stringify(value) ?? String(value)
+  } catch {
+    text = String(value)
+  }
+  return 120 < text.length ? text.slice(0, 117) + '...' : text
+}
+
+// How the bounded run compares with the unbounded one: '' alike, and
+// otherwise where they differ, by the ending, a pass or the value.
+function historyCompare(name: string, text: string): string {
+  const unbounded = historyRun(name, text, false)
+  const bounded = historyRun(name, text, true)
+  if (unbounded.ending !== bounded.ending) {
+    return `ended ${unbounded.ending} unbounded, ${bounded.ending} bounded`
+  }
+  const a = unbounded.passes
+  const b = bounded.passes
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i] !== b[i]) {
+      return `pass ${i} of ${a.length} differs: ${a[i] ?? 'nothing'} unbounded, ${b[i] ?? 'nothing'} bounded`
+    }
+  }
+  if (!isDeepStrictEqual(unbounded.value, bounded.value)) {
+    return `the value differs: ${preview(unbounded.value)} unbounded, ${preview(bounded.value)} bounded`
+  }
+  return ''
 }
 
 // Every element of every array in `value` that holds something, and every
@@ -309,6 +363,42 @@ describe('pruning', () => {
     }
     for (const name of [...PRUNABLE, ...PRUNES_MAPS]) {
       if (!SUITE.some((g) => g.name === name)) wrong.push(`${name} is listed, and this suite never runs it`)
+    }
+    assert.deepStrictEqual(wrong, [])
+  })
+
+  it('every grammar bounds the rule history as the list says', () => {
+    const wrong: string[] = []
+    for (const grammar of SUITE) {
+      const docs = documents(grammar)
+      const found: string[] = []
+      docs.forEach(([name, text], i) => {
+        const why = historyCompare(grammar.name, text)
+        if ('' !== why) found.push(`${name}: ${why}`)
+        if ((i + 1) % 200 === 0 || i + 1 === docs.length) {
+          console.log(
+            `${grammar.name} bounded: ${i + 1} of ${docs.length} ` +
+              `(${Math.floor(((i + 1) * 100) / docs.length)}%) documents, ${found.length} differing`,
+          )
+        }
+      })
+      const listed = boundsHistory(grammar.name)
+      if (listed && 0 < found.length) {
+        wrong.push(
+          `${grammar.name} is in capability.BOUNDS_HISTORY, but ${found.length} of its documents ` +
+            `differ bounded:\n    ${found.join('\n    ')}`,
+        )
+      }
+      if (!listed && 0 === found.length) {
+        wrong.push(`${grammar.name} is not in capability.BOUNDS_HISTORY, but none of its documents differs bounded`)
+      }
+      if (!listed && 0 < found.length) {
+        console.log(`${grammar.name} bounded: ${found.length} documents differ, the first ${found[0]}`)
+      }
+    }
+    for (const name of BOUNDS_HISTORY) {
+      if (!SUITE.some((g) => g.name === name)) wrong.push(`${name} is listed, and this suite never runs it`)
+      if (!isPrunable(name)) wrong.push(`${name} is in capability.BOUNDS_HISTORY, and not prunable`)
     }
     assert.deepStrictEqual(wrong, [])
   })

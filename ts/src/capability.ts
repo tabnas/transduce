@@ -71,9 +71,41 @@ export function prunesMaps(grammar: string): boolean {
   return PRUNES_MAPS.includes(grammar)
 }
 
+// The grammars a pruning `ParserEventSource` bounds the engine's rule
+// history for (`STREAM_RULE_HISTORY`): every document `test/prune.test.ts`
+// reads them parses alike with the history bounded and without, the same
+// passes, the same ending and the same value, and the suite asserts the
+// list in both directions. A grammar off it keeps the engine's default, an
+// unbounded history, because what it reads back through the rule links
+// reaches further than the bound keeps.
+export const BOUNDS_HISTORY: readonly string[] = Object.freeze([
+  'csv',
+  'feed',
+  'ini',
+  'json',
+  'json5',
+  'jsonc',
+  'jsonic',
+  'jsonl',
+  'markdown',
+  'pgn',
+  'toml',
+  'xml',
+  'yaml',
+  'zon',
+])
+
+// Whether a pruning `ParserEventSource` bounds the engine's rule history for
+// `grammar`.
+export function boundsHistory(grammar: string): boolean {
+  return BOUNDS_HISTORY.includes(grammar)
+}
+
 export const capability = Object.freeze({
   PRUNABLE,
   PRUNES_MAPS,
+  BOUNDS_HISTORY,
   prunable: isPrunable,
   prunesMaps,
+  boundsHistory,
 })

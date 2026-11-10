@@ -115,6 +115,15 @@
 // parse, having sent nothing; `unverified()` lifts the gate for the suite,
 // and `unverifiedMaps()` empties the maps of any grammar, for the suite
 // too.
+//
+// A run that prunes a grammar `capability.boundsHistory` lists also bounds
+// the engine's rule history at `STREAM_RULE_HISTORY`, where the grammar or
+// the host left it unbounded, so that the rules behind the stream go as its
+// arrays do. That is a verified capability too: the prune suite's history
+// half runs every document of every grammar bounded and not, and lists the
+// grammars whose passes, ending and value never differed. A run that does
+// not prune, or prunes a grammar off the list, keeps the engine's default,
+// and `unverifiedHistory()` bounds any run, for the suites.
 
 import {
   AbortFlag,
@@ -131,7 +140,7 @@ import {
 import type { Flow, ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
 import type { Context, Reader, Rule, RuleDone, Tabnas } from '@tabnas/parser'
 
-import { isPrunable, prunesMaps } from './capability'
+import { boundsHistory, isPrunable, prunesMaps } from './capability'
 import { engineFailure, prepare } from './source'
 
 // A tabnas parser applied to one text, or to what a reader gives, as a
@@ -150,6 +159,9 @@ export class ParserEventSource {
   private isUnverified = false
   // Empty maps too, whatever the grammar.
   private isUnverifiedMaps = false
+  // Bound the rule history, whatever the grammar, and whether or not the
+  // run prunes.
+  private isUnverifiedHistory = false
   private sendTokens = false
   private used = false
 
@@ -231,6 +243,24 @@ export class ParserEventSource {
     return this
   }
 
+  // Bound the engine's rule history at `STREAM_RULE_HISTORY`, whatever
+  // `capability.boundsHistory` says and whether or not the run prunes. This
+  // exists for the differential suites and for nothing else: a grammar that
+  // reads further back through the rule links than the bound keeps may
+  // parse otherwise with it.
+  unverifiedHistory(): this {
+    this.isUnverifiedHistory = true
+    return this
+  }
+
+  // Whether the run bounds the engine's rule history: one that prunes a
+  // grammar `capability.boundsHistory` lists, where the bound buys what
+  // pruning is for, a stream whose memory does not grow with the document.
+  private boundsHistory(): boolean {
+    if (this.isUnverifiedHistory) return true
+    return this.pruning && null !== this.grammarName && boundsHistory(this.grammarName)
+  }
+
   // Why the run may not prune, when it may not.
   private gate(): Fail | null {
     if (!this.pruning || this.isUnverified) return null
@@ -305,8 +335,9 @@ export class ParserEventSource {
       offsets,
       tokens,
     )
-    // A stream keeps no more of the rules behind it than a grammar reads.
-    boundHistory(this.parser)
+    // A pruned stream keeps no more of the rules behind it than a grammar
+    // reads, where the grammar is verified to read no further.
+    if (this.boundsHistory()) boundHistory(this.parser)
     prepare(
       this.parser,
       () => !abort.isAborted() && !stop.isAborted(),
@@ -461,15 +492,18 @@ class Relay {
 // (tabnas/yaml#138). The same key in every runtime.
 export const PRUNE_HOLD = 'pruneHold'
 
-// The rule history a source leaves the engine: three predecessors. The
-// engine links each rule to the rule it replaced and the rule that pushed
-// it, and the TypeScript engine keeps the whole chain by default, so a
-// parse of a long flat document keeps every rule it made reachable until
-// the document ends, and its memory grows with the document's length
-// whatever the stream prunes (tabnas/parser doc/rule-history-bound.md).
-// Three is the most any grammar in the fleet reads back through the links,
-// and what the Rust engine bounds the history at by default. The same in
-// every runtime.
+// The rule history a pruning source leaves the engine, for a grammar
+// `capability.boundsHistory` lists: three predecessors. The engine links
+// each rule to the rule it replaced and the rule that pushed it, and the
+// TypeScript engine keeps the whole chain by default, so a parse of a long
+// flat document keeps every rule it made reachable until the document ends,
+// and its memory grows with the document's length whatever the stream
+// prunes (tabnas/parser doc/rule-history-bound.md). Three is what the Rust
+// engine bounds the history at by default. A grammar that reads further
+// back than the bound keeps parses otherwise with it, so the bound is a
+// verified capability, as pruning is (`test/prune.test.ts`), and a run
+// that does not prune keeps the engine's default: the tree it keeps whole
+// is what grows with the document then. The same in Go.
 export const STREAM_RULE_HISTORY = 3
 
 // Bound `parser`'s rule history at `STREAM_RULE_HISTORY` where the grammar

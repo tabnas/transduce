@@ -1,18 +1,22 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// A source bounds the engine's rule history (`STREAM_RULE_HISTORY`).
+// A pruning source bounds the engine's rule history (`STREAM_RULE_HISTORY`)
+// for a grammar `capability.boundsHistory` lists.
 //
 // The engine links each rule to the rule it replaced and the rule that
 // pushed it, and the TypeScript engine keeps the whole chain by default:
 // a parse of a long flat document keeps every rule it made reachable until
 // the document ends, whatever the stream prunes, and its memory grows with
 // the document's length (tabnas/parser doc/rule-history-bound.md). A
-// ParserEventSource bounds the history at three predecessors, the most any
-// grammar in the fleet reads and what the Rust engine bounds it at by
-// default, unless the grammar or the host bounded it already. Read from a
-// reader and pruned, ten times the records then leave the heap's high
-// water where it was. Go's source bounds nothing yet: a bounded Go history
-// loses a grammar's writes through the links (tabnas/parser#325).
+// ParserEventSource that prunes a listed grammar bounds the history at
+// three predecessors, what the Rust engine bounds it at by default, unless
+// the grammar or the host bounded it already; every other run keeps the
+// engine's default. The list is a verified capability, which the history
+// half of the prune suite holds both ways (`test/prune.test.ts`): every
+// document of a listed grammar parses alike bounded and not. Read from a
+// reader and pruned, ten times the records then leave the heap's high water
+// where it was. Go's source does the same for its own list
+// (go/history_test.go).
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -21,7 +25,8 @@ import vm from 'node:vm'
 
 import { make as makeJson } from '@tabnas/json'
 
-import { Flow, ParserEvent, ParserEventSource, ParserSink, STREAM_RULE_HISTORY } from '../dist/transduce'
+import { Flow, ParserEvent, ParserEventSource, ParserSink, STREAM_RULE_HISTORY, boundsHistory } from '../dist/transduce'
+import { GRAMMARS } from './common'
 
 v8.setFlagsFromString('--expose_gc')
 const gc: () => void = vm.runInNewContext('gc')
@@ -81,18 +86,29 @@ function mb(bytes: number): string {
 }
 
 describe('rule history', () => {
-  it('a source bounds a history the grammar left unbounded', () => {
-    const parser = makeJson()
-    assert.equal(parser.options.rule?.history ?? null, null)
-    new ParserEventSource(parser, '[1,2]').run(new HeapSampler(Number.MAX_SAFE_INTEGER))
-    assert.equal(parser.options.rule.history, STREAM_RULE_HISTORY)
+  it('bounds the rule history of a run that prunes a listed grammar, and of no other run', () => {
     assert.equal(STREAM_RULE_HISTORY, 3)
+    const history = (name: string, make: (source: ParserEventSource) => void) => {
+      const parser = GRAMMARS[name]()
+      assert.equal((parser as any).options?.rule?.history ?? null, null, `${name} leaves its history unbounded`)
+      const source = new ParserEventSource(parser, '[1, [2]]')
+      make(source)
+      source.run(new HeapSampler(Number.MAX_SAFE_INTEGER))
+      return (parser as any).options?.rule?.history ?? null
+    }
+    for (const name of ['json', 'jsonl']) {
+      assert.ok(boundsHistory(name), `${name} is listed`)
+      assert.equal(history(name, (s) => s.grammar(name).prune()), STREAM_RULE_HISTORY, `${name} pruned`)
+      assert.equal(history(name, (s) => s.grammar(name)), null, `${name} not pruned`)
+      assert.equal(history(name, (s) => s.prune().unverified()), null, `${name} pruned, unnamed`)
+      assert.equal(history(name, (s) => s.unverifiedHistory()), STREAM_RULE_HISTORY, `${name} unverified`)
+    }
   })
 
   it('a history already bounded is left as it is', () => {
     const parser = makeJson()
     parser.options({ rule: { history: 5 } })
-    new ParserEventSource(parser, '[1,2]').run(new HeapSampler(Number.MAX_SAFE_INTEGER))
+    new ParserEventSource(parser, '[1,2]').grammar('json').prune().run(new HeapSampler(Number.MAX_SAFE_INTEGER))
     assert.equal(parser.options.rule.history, 5)
   })
 

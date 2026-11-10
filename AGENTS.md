@@ -69,7 +69,7 @@ The two sources, in order of preference:
 
 | Source | When | Memory |
 |---|---|---|
-| `ParserEventSource` and the format's transducer part | a format whose package ships a part | the engine's own per-parse state, its rule history bounded at three predecessors (by the Rust engine's default and TypeScript's `STREAM_RULE_HISTORY`; Go's is unbounded, `DIVERGENCE.md` entry 5), plus one selected scope; from a reader, a window of the input when the grammar declares `lex.window` |
+| `ParserEventSource` and the format's transducer part | a format whose package ships a part | the engine's own per-parse state, its rule history bounded at three predecessors (by the Rust engine's default, and in a pruning TypeScript or Go run of a grammar `boundsHistory` lists, `STREAM_RULE_HISTORY`), plus one selected scope; from a reader, a window of the input when the grammar declares `lex.window` |
 | `ParserSource` / `ValueSource` | every other grammar | the whole parsed value |
 
 **A format streams through its part, never through inference.** Until
@@ -166,6 +166,37 @@ the tree. Rust's toml finds a table by its path from the document's root
 cell, so the table's node is never a closed rule's own, and keeps about ten
 entries in the context's bag per table (tabnas/toml#121); markdown's
 block phase keeps every block it made (tabnas/markdown#100).
+
+**A pruning run bounds the rule history, for a grammar verified to read no
+further.** The engine links each rule to the rule it replaced and the rule
+that pushed it, and keeps the whole chain by default in TypeScript and Go,
+so a long flat document keeps every rule reachable to its end whatever the
+tree is emptied of. A run that prunes a grammar `boundsHistory` lists
+(TypeScript's `BOUNDS_HISTORY` and `boundsHistory`, Go's
+`BoundsHistoryGrammars` and `BoundsHistory`) bounds the history at three
+predecessors (`STREAM_RULE_HISTORY`, `StreamRuleHistory`), where the
+grammar or the host left it unbounded, so the rules behind the stream go as
+the tree's arrays do. The bound buys flat memory only where the tree is
+emptied too, so a run that does not prune keeps the engine's default, and
+pays nothing: in Go a bounded history costs two to three times the parse's
+time in copies of the rules it links (tabnas/parser#339). A grammar may
+read further back through the links than the bound keeps, so the list is a
+verified capability: the history half of each prune suite
+(`ts/test/prune.test.ts`, `go/history_test.go`) runs every document of
+every grammar with the history bounded (`unverifiedHistory`,
+`UnverifiedHistory`) and not, neither pruned, compares the passes, the
+ending and the value, and holds the list both ways; and the prune suites'
+pruned runs of a listed grammar are bounded, as a host's are. Every list
+entry is a prunable grammar. In TypeScript every grammar of the suite
+passes. In Go every one but yaml does: yaml's `childNode` reads a child's
+value at the end of the child's rotation chain, walking the child's `Next`
+links, and a bounded history keeps a pusher's child as it ended, with no
+`Next`, so a value of several items with nothing between them (`"a" "b"`,
+a block scalar and the text after it, a stream of JSON objects) keeps only
+its first item, in 12 documents, though their passes are alike. Rust needs
+no list: its engine bounds every parse at three by default, and each
+grammar's own suite runs under that. Until 0.6.3, TypeScript bounded every
+run's history, pruned or not, whatever the grammar.
 
 ## Repository map
 
