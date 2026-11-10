@@ -70,7 +70,7 @@ var pruneGrammars = []pruneGrammar{
 	{"csv", []string{"records.csv"}, "csv"},
 	{"xml", []string{"records.xml"}, "xml"},
 	{"zon", nil, "zon"},
-	{"markdown", nil, "markdown"},
+	{"markdown", []string{"paragraphs.md"}, "markdown"},
 	{"feed", nil, "feed"},
 }
 
@@ -94,6 +94,8 @@ func pruneGenerated(name string, records int) string {
 		return sectionsINI(records)
 	case "tables.toml":
 		return tablesTOML(records)
+	case "paragraphs.md":
+		return paragraphsMD(records)
 	}
 	panic("no generator for " + name)
 }
@@ -112,6 +114,15 @@ func sectionsINI(records int) string {
 	var b strings.Builder
 	for i := 0; i < records; i++ {
 		fmt.Fprintf(&b, "[s%d]\nid = %d\nname = n%d\ntext = the text of section %d\n\n", i, i, i, i)
+	}
+	return b.String()
+}
+
+// paragraphsMD is a markdown document of records paragraphs.
+func paragraphsMD(records int) string {
+	var b strings.Builder
+	for i := 0; i < records; i++ {
+		fmt.Fprintf(&b, "Paragraph %d. The text of paragraph %d, *with* some `code`.\n\n", i, i)
 	}
 	return b.String()
 }
@@ -337,6 +348,11 @@ func treeElements(v any) int {
 		return n
 	case tabnas.ListRef:
 		return treeElements(v.Val)
+	case *[]any:
+		if v == nil {
+			return 0
+		}
+		return treeElements(*v)
 	case map[string]any:
 		n := len(v)
 		for _, e := range v {
@@ -371,6 +387,11 @@ func heldElements(v any) int {
 		return n
 	case tabnas.ListRef:
 		return heldElements(v.Val)
+	case *[]any:
+		if v == nil {
+			return 0
+		}
+		return heldElements(*v)
 	case map[string]any:
 		n := len(v)
 		for _, e := range v {
@@ -419,6 +440,7 @@ func TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas(t *testing.T) {
 		{"jsonic", "records.json"}, {"jsonl", "records.jsonl"}, {"yaml", "records.yaml"},
 		{"xml", "records.xml"}, {"csv", "records.csv"},
 		{"json", "members.json"}, {"ini", "sections.ini"}, {"toml", "tables.toml"},
+		{"markdown", "paragraphs.md"},
 	}
 	var wrong []string
 	for i, pair := range pairs {

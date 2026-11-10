@@ -155,7 +155,7 @@ const GRAMMARS: &[Grammar] = &[
     Grammar {
         name: "markdown",
         make: tabnas_markdown::make,
-        generated: &[],
+        generated: &["paragraphs.md"],
         repo: "markdown",
     },
     Grammar {
@@ -183,6 +183,7 @@ fn generated(name: &str, records: usize) -> String {
         "members.json" => members_json(records),
         "sections.ini" => sections_ini(records),
         "tables.toml" => tables_toml(records),
+        "paragraphs.md" => paragraphs_md(records),
         other => panic!("no generator for {other}"),
     }
 }
@@ -214,6 +215,18 @@ fn tables_toml(records: usize) -> String {
         let _ = write!(
             out,
             "[[items]]\nid = {i}\nname = \"n{i}\"\ntext = \"the text of table {i}\"\n\n"
+        );
+    }
+    out
+}
+
+/// A markdown document of `records` paragraphs.
+fn paragraphs_md(records: usize) -> String {
+    let mut out = String::new();
+    for i in 0..records {
+        let _ = write!(
+            out,
+            "Paragraph {i}. The text of paragraph {i}, *with* some `code`.\n\n"
         );
     }
     out
@@ -516,12 +529,13 @@ prunes_as_the_list_says! {
 
 /// Every element of every array in `value` that holds something, and every
 /// member of every map: what the tree keeps reachable. An element pruning
-/// set to `Undefined` keeps its place and holds nothing.
+/// set to `Undefined` keeps its place and holds nothing; the engine hands it
+/// back as `Null`, as toml's array of tables shows.
 fn elements(value: &Value) -> usize {
     let held = |items: &[Value]| {
         items
             .iter()
-            .filter(|item| !matches!(item, Value::Undefined))
+            .filter(|item| !matches!(item, Value::Undefined | Value::Null))
             .map(|item| 1 + elements(item))
             .sum::<usize>()
     };
@@ -605,6 +619,8 @@ leaves_the_pruned_tree_as_it_was! {
     ten_times_the_pgn_games_leave_the_pruned_tree_as_it_was: "pgn" "records.pgn",
     ten_times_the_json_members_leave_the_pruned_tree_as_it_was: "json" "members.json",
     ten_times_the_ini_sections_leave_the_pruned_tree_as_it_was: "ini" "sections.ini",
+    ten_times_the_toml_tables_leave_the_pruned_tree_as_it_was: "toml" "tables.toml",
+    ten_times_the_markdown_paragraphs_leave_the_pruned_tree_as_it_was: "markdown" "paragraphs.md",
 }
 
 /// A grammar `capability::prunes_maps` lists has its maps emptied with its
