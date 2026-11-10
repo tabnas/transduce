@@ -521,7 +521,8 @@ function held(bytes: number, what: string, max: number): void {
 // as Rust's engine gives it (`site.si`) and Go's counts it. The text is
 // scanned once, in order, by two cursors: one for the passes' tokens,
 // which arrive in source order, and one for the token items, which the
-// lexer cuts in source order ahead of the passes. A position before a
+// lexer cuts in source order ahead of the passes, and which is moved up to
+// the passes' cursor whenever it is behind it. A position before a
 // cursor scans again from the text's start (or, over a reader, from the
 // oldest text kept), which only a grammar's own rewind outside a probe
 // would ask. Over a reader the source decodes the bytes as the engine
@@ -550,6 +551,18 @@ export class ByteOffsets {
   // The byte offset of a pass's token at UTF-16 position `at`.
   ofPass(at: number): number {
     const bytes = this.scan(this.passes, at)
+    // The items' cursor moves only when a token item is converted, so once
+    // the items stop (white space before a long compact array), it would
+    // stay where the last one was and keep every character after it. Move
+    // it up to the passes' cursor: no token item is ever converted behind
+    // a token a pass has taken. The lexer cuts forward; a probe's rewind
+    // replays the consumed tokens from the engine's history without
+    // cutting them again; and a relex re-cuts only the lookahead, which
+    // lies after the tokens taken.
+    if (this.items.used && this.items.at < this.passes.at) {
+      this.items.at = this.passes.at
+      this.items.bytes = this.passes.bytes
+    }
     this.drop()
     return bytes
   }

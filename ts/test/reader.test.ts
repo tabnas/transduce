@@ -29,6 +29,7 @@ import {
   ParserSink,
   parserEventToJSON,
 } from '../dist/transduce'
+import { ByteOffsets } from '../dist/parser-event-source'
 import { GRAMMARS } from './common'
 import { recordsJson } from './support'
 
@@ -227,6 +228,47 @@ describe('ParserEventSource from a reader', () => {
         assert.deepStrictEqual(read, whole, `long.jsonc in pieces of ${size}, tokens ${tokens}`)
       }
     }
+  })
+
+  it('a run that asks for token items keeps a few blocks of text when the items stop', () => {
+    // White space before a long compact array, over 2 MB, read a window at
+    // a time: a token item at the start, one at the end, and none between,
+    // so the offsets' cursor for the token items stands still while the
+    // passes' moves on. The text the offsets keep stays within a few of
+    // their 64 KiB blocks: before the repair (tabnas/transduce#79's review)
+    // the items' cursor held the document from the first space on.
+    const strings: string[] = []
+    for (let i = 0; 2200 > i; i++) strings.push(JSON.stringify(`${i} ${'a é 日 😀 '.repeat(70)}`))
+    const text = ` [${strings.join(',')}]\n`
+    assert.ok(utf8(text).length > 2000000, String(utf8(text).length))
+    let kept = 0
+    const feed = ByteOffsets.prototype.feed
+    ByteOffsets.prototype.feed = function (this: any, bytes: Uint8Array): void {
+      feed.call(this, bytes)
+      kept = Math.max(kept, this.text.length)
+    }
+    let read
+    try {
+      read = run(
+        ParserEventSource.fromReader(parser('json', true), new Pieces(utf8(text), 65536)),
+        new Passes(undefined, 0, true),
+      )
+    } finally {
+      ByteOffsets.prototype.feed = feed
+    }
+    assert.equal(read.outcome, 'continue')
+    const items = read.passes.filter((p: any) => 'token' === p[0])
+    assert.deepEqual(
+      items.map((p: any) => [p[1].name, p[1].offset]),
+      [
+        ['#SP', 0],
+        ['#LN', utf8(text).length - 1],
+      ],
+    )
+    offsetsHold('compact.json', text, read.passes)
+    assert.ok(kept < 4 * 65536, `the offsets kept ${kept} UTF-16 units of a document of ${text.length}`)
+    const whole = run(new ParserEventSource(parser('json', true), text), new Passes(undefined, 0, true))
+    assert.deepStrictEqual(read, whole)
   })
 
   it('an unreadable source is invalid input', () => {
