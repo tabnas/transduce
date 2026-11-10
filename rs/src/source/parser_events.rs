@@ -20,11 +20,13 @@
 //!   `b` it gave back from their end, which are the next rule's to
 //!   consume, and none when `b` is more than it recorded, since a close
 //!   alternate can back up a token it did not record. A token is its
-//!   name, its value, its source text and its 1-based row and column; a
-//!   token with no value (the end of the source, or a fixed token such as
-//!   `[`) has `null`, and a number carries its source text as its lexeme
-//!   when that text is a JSON number spelling the value (RFC 8259), so a
-//!   renderer can write it as it stands;
+//!   name, its value, its source text, its 1-based row and column and its
+//!   byte offset (where it starts, in UTF-8 bytes from the document's
+//!   start: the engine's `site.si`); a token with no value (the end of the
+//!   source, or a fixed token such as `[`) has `null`, and a number
+//!   carries its source text as its lexeme when that text is a JSON number
+//!   spelling the value (RFC 8259), so a renderer can write it as it
+//!   stands;
 //! - on a close pass, the rule's node when that is a scalar (`value`), a
 //!   number with the lexeme of the rule's first open token as above;
 //!   nothing on an open pass, nor for a container.
@@ -34,6 +36,25 @@
 //! serialized grammar's `pd_` keys), so it is never the document's. The
 //! engine flags it (`RuleDone::probe`), and the source drops it before any
 //! sink sees it.
+//!
+//! A sink that asks for them ([`ParserSink::wants_tokens`]), or a source
+//! told to send them ([`ParserEventSource::tokens`]), also gets a
+//! [`ParserEvent::Token`] for each token the lexer gave and the parser did
+//! not take: one of the grammar's ignored tokens (its `IGNORE` token set:
+//! white space, a line break, a comment). The source then subscribes to the
+//! engine's lexer (`subscribe_lex`), takes each ignored token as the lexer
+//! cuts it, and holds it until the first pass that consumed a token after
+//! it, which it sends it before; those still held when the parse returns
+//! go before the `End`. So a token item is in source order among the
+//! passes, and the source holds no more than the ignored tokens between
+//! two passes. A token lexed while a probe is open is the document's all
+//! the same: a probe's rewind replays the tokens the parser consumed from
+//! the engine's history, and the lexer never cuts that text again, so a
+//! token item dropped there would be lost. A token the lexer cuts again (a
+//! relex re-cuts the text after a token it renegotiates) starts before the
+//! furthest one taken, and is dropped as the one already held. A sink that
+//! does not ask gets the passes alone, and the source subscribes to no
+//! lexer event for it.
 //!
 //! The source holds its limits as it builds each pass, before the sink
 //! sees it: a token's value or source text, or a pass's value, longer than
@@ -73,9 +94,10 @@
 //! parse, having sent nothing; [`ParserEventSource::unverified`] lifts the
 //! gate for the suite.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
-use tabnas::{Context, Rule, RuleDone, RuleState, Tabnas, Value};
+use tabnas::{Context, Rule, RuleDone, RuleState, Tabnas, Tin, Token, Value};
 
 use crate::datum::Datum;
 use crate::error::{Code, Fail};
@@ -98,6 +120,8 @@ pub struct ParserEventSource<'s> {
     grammar: Option<Box<str>>,
     prune: bool,
     unverified: bool,
+    /// Send token items whether or not the sink asks.
+    tokens: bool,
 }
 
 impl<'s> ParserEventSource<'s> {
@@ -114,6 +138,7 @@ impl<'s> ParserEventSource<'s> {
             grammar: None,
             prune: false,
             unverified: false,
+            tokens: false,
         }
     }
 
@@ -153,6 +178,14 @@ impl<'s> ParserEventSource<'s> {
     /// other, with `STREAMABILITY_UNKNOWN` before the parse.
     pub fn prune(mut self) -> Self {
         self.prune = true;
+        self
+    }
+
+    /// Send a [`ParserEvent::Token`] for each token the parser did not
+    /// take, whether or not the sink asks for them
+    /// ([`ParserSink::wants_tokens`], which a run also follows).
+    pub fn tokens(mut self) -> Self {
+        self.tokens = true;
         self
     }
 
@@ -231,8 +264,15 @@ impl<'s> ParserEventSource<'s> {
             abort,
             metrics,
             prune,
+            tokens,
             ..
         } = self;
+        let tokens = (tokens || sink.wants_tokens()).then(|| TokenQueue {
+            ignored: parser.token_set("IGNORE").unwrap_or_default(),
+            held: VecDeque::new(),
+            reach: 0,
+        });
+        let lex = tokens.is_some();
         let stop = AbortFlag::new();
         let relay = Arc::new(Mutex::new(Relay {
             sink,
@@ -242,12 +282,14 @@ impl<'s> ParserEventSource<'s> {
             stop: stop.clone(),
             events: 0,
             prune,
+            tokens,
         }));
         install(
             &mut parser,
             Arc::downgrade(&relay),
             abort.clone(),
             stop.clone(),
+            lex,
         );
         let parsed = match reader {
             Some(reader) => parser.parse_reader(reader),
@@ -264,7 +306,10 @@ impl<'s> ParserEventSource<'s> {
             Status::Failed(fail) => Err(fail),
             Status::Stopped => Ok(Flow::Stop),
             Status::Running => match &parsed {
-                Ok(_) => relay.send(&ParserEvent::End),
+                Ok(_) => match relay.release(u64::MAX) {
+                    Ok(Flow::Continue) => relay.send(&ParserEvent::End),
+                    other => other,
+                },
                 Err(e) => Err(engine_failure(e, &abort)),
             },
         };
@@ -301,6 +346,19 @@ struct Relay<S> {
     events: u64,
     /// Empty the array a close pass's rule builds, once the sink has seen it.
     prune: bool,
+    /// The token items, when the run sends them.
+    tokens: Option<TokenQueue>,
+}
+
+/// The ignored tokens the lexer has cut and no pass has yet been sent
+/// after, in source order.
+struct TokenQueue {
+    /// The grammar's `IGNORE` token set: the tokens the parser does not take.
+    ignored: Vec<Tin>,
+    held: VecDeque<PassToken>,
+    /// The byte offset past the furthest token taken: a token that starts
+    /// before it is one the lexer cut again.
+    reach: u64,
 }
 
 impl<S: ParserSink> Relay<S> {
@@ -312,6 +370,52 @@ impl<S: ParserSink> Relay<S> {
     fn fail(&mut self, fail: Fail) {
         self.status = Status::Failed(fail);
         self.stop.abort();
+    }
+
+    /// Send the token items held that start before `before`, a byte
+    /// offset, in order.
+    fn release(&mut self, before: u64) -> Result<Flow, Fail> {
+        loop {
+            let Some(queue) = &mut self.tokens else {
+                return Ok(Flow::Continue);
+            };
+            match queue.held.front() {
+                Some(token) if token.offset < before => {}
+                _ => return Ok(Flow::Continue),
+            }
+            let token = queue.held.pop_front().expect("a token is held");
+            match self.send(&ParserEvent::Token(token))? {
+                Flow::Continue => {}
+                Flow::Stop => return Ok(Flow::Stop),
+            }
+        }
+    }
+
+    /// One token the lexer cut: held when it is an ignored token the run
+    /// has not taken yet.
+    fn on_lex(&mut self, token: &Token) {
+        if !matches!(self.status, Status::Running) {
+            return;
+        }
+        let Some(queue) = &mut self.tokens else {
+            return;
+        };
+        if !queue.ignored.contains(&token.tin) {
+            return;
+        }
+        let offset = token.site.si as u64;
+        if offset < queue.reach {
+            return;
+        }
+        queue.reach = offset + token.src.as_str().len() as u64;
+        match pass_token(token, self.max_scalar_bytes) {
+            Ok(item) => {
+                if let Some(queue) = &mut self.tokens {
+                    queue.held.push_back(item);
+                }
+            }
+            Err(fail) => self.fail(fail),
+        }
     }
 
     /// One pass the engine completed.
@@ -328,6 +432,19 @@ impl<S: ParserSink> Relay<S> {
             Ok(pass) => pass,
             Err(fail) => return self.fail(fail),
         };
+        // The token items before the last token this pass consumed come
+        // first.
+        if let Some(last) = pass.tokens.last() {
+            match self.release(last.offset) {
+                Ok(Flow::Continue) => {}
+                Ok(Flow::Stop) => {
+                    self.status = Status::Stopped;
+                    self.stop.abort();
+                    return;
+                }
+                Err(fail) => return self.fail(fail),
+            }
+        }
         let ev = if open {
             ParserEvent::Open(pass)
         } else {
@@ -357,7 +474,16 @@ fn install<S: ParserSink + Send + 'static>(
     relay: Weak<Mutex<Relay<S>>>,
     abort: AbortFlag,
     stop: AbortFlag,
+    lex: bool,
 ) {
+    if lex {
+        let relay = relay.clone();
+        parser.subscribe_lex(move |token, _, _| {
+            if let Some(relay) = relay.upgrade() {
+                lock(&relay).on_lex(token);
+            }
+        });
+    }
     parser.subscribe_rule_done(move |rule, context, done| {
         if let Some(relay) = relay.upgrade() {
             lock(&relay).on_done(rule, context, done);
@@ -412,6 +538,25 @@ fn empty_array(rule: &Rule) {
     }
 }
 
+/// A token as a pass and a token item carry it, its sizes held to
+/// `max_scalar_bytes`.
+fn pass_token(t: &Token, max: usize) -> Result<PassToken, Fail> {
+    let src = t.src.as_str();
+    held(src.len(), "a token's source text", max)?;
+    let val = scalar_of(&t.val, Some(src));
+    if let Datum::String(s) = &val {
+        held(s.len(), "a token's value", max)?;
+    }
+    Ok(PassToken {
+        name: t.name.as_str().into(),
+        val,
+        src: src.into(),
+        row: t.site.ri as u64,
+        col: t.site.ci as u64,
+        offset: t.site.si as u64,
+    })
+}
+
 /// The pass as alchemy's [`RulePass`], its sizes held to
 /// `max_scalar_bytes`.
 fn pass(rule: &Rule, done: &RuleDone, open: bool, max: usize) -> Result<RulePass, Fail> {
@@ -420,19 +565,7 @@ fn pass(rule: &Rule, done: &RuleDone, open: bool, max: usize) -> Result<RulePass
     let kept = &matched[..matched.len().saturating_sub(b)];
     let mut tokens = Vec::with_capacity(kept.len());
     for t in kept {
-        let src = t.src.as_str();
-        held(src.len(), "a token's source text", max)?;
-        let val = scalar_of(&t.val, Some(src));
-        if let Datum::String(s) = &val {
-            held(s.len(), "a token's value", max)?;
-        }
-        tokens.push(PassToken {
-            name: t.name.as_str().into(),
-            val,
-            src: src.into(),
-            row: t.site.ri as u64,
-            col: t.site.ci as u64,
-        });
+        tokens.push(pass_token(t, max)?);
     }
     let value = if open {
         None
@@ -540,8 +673,8 @@ mod tests {
         assert_eq!(
             text,
             [
-                r##"["open",{"name":"val","d":0,"i":1,"alt":{"p":"","r":"","b":0,"g":["json","val"]},"tokens":[["#NR",2.5,"2.50",1,2]],"forced":false,"n":{}}]"##,
-                r##"["close",{"name":"val","d":0,"i":1,"alt":{"p":"","r":"","b":0,"g":["end","json"]},"tokens":[["#ZZ",null,"",1,7]],"forced":false,"n":{},"value":2.5}]"##,
+                r##"["open",{"name":"val","d":0,"i":1,"alt":{"p":"","r":"","b":0,"g":["json","val"]},"tokens":[["#NR",2.5,"2.50",1,2,1]],"forced":false,"n":{}}]"##,
+                r##"["close",{"name":"val","d":0,"i":1,"alt":{"p":"","r":"","b":0,"g":["end","json"]},"tokens":[["#ZZ",null,"",1,7,6]],"forced":false,"n":{},"value":2.5}]"##,
                 r#"["end"]"#,
             ]
         );
@@ -556,6 +689,110 @@ mod tests {
                 lexeme: Some("2.50".into())
             }
         );
+    }
+
+    /// A sink that asks for token items, recording what it got.
+    #[derive(Default)]
+    struct Lexed(Vec<ParserEvent>);
+
+    impl ParserSink for Lexed {
+        fn event(&mut self, ev: &ParserEvent) -> Result<Flow, Fail> {
+            self.0.push(ev.clone());
+            Ok(Flow::Continue)
+        }
+
+        fn wants_tokens(&self) -> bool {
+            true
+        }
+    }
+
+    /// Each event as a word: a pass by its rule, its phase and the byte
+    /// offsets of its tokens, a token item by its name and offset.
+    fn words(events: &[ParserEvent]) -> String {
+        events
+            .iter()
+            .map(|ev| match ev {
+                ParserEvent::Open(p) | ParserEvent::Close(p) => {
+                    let mut word = format!("{}:{}", p.name, ev.name());
+                    for t in &p.tokens {
+                        word.push('@');
+                        word.push_str(&t.offset.to_string());
+                    }
+                    word
+                }
+                ParserEvent::Token(t) => format!("{}@{}", t.name, t.offset),
+                ParserEvent::End => "end".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn a_sink_that_asks_gets_the_ignored_tokens_in_source_order_with_byte_offsets() {
+        // Each ignored token comes before the first pass that consumed a
+        // token after it: the leading space before the list's open pass,
+        // which consumed the bracket (the root's open consumed nothing, as
+        // its alternate gave the bracket back), the space after the comma
+        // before the second number's open, and the line break before the
+        // close that consumed the end of the source. Offsets count UTF-8
+        // bytes: the string holds a two-byte character.
+        let (r, seen) = ParserEventSource::new(tabnas_json::make(), " [\"é\", 1]\n")
+            .run_owned(Lexed::default());
+        assert_eq!(r.unwrap(), Flow::Continue);
+        assert_eq!(
+            words(&seen.0),
+            "val:open #SP@0 list:open@1 elem:open val:open@2 val:close elem:close@6 \
+             elem:open #SP@7 val:open@8 val:close elem:close list:close@9 #LN@10 val:close@11 end"
+        );
+        // The same document to a sink that does not ask: the passes alone,
+        // their offsets the same.
+        let (r, plain) = passes(" [\"é\", 1]\n");
+        assert_eq!(r.unwrap(), Flow::Continue);
+        assert_eq!(
+            words(&plain),
+            words(&seen.0)
+                .replace("#SP@0 ", "")
+                .replace("#SP@7 ", "")
+                .replace("#LN@10 ", "")
+        );
+        // A source told to send them sends them to any sink.
+        let (r, told) = ParserEventSource::new(tabnas_json::make(), " [\"é\", 1]\n")
+            .tokens()
+            .run_owned(Seen::default());
+        assert_eq!(r.unwrap(), Flow::Continue);
+        assert_eq!(words(&told.0), words(&seen.0));
+    }
+
+    /// DIVERGENCE.md 6: the engine's own space, line and comment tokens
+    /// carry their text as their value in Rust, and none in TypeScript and
+    /// Go. A part reads a token item's text from its `src`.
+    #[test]
+    fn a_space_token_item_carries_its_text_as_its_value() {
+        let (r, seen) =
+            ParserEventSource::new(tabnas_json::make(), "  1").run_owned(Lexed::default());
+        assert_eq!(r.unwrap(), Flow::Continue);
+        let Some(ParserEvent::Token(space)) = seen.0.iter().find(|e| e.name() == "token") else {
+            panic!("a token item");
+        };
+        assert_eq!(
+            (space.name.as_ref(), &space.val, space.src.as_ref()),
+            ("#SP", &Datum::String("  ".into()), "  ")
+        );
+    }
+
+    #[test]
+    fn a_token_item_past_max_scalar_bytes_is_refused_by_name() {
+        let limits = Limits {
+            max_scalar_bytes: 3,
+            ..Limits::default()
+        };
+        let (r, seen) = ParserEventSource::new(tabnas_json::make(), "[1,    2]")
+            .limits(limits)
+            .run_owned(Lexed::default());
+        let err = r.unwrap_err();
+        assert_eq!(err.code, Code::ResourceLimitExceeded);
+        assert_eq!(err.limit.unwrap().name, "max_scalar_bytes");
+        assert!(!seen.0.iter().any(|e| matches!(e, ParserEvent::Token(_))));
     }
 
     #[test]

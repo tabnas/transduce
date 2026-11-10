@@ -629,19 +629,28 @@ func rowParser(t testing.TB, row *support.Row) *tabnas.Tabnas {
 	return parser
 }
 
-// passRecorder records what a ParserEventSource delivered.
-type passRecorder struct{ seen []ParserEvent }
+// passRecorder records what a ParserEventSource delivered; tokens asks for
+// token items.
+type passRecorder struct {
+	seen   []ParserEvent
+	tokens bool
+}
 
 func (r *passRecorder) ParserEvent(ev ParserEvent) (Flow, *Fail) {
 	r.seen = append(r.seen, ev)
 	return Continue, nil
 }
 
+func (r *passRecorder) WantsTokens() bool { return r.tokens }
+
 // passName is a pass as the `names` stage writes it, "name:open" or
-// "name:close", and the end as "end".
+// "name:close", a token item as [name, src, offset], and the end as "end".
 func passName(ev ParserEvent) any {
-	if ev.Kind == ParserEnd {
+	switch ev.Kind {
+	case ParserEnd:
 		return "end"
+	case ParserToken:
+		return []any{ev.Token.Name, ev.Token.Src, float64(ev.Token.Offset)}
 	}
 	return ev.Pass.Name + ":" + ev.Kind.String()
 }
@@ -658,8 +667,8 @@ func passEncoded(t testing.TB) func(ParserEvent) any {
 }
 
 // passTokens is a pass as the `tokens` stage writes it: ["rule:open",
-// [[name, val, src, row, col]...]], its tokens as the fixture encoding
-// writes them, and the end as "end".
+// [[name, val, src, row, col, offset]...]], its tokens as the fixture
+// encoding writes them, and the end as "end".
 func passTokens(t testing.TB) func(ParserEvent) any {
 	encoded := passEncoded(t)
 	return func(ev ParserEvent) any {
@@ -673,7 +682,8 @@ func passTokens(t testing.TB) func(ParserEvent) any {
 
 // parserEventsStage is parser-events.tsv: the passes ParserEventSource
 // delivered, in the fixture encoding (`passes`), by name and tokens
-// (`tokens`) or by name (`names`).
+// (`tokens`) or by name (`names`); and, with token items asked for, by
+// name, each token item as [name, src, offset] (`trivia`).
 func parserEventsStage(t testing.TB, row *support.Row, input string) (any, *failed) {
 	var encode func(ParserEvent) any
 	switch row.Named("stage") {
@@ -681,12 +691,12 @@ func parserEventsStage(t testing.TB, row *support.Row, input string) (any, *fail
 		encode = passEncoded(t)
 	case "tokens":
 		encode = passTokens(t)
-	case "names":
+	case "names", "trivia":
 		encode = passName
 	default:
 		t.Fatalf("%s: no stage %q", row.Where(), row.Named("stage"))
 	}
-	rec := &passRecorder{}
+	rec := &passRecorder{tokens: row.Named("stage") == "trivia"}
 	_, f := NewParserEventSource(rowParser(t, row), input).Limits(limitsOf(t, row)).Run(rec)
 	out := []any{}
 	for _, ev := range rec.seen {

@@ -559,20 +559,28 @@ export function rowParser(row: Row): any {
   return parser
 }
 
-// What a `ParserEventSource` delivered.
+// What a `ParserEventSource` delivered; `tokens` asks for token items.
 class Passes implements ParserSink {
   seen: ParserEvent[] = []
+
+  constructor(readonly tokens: boolean = false) {}
 
   event(ev: ParserEvent): Flow {
     this.seen.push(ev)
     return 'continue'
   }
+
+  wantsTokens(): boolean {
+    return this.tokens
+  }
 }
 
-// A pass as the `names` stage writes it, `"name:open"` or `"name:close"`,
-// and the end as `"end"`.
-function passName(ev: ParserEvent): string {
-  return 'end' === ev.type ? 'end' : `${ev.pass.name}:${ev.type}`
+// A pass as the `names` stage writes it, `"name:open"` or `"name:close"`, a
+// token item as `[name, src, offset]`, and the end as `"end"`.
+function passName(ev: ParserEvent): unknown {
+  if ('end' === ev.type) return 'end'
+  if ('token' === ev.type) return [ev.token.name, ev.token.src, ev.token.offset]
+  return `${ev.pass.name}:${ev.type}`
 }
 
 // A pass in the fixture encoding.
@@ -581,8 +589,8 @@ function passEncoded(ev: ParserEvent): unknown {
 }
 
 // A pass as the `tokens` stage writes it: `["rule:open", [[name, val, src,
-// row, col]...]]`, its tokens as the fixture encoding writes them, and the
-// end as `"end"`.
+// row, col, offset]...]]`, its tokens as the fixture encoding writes them,
+// and the end as `"end"`.
 function passTokens(ev: ParserEvent): unknown {
   if ('end' === ev.type) return 'end'
   const json: any = parserEventToJSON(ev)
@@ -591,17 +599,19 @@ function passTokens(ev: ParserEvent): unknown {
 
 // `parser-events.tsv`: the passes `ParserEventSource` delivered, in the
 // fixture encoding (`passes`), by name and tokens (`tokens`) or by name
-// (`names`).
+// (`names`); and, with token items asked for, by name, each token item as
+// `[name, src, offset]` (`trivia`).
 export function parserEvents(row: Row, input: string): unknown {
   const stage = row.named('stage')
   const stages: Record<string, (ev: ParserEvent) => unknown> = {
     passes: passEncoded,
     tokens: passTokens,
     names: passName,
+    trivia: passName,
   }
   const encode = stages[stage]
   if (undefined === encode) throw new Error(`${row.where()}: no stage ${JSON.stringify(stage)}`)
-  const passes = new Passes()
+  const passes = new Passes('trivia' === stage)
   try {
     new ParserEventSource(rowParser(row), input).limits(limits(row)).run(passes)
   } catch (err) {

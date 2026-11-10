@@ -118,7 +118,8 @@ function emptied(datum: Datum): Datum {
 
 // The pass with the arrays in its tokens' container values emptied.
 function shaped(ev: ParserEvent): ParserEvent {
-  if ('end' === ev.type) return ev
+  // The suite asks for no token item; one is no grammar's value.
+  if ('end' === ev.type || 'token' === ev.type) return ev
   const pass: RulePass = {
     ...ev.pass,
     tokens: ev.pass.tokens.map((token) => ({ ...token, val: emptied(token.val) })),

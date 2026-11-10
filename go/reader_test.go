@@ -9,10 +9,11 @@ package tabnastransduce
 // JSONC's and JSON Lines' grammars, whose matchers are the engine's own,
 // are given lex.window and are read a window at a time; every other
 // grammar reads the reader whole first. The passes, the value and the
-// outcome must be the same, and a reader that fails, or bytes that are not
-// UTF-8, are INPUT_INVALID with the engine's unreadable. The pruning, the
-// abort flag, the limits and the metrics hold from a reader as they do
-// over a text.
+// outcome must be the same, with token items and without, and a reader
+// that fails, or bytes that are not UTF-8, are INPUT_INVALID with the
+// engine's unreadable. Every token's byte offset is where its text stands
+// in the document. The pruning, the abort flag, the limits and the metrics
+// hold from a reader as they do over a text.
 
 import (
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tabnas "github.com/tabnas/parser/go"
 )
@@ -132,6 +134,55 @@ func readerRecorded(source *ParserEventSource) readerShown {
 	return readerRun(source, &rec, func() []ParserEvent { return rec.seen })
 }
 
+// readerLexed is readerRecorded with token items asked for, and the events
+// themselves.
+func readerLexed(source *ParserEventSource) (readerShown, []ParserEvent) {
+	rec := passRecorder{tokens: true}
+	shown := readerRun(source, &rec, func() []ParserEvent { return rec.seen })
+	return shown, rec.seen
+}
+
+// offsetsHold checks that every token's byte offset is where its text
+// stands in text, or, for a token whose text is not there (one a grammar
+// makes, such as the YAML document marker it supplies at the end), the
+// place its row and column name: a pass's tokens and a token item's.
+// rs/tests/reader_test.rs's offsets_hold.
+func offsetsHold(t *testing.T, file, text string, events []ParserEvent) {
+	t.Helper()
+	place := func(row, col uint64) int {
+		at := 0
+		for r := uint64(1); r < row; r++ {
+			n := strings.IndexByte(text[at:], '\n')
+			if n < 0 {
+				return len(text)
+			}
+			at += n + 1
+		}
+		for c := uint64(1); c < col && at < len(text); c++ {
+			_, size := utf8.DecodeRuneInString(text[at:])
+			at += size
+		}
+		return at
+	}
+	check := func(tok *PassToken) {
+		offset := int(tok.Offset)
+		there := offset <= len(text) && strings.HasPrefix(text[offset:], tok.Src)
+		if !there && offset != place(tok.Row, tok.Col) {
+			t.Errorf("%s: byte %d is neither where %q is nor where its row and column are: %+v", file, offset, tok.Src, *tok)
+		}
+	}
+	for _, ev := range events {
+		switch ev.Kind {
+		case ParserToken:
+			check(ev.Token)
+		case ParserOpen, ParserClose:
+			for i := range ev.Pass.Tokens {
+				check(&ev.Pass.Tokens[i])
+			}
+		}
+	}
+}
+
 func TestEveryFixtureStreamsTheSameFromAReader(t *testing.T) {
 	dir := filepath.Join("..", "rs", "tests", "fixtures")
 	entries, err := os.ReadDir(dir)
@@ -155,17 +206,56 @@ func TestEveryFixtureStreamsTheSameFromAReader(t *testing.T) {
 		}
 		text := string(b)
 		whole := readerRecorded(NewParserEventSource(readerParser(name, window), text))
+		lexed, events := readerLexed(NewParserEventSource(readerParser(name, window), text))
+		offsetsHold(t, file, text, events)
 		for _, size := range []int{1, 3, 64} {
 			read := readerRecorded(ParserEventSourceFromReader(readerParser(name, window), &pieces{bytes: []byte(text), size: size}))
 			if !reflect.DeepEqual(read, whole) {
 				t.Errorf("%s in pieces of %d:\nfrom a reader %+v\nread whole    %+v", file, size, read, whole)
 			}
-			compared++
+			readLexed, _ := readerLexed(ParserEventSourceFromReader(readerParser(name, window), &pieces{bytes: []byte(text), size: size}))
+			if !reflect.DeepEqual(readLexed, lexed) {
+				t.Errorf("%s in pieces of %d, with token items:\nfrom a reader %+v\nread whole    %+v", file, size, readLexed, lexed)
+			}
+			compared += 2
 		}
 	}
 	fmt.Printf("reader: %d runs from a reader compared with the text read whole\n", compared)
-	if compared < 60 {
+	if compared < 120 {
 		t.Fatal(compared)
+	}
+}
+
+// A long document, well past two of the engine's 64 KiB windows, read a
+// window at a time in pieces of several sizes, so its tokens, comments and
+// strings of characters of one to four bytes among them, straddle the
+// windows' edges (Go's own small-window hook is the engine's alone): the
+// run is the run over the text, and every token's offset is where its text
+// is.
+func TestALongDocumentFromAReaderKeepsItsByteOffsets(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("[\n")
+	for i := 0; i < 4000; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "  /* %d é 日 😀 */ {\"k%d\": \"a é 日 😀 %d\"} // ü\n", i, i, i)
+	}
+	b.WriteString("]\n")
+	text := b.String()
+	if len(text) < 200000 {
+		t.Fatal(len(text))
+	}
+	whole, events := readerLexed(NewParserEventSource(readerParser("jsonc", true), text))
+	if !strings.HasPrefix(whole.outcome, "ok ") {
+		t.Fatal(whole.outcome)
+	}
+	offsetsHold(t, "long.jsonc", text, events)
+	for _, size := range []int{7, 4096, 65536} {
+		read, _ := readerLexed(ParserEventSourceFromReader(readerParser("jsonc", true), &pieces{bytes: []byte(text), size: size}))
+		if !reflect.DeepEqual(read, whole) {
+			t.Errorf("long.jsonc in pieces of %d: the run differs from the run over the text", size)
+		}
 	}
 }
 

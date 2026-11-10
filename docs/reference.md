@@ -133,11 +133,38 @@ its alternate matched, less the `b` it gave back from their end, which
 are the next rule's to consume, and none when `b` is more than it
 recorded, since a close alternate can back up a token it did not record.
 A token is its name, its value (`null` for a token with none, such as the
-end of the source or a fixed token such as `[`), its source text and its
-1-based row and column. A
+end of the source or a fixed token such as `[`), its source text, its
+1-based row and column, and its byte offset: where it starts, in UTF-8
+bytes from the document's start, the same in every runtime. Rust's engine
+gives it (`site.si`) and Go's counts bytes (`SI`); TypeScript's counts
+UTF-16 units, so the TypeScript source converts each position as the
+stream goes, scanning the text once in order (over a reader, the text it
+decodes as the engine reads it, kept from the oldest position still to be
+asked, never the document). A
 number token's value carries its source text as its lexeme by the lexeme
 rule above, and so does a close pass's number `value`, from the rule's
 first open token.
+
+A sink that asks for them (`ParserSink::wants_tokens`; `wantsTokens` in
+TypeScript; Go's `shared.TokenSink`), or a source told to send them
+(`ParserEventSource::tokens()`), also gets a `ParserEvent::Token` for
+each token the lexer gave and the parser did not take: one of the
+grammar's ignored tokens (its `IGNORE` token set: white space, a line
+break, a comment), a `PassToken` as a pass's are. The source then
+subscribes to the engine's lexer (`subscribe_lex`; `sub({ lex })`; `Sub`)
+and holds each ignored token from the moment the lexer cuts it until the
+first pass that consumed a token after it, which it sends it before;
+those still held when the parse returns go before the `End`. So a token
+item is in source order among the passes, and the source holds no more
+than the ignored tokens between two passes. A token lexed while a probe is
+open is the document's all the same, unlike the probe's passes: a probe's
+rewind replays the tokens the parser consumed from the engine's history,
+and the lexer never cuts that text again, so a token item dropped there
+would be lost. A token the lexer cuts again (a relex re-cuts the text
+after a token it renegotiates) starts before the furthest one taken and
+is dropped as the one already held. A sink that does not ask gets the
+passes alone, and the source subscribes to no lexer event for it; alchemy
+asks for them for a program that reads `parser-events input :tokens`.
 
 A pass made while a probe is open is dropped: the grammar parses ahead
 and rewinds past it (tabnas-bnf's probe, the engine's own for a
@@ -146,8 +173,10 @@ engine flags it (`RuleDone::probe`). The source holds `max_scalar_bytes`
 on each token's value and source text and on a pass's value as it builds
 the pass, so a huge token is refused by name before any sink sees it;
 `max_depth` and `max_key_bytes` hold where a part's outputs become
-`JsonEvents`. It polls the `AbortFlag` per pass and counts the events it
-delivers in `Metrics::events`.
+`JsonEvents`. It holds `max_scalar_bytes` on a token item's value and
+source text as on a pass's token, when the lexer cuts it. It polls the
+`AbortFlag` per pass and counts the events it delivers, token items
+among them, in `Metrics::events`.
 
 ### Pruning behind the parser's passes
 
@@ -379,7 +408,7 @@ reports.
 | `captures` | a JSON array of `{"tag", "select", "mode"}`, `select` a selector, `mode` `materialize` (the default) or `observe` |
 | `binding` | `{"schema": ..., "rows": selector}`, the schema `"infer"`, `{"metadata": selector}` (each descriptor read by `column_from_meta`) or `{"static": [{"label", "source": segments, "missing"}]}`, `missing` `missing` (the default), `null` or `error` |
 | `duplicates` | `reject` (the default), `last_wins` or `first_wins` |
-| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs. `parser-events.tsv`: `passes`, every event in the encoding below; `tokens`, each pass as `["rule:open", [[name, val, src, row, col]...]]`, its tokens as that encoding writes them; or `names`, each pass as `"rule:open"` or `"rule:close"`; the end is `"end"` in the last two |
+| `stage` | `limits.tsv`: `events`, `route` or `table`, the pipeline `events.tsv`, `route.tsv` or `table.tsv` runs. `parser-events.tsv`: `passes`, every event in the encoding below; `tokens`, each pass as `["rule:open", [[name, val, src, row, col, offset]...]]`, its tokens as that encoding writes them; or `names`, each pass as `"rule:open"` or `"rule:close"`; or, with token items asked for, `trivia`, each pass as `names` writes it and each token item as `[name, src, offset]`; the end is `"end"` in all but `passes` |
 | `limits` | a JSON object of `Limits` fields over `Limits::default()` |
 | `path` | on an error row, the failure's `path`, in jq syntax |
 | `limit` | on an error row, the `Limits` field the failure names |
@@ -417,11 +446,12 @@ boolean, a string, `["number", value, lexeme]` or `["missing"]`; a
 container projected into a cell is the string of its compact JSON.
 
 `parser-events.tsv` expects **parser events** in alchemy's fixture
-encoding (`ParserEvent::to_json`): `["open", rule]`, `["close", rule]`
-and `["end"]`, the rule an object of `name`, `d`, `i`, `alt` (`p`, `r`,
-`b`, `g`; left out when the state declared none), `tokens` (each `[name,
-value, src, row, col]`), `forced`, `n` and, on a close pass with a scalar
-node, `value`. The `passes` stage leaves `i` out, and its rows hold no
+encoding (`ParserEvent::to_json`): `["open", rule]`, `["close", rule]`,
+`["token", token]` and `["end"]`, the rule an object of `name`, `d`, `i`,
+`alt` (`p`, `r`, `b`, `g`; left out when the state declared none),
+`tokens` (each `[name, value, src, row, col, offset]`), `forced`, `n`
+and, on a close pass with a scalar node, `value`, and a token item an
+object of `name`, `val`, `src`, `row`, `col` and `offset`. The `passes` stage leaves `i` out, and its rows hold no
 fixed token, since the engines differ on both. A token's value is
 written as JSON, so its lexeme is not in the encoding; dmog's tests
 of JSON's part, whose events carry it, pin it.
@@ -442,7 +472,7 @@ returned (`"continue"` or `"stop"`).
 | `route.tsv` | 32 | the router: the worked example, every step kind, observed nesting, overlap refusals, jq paths, the duplicates policies |
 | `table.tsv` | 30 | `TableFromJson`: metadata, static and inferred schemas (inferred from a first row of every kind: an object's members, an array's positions, a scalar's `value`, and a later row of another kind projected through them), `INPUT_ORDER_VIOLATION`, `MISSING_VALUE` and the missing policies, empty tables, container cells, descriptor errors |
 | `scan.tsv` | 12 | `scan-emit`: output order, `finish` once, `Stop`, a step's failure |
-| `parser-events.tsv` | 8 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`) |
+| `parser-events.tsv` | 13 | `ParserEventSource`: every field of a pass but `i`, the groups sorted, tokens given back by `b` and their positions and byte offsets, a token with no value, a scalar node's value, a refused document's prefix, `max_scalar_bytes` on a token, a probe's passes dropped (tabnas-abnf's compiled `top = [ X "@" ] Y`); token items in source order among the passes, their byte offsets past multibyte characters, a token lexed inside a probe delivered, a refused document's prefix with them, and `max_scalar_bytes` on one |
 | `limits.tsv` | 50 | each `Limits` field passed and not passed, by name, with UTF-8 byte counts at multibyte boundaries |
 
 ### What a port must reproduce exactly
