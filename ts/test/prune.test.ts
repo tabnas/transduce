@@ -1,24 +1,28 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// The differential suite behind `capability.prunable`, ported from
-// rs/tests/prune_test.rs.
+// The differential suite behind `capability.prunable` and
+// `capability.prunesMaps`, ported from rs/tests/prune_test.rs.
 //
 // For every grammar in the devDependencies and every document the suite
 // has for it, a `ParserEventSource` run that prunes must relay the same
 // passes as one that does not, pass for pass in the fixture encoding, and
 // end the same way: both complete, or both fail with the same code,
-// position and message. One difference short of identity is the contract,
+// position and message. The suite runs each document twice pruned, with the
+// grammar's maps left and with them emptied (`unverifiedMaps`), and holds
+// each list to its runs. One difference short of identity is the contract,
 // and the suite counts it apart: a token whose value is a container of the
 // tree carries what the tree holds when its pass is made, so the arrays in
-// it may have been emptied, while its kind and its maps' members are as
-// they were (a yaml alias, which the lexer resolves to the anchored node).
+// it may have been emptied, and its maps too in the run that empties them,
+// while its kind is as it was (a yaml alias, which the lexer resolves to the
+// anchored node).
 // The documents are the Rust crate's fixtures, offered to every grammar,
 // the generated worked-example documents of each grammar's family, and
 // every document of the grammar's own corpus, the test/spec/*.tsv rows of
 // the sibling checkout. A grammar is listed only when no document differs,
-// and the suite asserts the list in both directions. The second half
+// and the suite asserts both lists in both directions. The second half
 // measures what pruning is for: ten times the records leave the pruned
-// tree as it was.
+// tree as it was, and so do ten times an INI document's sections, a JSON
+// object's members and a toml document's array of tables.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -31,6 +35,7 @@ import {
   Datum,
   Flow,
   PRUNABLE,
+  PRUNES_MAPS,
   PRUNE_HOLD,
   ParserEvent,
   ParserEventSource,
@@ -38,6 +43,7 @@ import {
   RulePass,
   isPrunable,
   parserEventToJSON,
+  prunesMaps,
 } from '../dist/transduce'
 import { GRAMMARS } from './common'
 import { recordsCsv, recordsJson, recordsJsonl, recordsPgn, recordsXml, recordsYaml } from './support'
@@ -49,14 +55,14 @@ const RECORDS = 200
 // The grammars, their generated documents and the sibling checkout whose
 // corpus each reads.
 const SUITE: { name: string; generated: string[]; repo: string }[] = [
-  { name: 'json', generated: ['records.json'], repo: 'json' },
+  { name: 'json', generated: ['records.json', 'members.json'], repo: 'json' },
   { name: 'jsonl', generated: ['records.jsonl'], repo: 'jsonl' },
   { name: 'jsonic', generated: ['records.json'], repo: 'jsonic' },
   { name: 'jsonc', generated: ['records.json'], repo: 'jsonc' },
   { name: 'json5', generated: ['records.json'], repo: 'json5' },
   { name: 'yaml', generated: ['records.yaml'], repo: 'yaml' },
-  { name: 'toml', generated: [], repo: 'toml' },
-  { name: 'ini', generated: [], repo: 'ini' },
+  { name: 'toml', generated: ['tables.toml'], repo: 'toml' },
+  { name: 'ini', generated: ['sections.ini'], repo: 'ini' },
   { name: 'csv', generated: ['records.csv'], repo: 'csv' },
   { name: 'xml', generated: ['records.xml'], repo: 'xml' },
   { name: 'zon', generated: [], repo: 'zon' },
@@ -79,8 +85,37 @@ function generated(name: string, records: number): string {
       return recordsXml(records)
     case 'records.pgn':
       return recordsPgn(records)
+    case 'members.json':
+      return membersJson(records)
+    case 'sections.ini':
+      return sectionsIni(records)
+    case 'tables.toml':
+      return tablesToml(records)
   }
   throw new Error('no generator for ' + name)
+}
+
+// A JSON object of `records` members, each an object of three.
+function membersJson(records: number): string {
+  const members: string[] = []
+  for (let i = 0; i < records; i++) {
+    members.push(`"k${i}": {"id": ${i}, "name": "n${i}", "tags": ["a", "b"]}`)
+  }
+  return `{\n${members.join(',\n')}\n}\n`
+}
+
+// An INI document of `records` sections, each of three keys.
+function sectionsIni(records: number): string {
+  let out = ''
+  for (let i = 0; i < records; i++) out += `[s${i}]\nid = ${i}\nname = n${i}\ntext = the text of section ${i}\n\n`
+  return out
+}
+
+// A toml array of `records` tables, each of three keys.
+function tablesToml(records: number): string {
+  let out = ''
+  for (let i = 0; i < records; i++) out += `[[items]]\nid = ${i}\nname = "n${i}"\ntext = "the text of table ${i}"\n\n`
+  return out
 }
 
 const FIXTURES_DIR = join(__dirname, '..', '..', 'rs', 'tests', 'fixtures')
@@ -105,24 +140,30 @@ function documents(grammar: (typeof SUITE)[number]): [string, string][] {
   return docs
 }
 
-// The arrays in a datum emptied, its maps' members kept.
-function emptied(datum: Datum): Datum {
+// How a run prunes: not at all, the arrays, or the arrays and the maps,
+// whatever the grammar.
+type Pruning = 'no' | 'arrays' | 'maps'
+
+// The arrays in a datum emptied, and the maps when `maps`; a map that is
+// kept keeps its members, their own containers emptied.
+function emptied(datum: Datum, maps: boolean): Datum {
   if ('array' === datum.type) return { type: 'array', items: [] }
   if ('object' === datum.type) {
     const members = new Map<string, Datum>()
-    for (const [name, value] of datum.members) members.set(name, emptied(value))
+    if (!maps) for (const [name, value] of datum.members) members.set(name, emptied(value, maps))
     return { type: 'object', members }
   }
   return datum
 }
 
-// The pass with the arrays in its tokens' container values emptied.
-function shaped(ev: ParserEvent): ParserEvent {
+// The pass with the arrays in its tokens' container values emptied, and
+// the maps when `maps`.
+function shaped(ev: ParserEvent, maps: boolean): ParserEvent {
   // The suite asks for no token item; one is no grammar's value.
   if ('end' === ev.type || 'token' === ev.type) return ev
   const pass: RulePass = {
     ...ev.pass,
-    tokens: ev.pass.tokens.map((token) => ({ ...token, val: emptied(token.val) })),
+    tokens: ev.pass.tokens.map((token) => ({ ...token, val: emptied(token.val, maps) })),
   }
   return { type: ev.type, pass }
 }
@@ -132,18 +173,21 @@ function shaped(ev: ParserEvent): ParserEvent {
 class Passes implements ParserSink {
   exact: string[] = []
   shaped: string[] = []
+  constructor(private readonly maps = false) {}
   event(ev: ParserEvent): Flow {
     this.exact.push(JSON.stringify(parserEventToJSON(ev)))
-    this.shaped.push(JSON.stringify(parserEventToJSON(shaped(ev))))
+    this.shaped.push(JSON.stringify(parserEventToJSON(shaped(ev, this.maps))))
     return 'continue'
   }
 }
 
-// One run: how it ended, its passes and the engine's tree afterwards.
-function run(name: string, text: string, prune: boolean) {
+// One run: how it ended, its passes, shaped as a run pruning as `shape`
+// would leave them, and the engine's tree afterwards.
+function run(name: string, text: string, pruning: Pruning, shape: Pruning = pruning) {
   const source = new ParserEventSource(GRAMMARS[name](), text)
-  if (prune) source.prune().unverified()
-  const passes = new Passes()
+  if ('arrays' === pruning) source.prune().unverified()
+  if ('maps' === pruning) source.prune().unverifiedMaps()
+  const passes = new Passes('maps' === shape)
   try {
     const { flow, value } = source.runWithValue(passes)
     return { ending: `${flow}`, passes, value }
@@ -154,11 +198,11 @@ function run(name: string, text: string, prune: boolean) {
 }
 
 // How the pruned run compares with the one that did not prune: '' the
-// same, 'shape' the same once the arrays in the tokens' container values
-// are set aside, and otherwise where they differ.
-function compare(name: string, text: string): string {
-  const whole = run(name, text, false)
-  const pruned = run(name, text, true)
+// same, 'shape' the same once the containers in the tokens' values are set
+// aside, and otherwise where they differ.
+function compare(name: string, text: string, pruning: Pruning): string {
+  const whole = run(name, text, 'no', pruning)
+  const pruned = run(name, text, pruning)
   if (whole.ending !== pruned.ending) {
     return `ended ${whole.ending} without pruning, ${pruned.ending} pruned`
   }
@@ -176,9 +220,13 @@ function compare(name: string, text: string): string {
   return 'shape'
 }
 
-// Every element of every array in `value`, and every member of every map.
+// Every element of every array in `value` that holds something, and every
+// member of every map: what the tree keeps reachable. An element pruning set
+// to `undefined` keeps its place and holds nothing.
 function elements(value: unknown): number {
-  if (Array.isArray(value)) return value.length + value.reduce((n, v) => n + elements(v), 0)
+  if (Array.isArray(value)) {
+    return value.reduce((n: number, v) => n + (undefined === v ? 0 : 1 + elements(v)), 0)
+  }
   if (null !== value && 'object' === typeof value) {
     const members = Object.values(value as Record<string, unknown>)
     return members.length + members.reduce((n: number, v) => n + elements(v), 0)
@@ -186,37 +234,47 @@ function elements(value: unknown): number {
   return 0
 }
 
-// What the tree holds after a run of `records` records, pruned or not.
+// What the tree holds after a run of `records` records, pruned or not:
+// pruned as a host prunes, by the grammar's name and its verified lists.
 function left(name: string, doc: string, records: number, prune: boolean): number {
-  const r = run(name, generated(doc, records), prune)
-  assert.strictEqual(r.ending, 'continue', `${name} over ${records} records: ${r.ending}`)
-  return elements(r.value)
+  const source = new ParserEventSource(GRAMMARS[name](), generated(doc, records)).grammar(name)
+  if (prune) source.prune()
+  const { flow, value } = source.runWithValue(new Passes())
+  assert.strictEqual(`${flow}`, 'continue', `${name} over ${records} records`)
+  return elements(value)
 }
 
 describe('pruning', () => {
-  it('every grammar prunes as the list says', () => {
+  it('every grammar prunes as the lists say', () => {
     const wrong: string[] = []
-    for (const grammar of SUITE) {
-      const docs = documents(grammar)
+    // A grammar's documents, pruned as `pruning` says and not: the
+    // differences.
+    const differences = (grammar: (typeof SUITE)[number], docs: [string, string][], pruning: Pruning) => {
+      const how = 'maps' === pruning ? 'with its maps emptied' : 'pruned'
       const found: string[] = []
       const shapedOnly: string[] = []
       docs.forEach(([name, text], i) => {
-        const why = compare(grammar.name, text)
+        const why = compare(grammar.name, text, pruning)
         if ('shape' === why) shapedOnly.push(name)
         else if ('' !== why) found.push(`${name}: ${why}`)
         if ((i + 1) % 200 === 0 || i + 1 === docs.length) {
           console.log(
-            `${grammar.name}: ${i + 1} of ${docs.length} (${Math.floor(((i + 1) * 100) / docs.length)}%) ` +
-              `documents, ${found.length} differing`,
+            `${grammar.name} ${how}: ${i + 1} of ${docs.length} ` +
+              `(${Math.floor(((i + 1) * 100) / docs.length)}%) documents, ${found.length} differing`,
           )
         }
       })
       if (0 < shapedOnly.length) {
         console.log(
-          `${grammar.name}: ${shapedOnly.length} the same once the arrays in their tokens' ` +
-            `containers are set aside: ${shapedOnly.join(', ')}`,
+          `${grammar.name} ${how}: ${shapedOnly.length} the same once the containers in their tokens' ` +
+            `values are set aside: ${shapedOnly.join(', ')}`,
         )
       }
+      return found
+    }
+    for (const grammar of SUITE) {
+      const docs = documents(grammar)
+      const found = differences(grammar, docs, 'arrays')
       const listed = isPrunable(grammar.name)
       if (listed && 0 < found.length) {
         wrong.push(
@@ -227,8 +285,29 @@ describe('pruning', () => {
       if (!listed && 0 === found.length) {
         wrong.push(`${grammar.name} is not in capability.PRUNABLE, but none of its documents differs`)
       }
+      if (!listed) {
+        if (prunesMaps(grammar.name)) wrong.push(`${grammar.name} is in capability.PRUNES_MAPS, and not prunable`)
+        continue
+      }
+      const foundMaps = differences(grammar, docs, 'maps')
+      const listedMaps = prunesMaps(grammar.name)
+      if (listedMaps && 0 < foundMaps.length) {
+        wrong.push(
+          `${grammar.name} is in capability.PRUNES_MAPS, but ${foundMaps.length} of its documents ` +
+            `differ with its maps emptied:\n    ${foundMaps.join('\n    ')}`,
+        )
+      }
+      if (!listedMaps && 0 === foundMaps.length) {
+        wrong.push(
+          `${grammar.name} is not in capability.PRUNES_MAPS, but none of its documents differs with its ` +
+            'maps emptied',
+        )
+      }
+      if (!listedMaps && 0 < foundMaps.length) {
+        console.log(`${grammar.name} with its maps emptied: ${foundMaps.length} documents differ, the first ${foundMaps[0]}`)
+      }
     }
-    for (const name of PRUNABLE) {
+    for (const name of [...PRUNABLE, ...PRUNES_MAPS]) {
       if (!SUITE.some((g) => g.name === name)) wrong.push(`${name} is listed, and this suite never runs it`)
     }
     assert.deepStrictEqual(wrong, [])
@@ -245,6 +324,9 @@ describe('pruning', () => {
       ['xml', 'records.xml'],
       ['csv', 'records.csv'],
       ['pgn', 'records.pgn'],
+      ['json', 'members.json'],
+      ['ini', 'sections.ini'],
+      ['toml', 'tables.toml'],
     ]
     const wrong: string[] = []
     pairs.forEach(([name, doc], i) => {
@@ -291,13 +373,26 @@ describe('pruning', () => {
 
   it('pruning empties the tree\'s arrays and leaves the passes as they were', () => {
     const src = '{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}'
-    const whole = run('json', src, false)
-    const pruned = run('json', src, true)
+    const whole = run('json', src, 'no')
+    const pruned = run('json', src, 'arrays')
     // The engine's maps have no prototype; their JSON is what is compared.
     const json = (value: unknown) => JSON.parse(JSON.stringify(value))
     assert.deepStrictEqual(pruned.passes.exact, whole.passes.exact)
     assert.deepStrictEqual(json(whole.value), JSON.parse(src))
     assert.deepStrictEqual(json(pruned.value), { a: [], b: [], d: { e: 'f' } })
+  })
+
+  it('pruning a grammar whose maps are emptied empties them too, and leaves the passes', () => {
+    const src = '{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}'
+    const whole = run('json', src, 'no')
+    const passes = new Passes()
+    const { flow, value } = new ParserEventSource(GRAMMARS.json(), src).grammar('json').prune().runWithValue(passes)
+    assert.strictEqual(`${flow}`, 'continue')
+    assert.deepStrictEqual(passes.exact, whole.passes.exact)
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(value)), {})
+    // toml reads its maps back, so its maps are left: a table keeps its keys.
+    const toml = new ParserEventSource(GRAMMARS.toml(), '[a]\nb = 1\n').grammar('toml').prune()
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(toml.runWithValue(new Passes()).value)), { a: { b: 1 } })
   })
 
   // A grammar holds the pruning off with a count above zero under
@@ -316,7 +411,7 @@ describe('pruning', () => {
       assert.strictEqual(`${flow}`, 'continue')
       return { passes, value: json(value) }
     }
-    const whole = run('json', src, false)
+    const whole = run('json', src, 'no')
     const one = held(1)
     const zero = held(0)
     assert.deepStrictEqual(one.passes.exact, whole.passes.exact)

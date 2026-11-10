@@ -122,16 +122,50 @@ repetition is constant; a test that repeats an item ten thousand times
 and asserts the maximum `d` stays what a single item needs is the proof.
 
 **The parsed values the grammars return are never altered.** The
-parser-event source may empty each array behind its stream when it
+parser-event source may empty the engine's tree behind its stream when it
 prunes (`ParserEventSource::prune`), which is a verified capability,
 never an assumption: `source::capability::prunable(grammar)` answers
 from a list `rs/tests/prune_test.rs` keeps honest both ways, every
 document of every grammar run pruned and not, the passes and outcomes
 compared. A grammar holds the pruning off while it still needs what its
-arrays hold, by a count in the parse context's bag (`pruneHold`, which
+tree holds, by a count in the parse context's bag (`pruneHold`, which
 yaml raises while a value with an anchor is open, so an alias copies the
 whole node). The value the engine hands back afterwards is not used. In
 every other run the value is exactly the grammar's.
+
+Pruning empties two shapes for every listed grammar, and a third for some
+(tabnas/transduce#81), the same in every runtime:
+- **An array a closed rule built.** Once the sink has seen a close pass
+  whose rule's node is an array, the array is emptied.
+- **An array no rule's node is.** Once the sink has seen a close pass whose
+  rule's node is an element of an array its parent rule's node holds
+  (directly, or as a member's or an element's value), the elements before
+  it are set to nothing: the array a toml document's root holds its array
+  of tables in, which the first case never reaches. Each element keeps its
+  place, so a grammar that finds a node by position still finds it. The
+  node is looked for near the ends of the parent's containers, where a
+  grammar appends it, and each element is set once, so a close costs the
+  same however long the document grows. Every grammar passes the suite
+  with it.
+- **A map, for a grammar `capability::prunes_maps` lists** (`PRUNES_MAPS`,
+  TypeScript's `PRUNES_MAPS`, Go's `PrunesMaps`), a second list the same
+  suite holds both ways by running every document with the maps emptied
+  too (`ParserEventSource::unverified_maps`). Once the sink has seen a close
+  pass whose rule's node is a map, its members are deleted: an INI
+  document's sections, a JSON object's members. The grammars left out read
+  their maps back while they parse, and with them emptied pass documents
+  they refuse, or refuse ones they pass: yaml (a key defined twice, a
+  merge), toml (a key or a table defined twice, and the table a dotted key
+  or a header walks through), xml (a closing tag held to the name of the
+  element it closes, which the element's map holds), zon (a field defined
+  twice) and feed (xml's own check). Never list a grammar the suite does
+  not pass, and never empty another shape without a list the suite holds.
+
+What the source cannot reach stays: a grammar's own bookkeeping, outside
+the tree. Rust's toml finds a table by its path from the document's root
+cell, so the table's node is never a closed rule's own, and keeps about ten
+entries in the context's bag per table (tabnas/toml#121); markdown's
+block phase keeps every block it made (tabnas/markdown#100).
 
 ## Repository map
 
@@ -146,9 +180,9 @@ every other run the value is exactly the grammar's.
 | `rs/src/source/mod.rs` | `Source`, `ValueSource`, `walk_value`, and the engine failures the sources map alike |
 | `rs/src/source/guard.rs` | `Guarded`: the source limits, the abort flag and the source metrics on every event |
 | `rs/src/source/parser.rs` | `ParserSource`: one text, parsed, then its value walked |
-| `rs/src/source/capability.rs` | the verified list `capability::prunable` answers from |
-| `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; every token's byte offset; for a sink that asks (`ParserSink::wants_tokens`), the tokens the parser did not take as token items, in source order among the passes; the engine's arrays emptied behind the stream when it prunes |
-| `rs/tests/prune_test.rs` | the differential suite behind `capability::prunable`, both ways, and ten times the records leaving the pruned tree as it was |
+| `rs/src/source/capability.rs` | the verified lists `capability::prunable` and `capability::prunes_maps` answer from |
+| `rs/src/source/parser_events.rs` | `ParserEventSource`: `ParserEvents/1`, the parser's rule passes, what a transducer part reads, from a text or from a reader (`from_reader`, which a grammar declaring `lex.window` reads a window at a time); a probe's passes dropped; every token's byte offset; for a sink that asks (`ParserSink::wants_tokens`), the tokens the parser did not take as token items, in source order among the passes; the engine's tree emptied behind the stream when it prunes |
+| `rs/tests/prune_test.rs` | the differential suite behind `capability::prunable` and `capability::prunes_maps`, each both ways, and ten times the records, an INI document's sections and a JSON object's members leaving the pruned tree as it was |
 | `rs/tests/retention_test.rs` | ten times the rows of a JSON document, parsed and walked into the table transducer, leave the retained high-water flat |
 | `rs/tests/reader_test.rs` | `ParserEventSource::from_reader` against the same text read whole: every fixture of a grammar the harness builds, a few bytes at a time, and a reader that fails; its ports are `ts/test/reader.test.ts` (`ParserEventSource.fromReader`) and `go/reader_test.go` (`ParserEventSourceFromReader`) |
 | `rs/tests/spec_*.rs`, `rs/tests/common/` | the Rust runners of the shared fixtures, through `tabnas-support`'s `Runner`, and the harness that decodes a row and encodes the result |

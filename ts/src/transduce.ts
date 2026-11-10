@@ -78,7 +78,7 @@ export { ParserSource } from './parser-source'
 export { PRUNE_HOLD, ParserEventSource, STREAM_RULE_HISTORY } from './parser-event-source'
 export { parserEventFromJSON, parserEventToJSON } from '@tabnas/alchemy/shared'
 export type { ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
-export { PRUNABLE, capability, isPrunable } from './capability'
+export { PRUNABLE, PRUNES_MAPS, capability, isPrunable, prunesMaps } from './capability'
 export { Cell, Schema, Table, boundColumn, columnFromMeta } from '@tabnas/alchemy/shared'
 export type {
   BoundColumn,

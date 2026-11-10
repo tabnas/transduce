@@ -72,29 +72,51 @@
 //! The engine builds its value as it parses, so a long document's tree
 //! holds every record, though no pass's value is a container and nothing
 //! reads the value the parse returns. [`ParserEventSource::prune`] empties
-//! each array behind the stream: once the sink has seen a close pass whose
-//! rule's node is an array, the source empties that array, so the tree
-//! holds the elements of the passes since the last close on it and no
-//! more. An array the source cannot empty alone, one also held elsewhere,
-//! is left as it is. That alters the value the engine returns, which this
+//! the tree behind the stream. Once the sink has seen a close pass:
+//! - whose rule's node is an array, the source empties that array, so the
+//!   tree holds the elements of the passes since the last close on it and
+//!   no more;
+//! - whose rule's node is an element of an array its parent rule's node
+//!   holds (directly, or as a member's or an element's value), the source
+//!   empties the elements before it, which every close before has already
+//!   passed: an array no rule's node is, such as the one a grammar appends
+//!   each table or block to, which the first case never reaches. Each
+//!   element is set to `Undefined`, so the array keeps its length and the
+//!   node keeps its place, for a grammar that finds it by position. The
+//!   node is looked for near the ends of the parent's containers, where a
+//!   grammar appends it, and each element is set once, so a close costs
+//!   the same however long the document grows;
+//! - whose rule's node is a map, for a grammar
+//!   [`super::capability::prunes_maps`] lists, the source empties that map
+//!   too, so a map's members (an INI document's sections, a JSON object's
+//!   members) go as an array's elements do.
+//!
+//! A container the source cannot empty alone, one also held elsewhere, is
+//! left as it is. That alters the value the engine returns, which this
 //! source never reads, and it is sound for a grammar whose passes do not
-//! depend on what its arrays hold, which a grammar's actions or conditions
-//! could make them. One difference is the contract: a token whose value is
-//! a container of the tree (a yaml alias, which the lexer resolves to the
-//! anchored node) carries what the tree holds when its pass is made, so
-//! the arrays in it may have been emptied, while its kind and its maps'
-//! members are as they were; a part reads such a token's kind, never its
-//! elements. So pruning is a verified capability, never an assumption:
-//! the differential suite (`tests/prune_test.rs`) runs every
-//! document of every grammar in the dev-dependencies pruned and not, and
-//! [`super::capability::prunable`] lists the grammars whose passes and
+//! depend on what its tree holds, which a grammar's actions or conditions
+//! could make them: yaml, toml, xml, zon and feed read their maps back,
+//! to find a key or a table defined twice or a name to merge or resolve,
+//! which is why their maps are left. One difference is the contract: a
+//! token whose value is a container of the tree (a yaml alias, which the
+//! lexer resolves to the anchored node) carries what the tree holds when
+//! its pass is made, so the arrays in it may have been emptied, and its
+//! maps too where the grammar's are, while its kind is as it was; a part
+//! reads such a token's kind, never its elements. So pruning is a
+//! verified capability, never an assumption: the differential suite
+//! (`tests/prune_test.rs`) runs every document of every grammar in the
+//! dev-dependencies pruned and not, and with its maps emptied and not, and
+//! [`super::capability::prunable`] and
+//! [`super::capability::prunes_maps`] list the grammars whose passes and
 //! outcomes never differed but by that. A run that prunes is gated on the
-//! list, by the grammar's name ([`ParserEventSource::grammar`]), and
+//! first list, by the grammar's name ([`ParserEventSource::grammar`]), and
 //! without a listed name it fails with `STREAMABILITY_UNKNOWN` before the
 //! parse, having sent nothing; [`ParserEventSource::unverified`] lifts the
-//! gate for the suite.
+//! gate for the suite, and [`ParserEventSource::unverified_maps`] empties
+//! the maps of any grammar, for the suite too.
 
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 
 use tabnas::{Context, Rule, RuleDone, RuleState, Tabnas, Tin, Token, Value};
@@ -120,6 +142,8 @@ pub struct ParserEventSource<'s> {
     grammar: Option<Box<str>>,
     prune: bool,
     unverified: bool,
+    /// Empty maps too, whatever the grammar.
+    unverified_maps: bool,
     /// Send token items whether or not the sink asks.
     tokens: bool,
 }
@@ -138,6 +162,7 @@ impl<'s> ParserEventSource<'s> {
             grammar: None,
             prune: false,
             unverified: false,
+            unverified_maps: false,
             tokens: false,
         }
     }
@@ -171,11 +196,15 @@ impl<'s> ParserEventSource<'s> {
         self
     }
 
-    /// Empty each array in the engine's tree once the sink has seen a
-    /// close pass on it, so the tree does not hold the whole document.
-    /// The passes are unchanged for a grammar [`capability::prunable`]
-    /// lists, and [`ParserEventSource::run_owned`] refuses to prune any
-    /// other, with `STREAMABILITY_UNKNOWN` before the parse.
+    /// Empty the engine's tree behind the stream, so that it does not hold
+    /// the whole document: each array once the sink has seen a close pass
+    /// on it, an array's elements before one whose close pass the sink has
+    /// seen, and, for a grammar [`capability::prunes_maps`] lists, each map
+    /// once the sink has seen a close pass on it (the module's docs have
+    /// the details). The passes are unchanged for a grammar
+    /// [`capability::prunable`] lists, and [`ParserEventSource::run_owned`]
+    /// refuses to prune any other, with `STREAMABILITY_UNKNOWN` before the
+    /// parse.
     pub fn prune(mut self) -> Self {
         self.prune = true;
         self
@@ -195,6 +224,17 @@ impl<'s> ParserEventSource<'s> {
     /// are emptied, and the run still returns `Ok`.
     pub fn unverified(mut self) -> Self {
         self.unverified = true;
+        self
+    }
+
+    /// [`ParserEventSource::unverified`], and empty the grammar's maps as
+    /// well as its arrays, whatever [`capability::prunes_maps`] says. This
+    /// exists for the differential suite that maintains that list and for
+    /// nothing else: a grammar that reads its maps back may make other
+    /// passes once they are emptied.
+    pub fn unverified_maps(mut self) -> Self {
+        self.unverified = true;
+        self.unverified_maps = true;
         self
     }
 
@@ -263,10 +303,14 @@ impl<'s> ParserEventSource<'s> {
             limits,
             abort,
             metrics,
+            grammar,
             prune,
+            unverified_maps,
             tokens,
             ..
         } = self;
+        let prune_maps =
+            prune && (unverified_maps || grammar.as_deref().is_some_and(capability::prunes_maps));
         let tokens = (tokens || sink.wants_tokens()).then(|| TokenQueue {
             ignored: parser.token_set("IGNORE").unwrap_or_default(),
             held: VecDeque::new(),
@@ -282,6 +326,7 @@ impl<'s> ParserEventSource<'s> {
             stop: stop.clone(),
             events: 0,
             prune,
+            prune_maps,
             tokens,
         }));
         install(
@@ -344,8 +389,11 @@ struct Relay<S> {
     /// Set to make the parse guard cancel the parse.
     stop: AbortFlag,
     events: u64,
-    /// Empty the array a close pass's rule builds, once the sink has seen it.
+    /// Empty the tree behind the stream, once the sink has seen a close
+    /// pass.
     prune: bool,
+    /// Empty a map a close pass's rule builds too.
+    prune_maps: bool,
     /// The token items, when the run sends them.
     tokens: Option<TokenQueue>,
 }
@@ -453,7 +501,8 @@ impl<S: ParserSink> Relay<S> {
         match self.send(&ev) {
             Ok(Flow::Continue) => {
                 if self.prune && !open && !pruning_held(context) {
-                    empty_array(rule);
+                    empty_node(rule, self.prune_maps);
+                    empty_before(rule);
                 }
             }
             Ok(Flow::Stop) => {
@@ -514,15 +563,17 @@ fn pruning_held(context: &Context) -> bool {
     matches!(context.u.get(PRUNE_HOLD), Some(Value::Number(n)) if *n > 0.0)
 }
 
-/// Empty the array `rule`'s node is, when the source can empty it alone.
-/// Every element in it was built by passes the sink has seen, the last of
-/// them the close pass just sent, and what those passes carry is held by
-/// the sink, so nothing sent so far changes. An array also held elsewhere
-/// (in a rule's state, or by a container that took it already) is left as
-/// it is: emptying the node's copy would free nothing, and would copy the
-/// array.
-fn empty_array(rule: &Rule) {
-    let mut node = rule.node.borrow_mut();
+/// Empty the array `rule`'s node is, or the map, when `maps` and the
+/// source can empty it alone. Every element or member in it was built by
+/// passes the sink has seen, the last of them the close pass just sent,
+/// and what those passes carry is held by the sink, so nothing sent so
+/// far changes. A container also held elsewhere (in a rule's state, or by
+/// a container that took it already) is left as it is: emptying the
+/// node's copy would free nothing, and would copy the container.
+fn empty_node(rule: &Rule, maps: bool) {
+    let Ok(mut node) = rule.node.try_borrow_mut() else {
+        return;
+    };
     match &mut *node {
         Value::Array(items) => {
             if let Some(items) = Arc::get_mut(items) {
@@ -534,8 +585,121 @@ fn empty_array(rule: &Rule) {
                 list.value.clear();
             }
         }
+        Value::Object(members) if maps => {
+            if let Some(members) = Arc::get_mut(members) {
+                members.clear();
+            }
+        }
+        Value::MapRef(map) if maps => {
+            if let Some(map) = Arc::get_mut(map) {
+                map.value.clear();
+            }
+        }
         _ => {}
     }
+}
+
+/// Where a container's contents live, for telling one apart from another;
+/// `None` for a scalar.
+fn container(value: &Value) -> Option<*const ()> {
+    match value {
+        Value::Array(items) => Some(Arc::as_ptr(items).cast()),
+        Value::ListRef(list) => Some(Arc::as_ptr(list).cast()),
+        Value::Object(members) => Some(Arc::as_ptr(members).cast()),
+        Value::MapRef(map) => Some(Arc::as_ptr(map).cast()),
+        _ => None,
+    }
+}
+
+/// How far from its end a container is looked through for the node that
+/// just closed, and for the arrays that might hold it: a finished node is
+/// the last a grammar appended, so a close costs the same however long the
+/// document's arrays and maps grow.
+const NEAR_THE_END: usize = 8;
+
+/// When `rule`'s node is a container that an array within its parent's
+/// node holds, set that array's elements before it to `Undefined`: each was
+/// closed before it, by passes the sink has seen. The array is looked for
+/// in the parent's node and, near their end, in its members' values and its
+/// elements, the places a grammar appends a finished node to (the array of
+/// tables a toml document's root holds); the node near the array's end. An
+/// element keeps its place, for a grammar that finds a node by position. A
+/// container also held elsewhere is left as it is, as [`empty_node`] leaves
+/// it.
+fn empty_before(rule: &Rule) {
+    let Some(node) = rule
+        .node
+        .try_borrow()
+        .ok()
+        .and_then(|node| container(&node))
+    else {
+        return;
+    };
+    let Some(parent) = &rule.parent_node else {
+        return;
+    };
+    if Rc::ptr_eq(parent, &rule.node) {
+        return;
+    }
+    let Ok(mut parent) = parent.try_borrow_mut() else {
+        return;
+    };
+    if empty_before_in(&mut parent, node) {
+        return;
+    }
+    let held = match &mut *parent {
+        Value::Array(items) => Arc::get_mut(items).map(|items| items.as_mut_slice()),
+        Value::ListRef(list) => Arc::get_mut(list).map(|list| list.value.as_mut_slice()),
+        _ => None,
+    };
+    if let Some(items) = held {
+        let from = items.len().saturating_sub(NEAR_THE_END);
+        for item in items[from..].iter_mut().rev() {
+            if empty_before_in(item, node) {
+                return;
+            }
+        }
+    }
+    let members = match &mut *parent {
+        Value::Object(members) => Arc::get_mut(members),
+        _ => None,
+    };
+    if let Some(members) = members {
+        for value in members.values_mut().rev().take(NEAR_THE_END) {
+            if empty_before_in(value, node) {
+                return;
+            }
+        }
+    }
+}
+
+/// When `array` is an array holding `node` near its end, set its elements
+/// before it to `Undefined`, back to the first one an earlier close set, so
+/// that each is set once, and answer that it was found.
+fn empty_before_in(array: &mut Value, node: *const ()) -> bool {
+    let items = match array {
+        Value::Array(items) => Arc::get_mut(items).map(|items| items.as_mut_slice()),
+        Value::ListRef(list) => Arc::get_mut(list).map(|list| list.value.as_mut_slice()),
+        _ => None,
+    };
+    let Some(items) = items else {
+        return false;
+    };
+    let from = items.len().saturating_sub(NEAR_THE_END);
+    let Some(at) = items[from..]
+        .iter()
+        .rposition(|item| container(item) == Some(node))
+        .map(|at| from + at)
+    else {
+        return false;
+    };
+    for item in items[..at].iter_mut().rev() {
+        if matches!(item, Value::Undefined) {
+            break;
+        }
+        *item = Value::Undefined;
+    }
+    true
 }
 
 /// A token as a pass and a token item carry it, its sizes held to
@@ -885,11 +1049,15 @@ mod tests {
     #[test]
     fn pruning_empties_the_trees_arrays_and_leaves_the_passes_as_they_were() {
         let src = r#"{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}"#;
-        let run = |prune: bool| {
-            let mut source = ParserEventSource::new(tabnas_json::make(), src).grammar("json");
-            if prune {
-                source = source.prune();
-            }
+        // Not pruned; pruned without a name, its arrays alone; and pruned as
+        // a host prunes json, which `capability::prunes_maps` lists.
+        let run = |how: u8| {
+            let source = ParserEventSource::new(tabnas_json::make(), src);
+            let source = match how {
+                0 => source.grammar("json"),
+                1 => source.prune().unverified(),
+                _ => source.grammar("json").prune(),
+            };
             let (r, seen, value) = source.run_owned_with_value(Seen::default());
             assert_eq!(r.unwrap(), Flow::Continue);
             (
@@ -898,12 +1066,16 @@ mod tests {
             )
         };
         let canon = |text: &str| serde_json::to_string(&tabnas_json::make().parse(text).unwrap());
-        let (whole, kept) = run(false);
-        let (pruned, left) = run(true);
+        let (whole, kept) = run(0);
+        let (pruned, left) = run(1);
         assert_eq!(pruned, whole);
         assert_eq!(kept, canon(src).unwrap());
         // Every array is emptied, and the maps keep their members.
         assert_eq!(left, canon(r#"{"a":[],"b":[],"d":{"e":"f"}}"#).unwrap());
+        // json's maps are emptied too.
+        let (pruned, left) = run(2);
+        assert_eq!(pruned, whole);
+        assert_eq!(left, "{}");
     }
 
     #[test]

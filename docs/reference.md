@@ -184,18 +184,39 @@ The engine builds its value as it parses, so a `ParserEventSource` over a
 long document leaves the engine holding every record in its tree, though
 nothing a pass carries is a container of the tree (a pass's `value` is a
 scalar or nothing) and nothing reads the value the parse returns.
-`ParserEventSource::prune()` empties each array behind the stream: once
-the sink has seen a close pass whose rule's node is an array, the source
-empties that array in place (in Go, in every rule that builds into it,
-by `tabnas.Rule.SetNode`, its elements cleared first, since a truncated
-slice keeps its backing array), so the tree holds the elements of the
-passes since the last close on it and no more. Rust leaves an array also held
-elsewhere as it is, since emptying the node's copy would free nothing and
-would copy it. `run_owned_with_value` (`RunWithValue`, `runWithValue`)
-hands back the tree the run left, which exists for a test to measure.
+`ParserEventSource::prune()` empties the tree behind the stream. Once the
+sink has seen a close pass:
 
-A grammar holds the pruning off while it still needs what its arrays
-hold. It raises a count, `pruneHold`, in the parse context's bag
+- whose rule's node is an array, the source empties that array in place
+  (in Go, in every rule that builds into it, by `tabnas.Rule.SetNode`, its
+  elements cleared first, since a truncated slice keeps its backing
+  array), so the tree holds the elements of the passes since the last close
+  on it and no more;
+- whose rule's node is an element of an array its parent rule's node holds
+  (directly, or as a member's or an element's value), the source sets the
+  elements before it to nothing (`Undefined`, `undefined`, `nil`): an array
+  no rule's node is, which the first case never reaches, such as the one a
+  toml document's root holds its array of tables in. Each element keeps its
+  place, so a grammar that finds a node by position still finds it. The
+  node is looked for among the last eight places of the parent's node, its
+  members and its elements, where a grammar appends it, and each element is
+  set once, so a close costs the same however long the document grows;
+- whose rule's node is a map, for a grammar `capability::PRUNES_MAPS`
+  lists (`PRUNES_MAPS`, `PrunesMaps` in Go), the source deletes the map's
+  members too, so an INI document's sections and a JSON object's members
+  go as an array's elements do (tabnas/transduce#81).
+
+Rust leaves a container also held elsewhere as it is, since emptying the
+node's copy would free nothing and would copy it. `run_owned_with_value`
+(`RunWithValue`, `runWithValue`) hands back the tree the run left, which
+exists for a test to measure. What a grammar keeps outside its tree the
+source cannot reach: Rust's toml finds each table by its path from the
+document's root cell and keeps entries per table in the context's bag
+(tabnas/toml#121), and markdown's block phase keeps every block it made
+(tabnas/markdown#100).
+
+A grammar holds the pruning off while it still needs what its tree
+holds. It raises a count, `pruneHold`, in the parse context's bag
 (`Context::u` in Rust, `Context.U` in Go, `ctx.u` in TypeScript; the
 source exports the key as `PRUNE_HOLD`, `PruneHold` in Go), and the source
 empties nothing while the count is above zero. yaml raises it when a value
@@ -205,19 +226,30 @@ anchored: an alias used as a key is that node's text (`1,2` for `&a [1,
 2]`), pruned or not.
 
 Pruning alters the value the engine returns, so it is sound only for a
-grammar whose passes do not depend on what its arrays hold, and it is a
+grammar whose passes do not depend on what its tree holds, and it is a
 verified capability. `capability::PRUNABLE`
 lists `csv`, `feed`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`,
 `markdown`, `pgn`, `toml`, `xml`, `yaml` and `zon` (Go's omits `pgn`,
-which its suite does not run). `rs/tests/prune_test.rs` and its ports run every
-document each grammar reads, pruned and not: the committed fixtures, the
-generated worked-example documents, and every document of the grammar's
-own `test/spec` corpus. A listed grammar's pruned run relays the same
-passes, pass for pass in the fixture encoding, and ends the same way, with
-one difference the contract allows: a token whose value is a container of
-the tree carries what the tree holds when its pass is made, so the arrays
-in it may have been emptied, unless the grammar held the pruning while it
-built them, while its kind and its maps' members are as they were. yaml's
+which its suite does not run), and `capability::PRUNES_MAPS` lists `csv`,
+`ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown` and `pgn`
+(Go's omits `pgn` again). `rs/tests/prune_test.rs` and its ports run every
+document each grammar reads, pruned and not, and again with its maps
+emptied too (`unverified_maps`): the committed fixtures, the generated
+worked-example documents (among them a JSON object of members, an INI
+document of sections and a toml array of tables), and every document of
+the grammar's own `test/spec` corpus. A listed grammar's pruned run relays
+the same passes, pass for pass in the fixture encoding, and ends the same
+way, and each list holds both ways. The grammars `PRUNES_MAPS` leaves out
+read their maps back while they parse: yaml finds a key defined twice and
+a merge's members, toml a key or a table defined twice and the table a
+header walks through, xml (and feed, through it) the name of the element
+a closing tag closes, and zon a field defined twice, each by looking it up
+in the tree it is building, so with their maps emptied they pass documents
+they refuse, or refuse ones they pass. One difference the contract allows:
+a token whose value is a container of the tree carries what the tree holds
+when its pass is made, so the arrays in it may have been emptied, unless
+the grammar held the pruning while it built them, and its maps too where
+the grammar's are, while its kind is as it was. yaml's
 lexer resolves an alias so, to the anchored node (`a: &items [1, 2]` and
 then `b: *items`), which the hold keeps whole, and yaml's part reads such
 a token's kind alone, refusing an alias to a sequence or a mapping as one

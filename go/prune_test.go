@@ -2,25 +2,29 @@
 
 package tabnastransduce
 
-// The differential suite behind PrunableGrammars, ported from
-// rs/tests/prune_test.rs.
+// The differential suite behind PrunableGrammars and PrunesMapsGrammars,
+// ported from rs/tests/prune_test.rs.
 //
 // For every grammar module the tests depend on and every document the
 // suite has for it, a ParserEventSource run that prunes must relay the
 // same passes as one that does not, pass for pass in the fixture
 // encoding, and end the same way: both complete, or both fail with the
-// same code, position and message. One difference short of identity is
-// the contract, and the suite counts it apart: a token whose value is a
-// container of the tree carries what the tree holds when its pass is
-// made, so the lists in it may have been emptied, while its kind and its
-// maps' members are as they were (a yaml alias, which the lexer resolves
-// to the anchored node). The documents are the Rust crate's fixtures,
-// offered to every grammar, the generated worked-example documents of
-// each grammar's family, and every document of the grammar's own corpus,
-// the test/spec/*.tsv rows of the sibling checkout. A grammar is listed
-// only when no document differs, and the suite asserts the list in both
-// directions. The second half measures what pruning is for: ten times the
-// records leave the pruned tree as it was.
+// same code, position and message. The suite runs each document twice
+// pruned, with the grammar's maps left and with them emptied
+// (UnverifiedMaps), and holds each list to its runs. One difference short
+// of identity is the contract, and the suite counts it apart: a token
+// whose value is a container of the tree carries what the tree holds when
+// its pass is made, so the lists in it may have been emptied, and its maps
+// too in the run that empties them, while its kind is as it was (a yaml
+// alias, which the lexer resolves to the anchored node). The documents are
+// the Rust crate's fixtures, offered to every grammar, the generated
+// worked-example documents of each grammar's family, and every document of
+// the grammar's own corpus, the test/spec/*.tsv rows of the sibling
+// checkout. A grammar is listed only when no document differs, and the
+// suite asserts both lists in both directions. The second half measures
+// what pruning is for: ten times the records leave the pruned tree as it
+// was, and so do ten times an INI document's sections, a JSON object's
+// members and a toml document's array of tables.
 
 import (
 	"fmt"
@@ -38,6 +42,16 @@ import (
 // 2,000 would hold, at a tenth of the parsing.
 const pruneRecords = 200
 
+// pruning is how a run prunes: not at all, the lists, or the lists and the
+// maps, whatever the grammar.
+type pruning int
+
+const (
+	pruneNo pruning = iota
+	pruneLists
+	pruneMaps
+)
+
 type pruneGrammar struct {
 	name      string
 	generated []string
@@ -45,14 +59,14 @@ type pruneGrammar struct {
 }
 
 var pruneGrammars = []pruneGrammar{
-	{"json", []string{"records.json"}, "json"},
+	{"json", []string{"records.json", "members.json"}, "json"},
 	{"jsonl", []string{"records.jsonl"}, "jsonl"},
 	{"jsonic", []string{"records.json"}, "jsonic"},
 	{"jsonc", []string{"records.json"}, "jsonc"},
 	{"json5", []string{"records.json"}, "json5"},
 	{"yaml", []string{"records.yaml"}, "yaml"},
-	{"toml", nil, "toml"},
-	{"ini", nil, "ini"},
+	{"toml", []string{"tables.toml"}, "toml"},
+	{"ini", []string{"sections.ini"}, "ini"},
 	{"csv", []string{"records.csv"}, "csv"},
 	{"xml", []string{"records.xml"}, "xml"},
 	{"zon", nil, "zon"},
@@ -74,8 +88,41 @@ func pruneGenerated(name string, records int) string {
 		return recordsYAML(records)
 	case "records.xml":
 		return recordsXML(records)
+	case "members.json":
+		return membersJSON(records)
+	case "sections.ini":
+		return sectionsINI(records)
+	case "tables.toml":
+		return tablesTOML(records)
 	}
 	panic("no generator for " + name)
+}
+
+// membersJSON is a JSON object of records members, each an object of three.
+func membersJSON(records int) string {
+	members := make([]string, records)
+	for i := range members {
+		members[i] = fmt.Sprintf(`"k%d": {"id": %d, "name": "n%d", "tags": ["a", "b"]}`, i, i, i)
+	}
+	return "{\n" + strings.Join(members, ",\n") + "\n}\n"
+}
+
+// sectionsINI is an INI document of records sections, each of three keys.
+func sectionsINI(records int) string {
+	var b strings.Builder
+	for i := 0; i < records; i++ {
+		fmt.Fprintf(&b, "[s%d]\nid = %d\nname = n%d\ntext = the text of section %d\n\n", i, i, i, i)
+	}
+	return b.String()
+}
+
+// tablesTOML is a toml array of records tables, each of three keys.
+func tablesTOML(records int) string {
+	var b strings.Builder
+	for i := 0; i < records; i++ {
+		fmt.Fprintf(&b, "[[items]]\nid = %d\nname = \"n%d\"\ntext = \"the text of table %d\"\n\n", i, i, i)
+	}
+	return b.String()
 }
 
 // pruneDocuments is what the suite has for g: the Rust crate's fixtures,
@@ -112,11 +159,15 @@ func pruneDocuments(t *testing.T, g pruneGrammar) []prunedDoc {
 }
 
 // prunedRun is one run: how it ended, its passes in the fixture encoding
-// and shaped as pruning may leave them, and the engine's tree afterwards.
-func prunedRun(name, text string, prune bool) (string, []string, []string, any) {
+// and shaped as a run pruning as shape would leave them, and the engine's
+// tree afterwards.
+func prunedRun(name, text string, how, shape pruning) (string, []string, []string, any) {
 	source := NewParserEventSource(makeGrammar(name), text)
-	if prune {
+	switch how {
+	case pruneLists:
 		source.Prune().Unverified()
+	case pruneMaps:
+		source.Prune().UnverifiedMaps()
 	}
 	var rec passRecorder
 	flow, f, value := source.RunWithValue(&rec)
@@ -128,35 +179,40 @@ func prunedRun(name, text string, prune bool) (string, []string, []string, any) 
 	shaped := make([]string, len(rec.seen))
 	for i, ev := range rec.seen {
 		exact[i] = ev.JSON()
-		shaped[i] = shapedPass(ev).JSON()
+		shaped[i] = shapedPass(ev, shape == pruneMaps).JSON()
 	}
 	return ending, exact, shaped, value
 }
 
 // shapedPass is the pass with the lists in its tokens' container values
-// emptied.
-func shapedPass(ev ParserEvent) ParserEvent {
+// emptied, and the maps when maps is set.
+func shapedPass(ev ParserEvent, maps bool) ParserEvent {
 	if ev.Pass == nil {
 		return ev
 	}
 	pass := *ev.Pass
 	pass.Tokens = make([]PassToken, len(ev.Pass.Tokens))
 	for i, tok := range ev.Pass.Tokens {
-		tok.Val = emptiedDatum(tok.Val)
+		tok.Val = emptiedDatum(tok.Val, maps)
 		pass.Tokens[i] = tok
 	}
 	return ParserEvent{Kind: ev.Kind, Pass: &pass}
 }
 
-// emptiedDatum is d with every list in it emptied, its maps' members kept.
-func emptiedDatum(d Datum) Datum {
+// emptiedDatum is d with every list in it emptied, and every map when maps
+// is set; a map that is kept keeps its members, their own containers
+// emptied.
+func emptiedDatum(d Datum, maps bool) Datum {
 	switch d.Kind {
 	case DatumArray:
 		return Datum{Kind: DatumArray, Items: []Datum{}}
 	case DatumObject:
+		if maps {
+			return Datum{Kind: DatumObject, Members: []Member{}}
+		}
 		members := make([]Member, len(d.Members))
 		for i, m := range d.Members {
-			members[i] = Member{Key: m.Key, Value: emptiedDatum(m.Value)}
+			members[i] = Member{Key: m.Key, Value: emptiedDatum(m.Value, maps)}
 		}
 		return Datum{Kind: DatumObject, Members: members}
 	}
@@ -166,9 +222,9 @@ func emptiedDatum(d Datum) Datum {
 // pruneCompare says how the pruned run compares with the one that did not
 // prune: "" the same, "shape" the same once the lists in the tokens'
 // container values are set aside, and otherwise where they differ.
-func pruneCompare(name, text string) string {
-	wholeEnd, kept, keptShape, _ := prunedRun(name, text, false)
-	prunedEnd, left, leftShape, _ := prunedRun(name, text, true)
+func pruneCompare(name, text string, how pruning) string {
+	wholeEnd, kept, keptShape, _ := prunedRun(name, text, pruneNo, how)
+	prunedEnd, left, leftShape, _ := prunedRun(name, text, how, how)
 	if wholeEnd != prunedEnd {
 		return fmt.Sprintf("ended %s without pruning, %s pruned", wholeEnd, prunedEnd)
 	}
@@ -189,39 +245,69 @@ func pruneCompare(name, text string) string {
 	return "shape"
 }
 
-// TestEveryGrammarPrunesAsTheListSays holds the list in both directions: a
-// listed grammar no document makes differ, and an unlisted grammar some
-// document does.
+// pruneDifferences is g's documents pruned as how says, compared with
+// unpruned runs: the differences.
+func pruneDifferences(t *testing.T, g pruneGrammar, docs []prunedDoc, how pruning) []string {
+	what := "pruned"
+	if how == pruneMaps {
+		what = "with its maps emptied"
+	}
+	var found, shaped []string
+	for i, doc := range docs {
+		switch why := pruneCompare(g.name, doc.text, how); why {
+		case "":
+		case "shape":
+			shaped = append(shaped, doc.name)
+		default:
+			found = append(found, doc.name+": "+why)
+		}
+		if (i+1)%200 == 0 || i+1 == len(docs) {
+			t.Logf("%s %s: %d of %d (%d%%) documents, %d differing", g.name, what, i+1, len(docs), (i+1)*100/len(docs), len(found))
+		}
+	}
+	if len(shaped) > 0 {
+		t.Logf("%s %s: %d the same once the containers in their tokens' values are set aside: %s",
+			g.name, what, len(shaped), strings.Join(shaped, ", "))
+	}
+	return found
+}
+
+// TestEveryGrammarPrunesAsTheListSays holds both lists in both directions:
+// a listed grammar no document makes differ, and an unlisted grammar some
+// document does. A grammar that is not prunable is not run with its maps
+// emptied, and is in neither.
 func TestEveryGrammarPrunesAsTheListSays(t *testing.T) {
 	var wrong []string
 	for _, g := range pruneGrammars {
 		docs := pruneDocuments(t, g)
-		var found, shaped []string
-		for i, doc := range docs {
-			switch why := pruneCompare(g.name, doc.text); why {
-			case "":
-			case "shape":
-				shaped = append(shaped, doc.name)
-			default:
-				found = append(found, doc.name+": "+why)
-			}
-			if (i+1)%200 == 0 || i+1 == len(docs) {
-				t.Logf("%s: %d of %d (%d%%) documents, %d differing", g.name, i+1, len(docs), (i+1)*100/len(docs), len(found))
-			}
-		}
-		if len(shaped) > 0 {
-			t.Logf("%s: %d the same once the lists in their tokens' containers are set aside: %s",
-				g.name, len(shaped), strings.Join(shaped, ", "))
-		}
-		switch listed := Prunable(g.name); {
+		found := pruneDifferences(t, g, docs, pruneLists)
+		listed := Prunable(g.name)
+		switch {
 		case listed && len(found) > 0:
 			wrong = append(wrong, fmt.Sprintf("%s is in PrunableGrammars, but %d of its documents differ:\n    %s",
 				g.name, len(found), strings.Join(found, "\n    ")))
 		case !listed && len(found) == 0:
 			wrong = append(wrong, fmt.Sprintf("%s is not in PrunableGrammars, but none of its documents differs", g.name))
 		}
+		if !listed {
+			if PrunesMaps(g.name) {
+				wrong = append(wrong, g.name+" is in PrunesMapsGrammars, and not prunable")
+			}
+			continue
+		}
+		found = pruneDifferences(t, g, docs, pruneMaps)
+		switch listedMaps := PrunesMaps(g.name); {
+		case listedMaps && len(found) > 0:
+			wrong = append(wrong, fmt.Sprintf("%s is in PrunesMapsGrammars, but %d of its documents differ with its "+
+				"maps emptied:\n    %s", g.name, len(found), strings.Join(found, "\n    ")))
+		case !listedMaps && len(found) == 0:
+			wrong = append(wrong, fmt.Sprintf("%s is not in PrunesMapsGrammars, but none of its documents differs "+
+				"with its maps emptied", g.name))
+		case !listedMaps:
+			t.Logf("%s with its maps emptied: %d documents differ, the first %s", g.name, len(found), found[0])
+		}
 	}
-	for _, name := range PrunableGrammars() {
+	for _, name := range append(PrunableGrammars(), PrunesMapsGrammars()...) {
 		known := false
 		for _, g := range pruneGrammars {
 			known = known || g.name == name
@@ -300,10 +386,19 @@ func heldElements(v any) int {
 }
 
 // prunedTree is what the tree keeps reachable after a run of records
-// records (heldElements).
+// records (heldElements), pruned as a host prunes, by the grammar's name and
+// its verified lists, or not.
 func prunedTree(t *testing.T, name, doc string, records int, prune bool) int {
 	t.Helper()
-	_, _, _, value := prunedRun(name, pruneGenerated(doc, records), prune)
+	source := NewParserEventSource(makeGrammar(name), pruneGenerated(doc, records)).Grammar(name)
+	if prune {
+		source.Prune()
+	}
+	var rec passRecorder
+	_, f, value := source.RunWithValue(&rec)
+	if f != nil {
+		t.Fatalf("%s over %d records: %v", name, records, f)
+	}
 	if value == nil {
 		t.Fatalf("%s over %d records returned no value", name, records)
 	}
@@ -319,6 +414,7 @@ func TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas(t *testing.T) {
 		{"json", "records.json"}, {"jsonc", "records.json"}, {"json5", "records.json"},
 		{"jsonic", "records.json"}, {"jsonl", "records.jsonl"}, {"yaml", "records.yaml"},
 		{"xml", "records.xml"}, {"csv", "records.csv"},
+		{"json", "members.json"}, {"ini", "sections.ini"}, {"toml", "tables.toml"},
 	}
 	var wrong []string
 	for i, pair := range pairs {
@@ -378,8 +474,8 @@ func TestARunThatPrunesNeedsAListedGrammar(t *testing.T) {
 // maps keep their members.
 func TestPruningEmptiesTheTreesListsAndLeavesThePasses(t *testing.T) {
 	src := `{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}`
-	_, kept, _, whole := prunedRun("json", src, false)
-	_, left, _, pruned := prunedRun("json", src, true)
+	_, kept, _, whole := prunedRun("json", src, pruneNo, pruneNo)
+	_, left, _, pruned := prunedRun("json", src, pruneLists, pruneLists)
 	if strings.Join(kept, "\n") != strings.Join(left, "\n") {
 		t.Fatalf("the passes differ:\n%s\n%s", strings.Join(kept, "\n"), strings.Join(left, "\n"))
 	}
@@ -393,6 +489,37 @@ func TestPruningEmptiesTheTreesListsAndLeavesThePasses(t *testing.T) {
 	}
 	if n := treeElements(whole); n != 14 {
 		t.Errorf("the tree without pruning holds %d elements: %v", n, whole)
+	}
+}
+
+// TestPruningAGrammarWhoseMapsAreEmptiedEmptiesThem: a grammar PrunesMaps
+// lists has its maps emptied with its lists, and its passes are the same;
+// toml, which reads its maps back, keeps its tables' keys.
+func TestPruningAGrammarWhoseMapsAreEmptiedEmptiesThem(t *testing.T) {
+	src := `{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}`
+	_, kept, _, _ := prunedRun("json", src, pruneNo, pruneNo)
+	var rec passRecorder
+	_, f, value := NewParserEventSource(makeGrammar("json"), src).Grammar("json").Prune().RunWithValue(&rec)
+	if f != nil {
+		t.Fatal(f)
+	}
+	left := make([]string, len(rec.seen))
+	for i, ev := range rec.seen {
+		left[i] = ev.JSON()
+	}
+	if strings.Join(kept, "\n") != strings.Join(left, "\n") {
+		t.Fatalf("the passes differ:\n%s\n%s", strings.Join(kept, "\n"), strings.Join(left, "\n"))
+	}
+	if n := heldElements(value); n != 0 {
+		t.Errorf("the pruned tree keeps %d elements reachable: %v", n, value)
+	}
+	var toml passRecorder
+	_, f, value = NewParserEventSource(makeGrammar("toml"), "[a]\nb = 1\n").Grammar("toml").Prune().RunWithValue(&toml)
+	if f != nil {
+		t.Fatal(f)
+	}
+	if n := heldElements(value); n != 2 {
+		t.Errorf("the pruned toml tree keeps %d elements reachable, not the table and its key: %v", n, value)
 	}
 }
 
@@ -426,7 +553,7 @@ func TestAHeldPruningEmptiesNoList(t *testing.T) {
 		}
 		return exact, value
 	}
-	_, kept, _, _ := prunedRun("json", src, false)
+	_, kept, _, _ := prunedRun("json", src, pruneNo, pruneNo)
 	passes, one := held(1)
 	if strings.Join(kept, "\n") != strings.Join(passes, "\n") {
 		t.Fatalf("the passes differ:\n%s\n%s", strings.Join(kept, "\n"), strings.Join(passes, "\n"))

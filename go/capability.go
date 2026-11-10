@@ -2,9 +2,10 @@
 
 package tabnastransduce
 
-// Which grammars a ParserEventSource may prune behind its stream
-// (rs/src/source/capability.rs): a verified capability, never an
-// assumption, earned per runtime. prune_test.go runs every document of
+// Which grammars a ParserEventSource may prune behind its stream, and which
+// of them have their maps emptied as well as their lists
+// (rs/src/source/capability.rs): verified capabilities, never assumptions,
+// earned per runtime. prune_test.go runs every document of
 // every grammar module the tests depend on pruned and not, compares the
 // passes and the outcomes, and asserts the list in both directions, so it
 // can rot in neither.
@@ -28,6 +29,38 @@ var prunableGrammars = []string{
 // keep.
 func PrunableGrammars() []string {
 	return append([]string(nil), prunableGrammars...)
+}
+
+// prunesMapsGrammars are the grammars whose maps a pruning ParserEventSource
+// empties too, at a close pass whose rule's node is the map, as it empties
+// lists: prune_test.go verified in this runtime that their passes are the
+// same with their maps emptied, on every document the suite reads them, and
+// asserts the list in both directions. Every one is in prunableGrammars.
+// The grammars it leaves out read their maps back during the parse: yaml,
+// toml, xml, zon and feed find a key or a table defined twice, or a name to
+// merge or resolve, by looking it up in the tree they are building, so with
+// their maps emptied they pass documents they refuse, or refuse documents
+// they pass.
+var prunesMapsGrammars = []string{
+	"csv", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown",
+}
+
+// PrunesMapsGrammars is the grammars whose maps a pruning ParserEventSource
+// empties as well as their lists: a copy of the list, which the caller may
+// keep.
+func PrunesMapsGrammars() []string {
+	return append([]string(nil), prunesMapsGrammars...)
+}
+
+// PrunesMaps reports whether grammar's maps are emptied behind a pruning
+// ParserEventSource's stream as well as its lists.
+func PrunesMaps(grammar string) bool {
+	for _, name := range prunesMapsGrammars {
+		if name == grammar {
+			return true
+		}
+	}
+	return false
 }
 
 // Prunable reports whether a ParserEventSource may empty grammar's lists

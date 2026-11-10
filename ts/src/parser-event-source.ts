@@ -84,20 +84,37 @@
 //
 // The engine builds its value as it parses, so a long document's tree
 // holds every record, though nothing reads the value the parse returns.
-// `prune()` empties each array behind the stream: once the sink has seen a
-// close pass whose rule's node is an array, the source empties that array
-// in place, so the tree holds the elements of the passes since the last
-// close on it. That alters the value the engine returns, which this source
-// never reads, and it is sound for a grammar whose passes do not depend on
-// what its arrays hold, so it is a verified capability:
-// `test/prune.test.ts` runs every document of every grammar in
-// the devDependencies pruned and not, and `capability.prunable` lists the
-// grammars whose passes and outcomes never differed
-// (rs/src/source/parser_events.rs has the contract's one difference, a
-// token whose value is a container of the tree). A run that prunes is
-// gated on the list, by the grammar's name (`grammar`), and without a
-// listed name it fails with `STREAMABILITY_UNKNOWN` before the parse,
-// having sent nothing; `unverified()` lifts the gate for the suite.
+// `prune()` empties the tree behind the stream. Once the sink has seen a
+// close pass:
+// - whose rule's node is an array, the source empties that array in place,
+//   so the tree holds the elements of the passes since the last close on
+//   it;
+// - whose rule's node is an element of an array its parent rule's node
+//   holds (directly, or as a member's or an element's value), the source
+//   sets the elements before it to `undefined`: an array no rule's node is,
+//   such as the one a toml document's root holds its array of tables in,
+//   which the first case never reaches. The array keeps its length, and
+//   the node its place. The node is looked for near the ends of the
+//   parent's containers, where a grammar appends it, and each element is
+//   set once, so a close costs the same however long the document grows;
+// - whose rule's node is a map, for a grammar `capability.prunesMaps`
+//   lists, the source deletes that map's members too, so an INI document's
+//   sections and a JSON object's members go as an array's elements do.
+// That alters the value the engine returns, which this source never reads,
+// and it is sound for a grammar whose passes do not depend on what its tree
+// holds: yaml, toml, xml, zon and feed read their maps back, to find a key
+// or a table defined twice or a name to merge or resolve, which is why
+// their maps are left. So it is a verified capability: `test/prune.test.ts`
+// runs every document of every grammar in the devDependencies pruned and
+// not, and with its maps emptied and not, and `capability.prunable` and
+// `capability.prunesMaps` list the grammars whose passes and outcomes never
+// differed (rs/src/source/parser_events.rs has the contract's one
+// difference, a token whose value is a container of the tree). A run that
+// prunes is gated on the first list, by the grammar's name (`grammar`), and
+// without a listed name it fails with `STREAMABILITY_UNKNOWN` before the
+// parse, having sent nothing; `unverified()` lifts the gate for the suite,
+// and `unverifiedMaps()` empties the maps of any grammar, for the suite
+// too.
 
 import {
   AbortFlag,
@@ -114,7 +131,7 @@ import {
 import type { Flow, ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
 import type { Context, Reader, Rule, RuleDone, Tabnas } from '@tabnas/parser'
 
-import { isPrunable } from './capability'
+import { isPrunable, prunesMaps } from './capability'
 import { engineFailure, prepare } from './source'
 
 // A tabnas parser applied to one text, or to what a reader gives, as a
@@ -131,6 +148,8 @@ export class ParserEventSource {
   private grammarName: string | null = null
   private pruning = false
   private isUnverified = false
+  // Empty maps too, whatever the grammar.
+  private isUnverifiedMaps = false
   private sendTokens = false
   private used = false
 
@@ -172,11 +191,14 @@ export class ParserEventSource {
     return this
   }
 
-  // Empty each array in the engine's tree once the sink has seen a close
-  // pass on it, so the tree does not hold the whole document. The passes
-  // are unchanged for a grammar `capability.prunable` lists, and `run`
-  // refuses to prune any other, with `STREAMABILITY_UNKNOWN` before the
-  // parse.
+  // Empty the engine's tree behind the stream, so that it does not hold the
+  // whole document: each array once the sink has seen a close pass on it,
+  // an array's elements before one whose close pass the sink has seen, and,
+  // for a grammar `capability.prunesMaps` lists, each map once the sink has
+  // seen a close pass on it (the module's comment has the details). The
+  // passes are unchanged for a grammar `capability.prunable` lists, and
+  // `run` refuses to prune any other, with `STREAMABILITY_UNKNOWN` before
+  // the parse.
   prune(): this {
     this.pruning = true
     return this
@@ -196,6 +218,16 @@ export class ParserEventSource {
   // emptied, and the run still returns.
   unverified(): this {
     this.isUnverified = true
+    return this
+  }
+
+  // `unverified()`, and empty the grammar's maps as well as its arrays,
+  // whatever `capability.prunesMaps` says. This exists for the differential
+  // suite that maintains that list and for nothing else: a grammar that
+  // reads its maps back may make other passes once they are emptied.
+  unverifiedMaps(): this {
+    this.isUnverified = true
+    this.isUnverifiedMaps = true
     return this
   }
 
@@ -261,7 +293,18 @@ export class ParserEventSource {
     // or over what the reader gives as the engine reads it.
     const offsets = null === reader ? new ByteOffsets(this.text, false) : new ByteOffsets('', true)
     const tokens = this.sendTokens || wantsTokens(sink)
-    const relay = new Relay(sink, this.sourceLimits.max_scalar_bytes, abort, stop, this.pruning, offsets, tokens)
+    const pruneMaps =
+      this.pruning && (this.isUnverifiedMaps || (null !== this.grammarName && prunesMaps(this.grammarName)))
+    const relay = new Relay(
+      sink,
+      this.sourceLimits.max_scalar_bytes,
+      abort,
+      stop,
+      this.pruning,
+      pruneMaps,
+      offsets,
+      tokens,
+    )
     // A stream keeps no more of the rules behind it than a grammar reads.
     boundHistory(this.parser)
     prepare(
@@ -321,8 +364,10 @@ class Relay {
     readonly abort: AbortFlag,
     // Set to make the parse guard cancel the parse.
     readonly stop: AbortFlag,
-    // Empty the array a close pass's rule builds, once the sink has seen it.
+    // Empty the tree behind the stream, once the sink has seen a close pass.
     readonly prune: boolean,
+    // Empty a map a close pass's rule builds too.
+    readonly pruneMaps: boolean,
     // The byte offsets of the tokens' UTF-16 positions.
     readonly offsets: ByteOffsets,
     // Whether the run sends token items.
@@ -399,7 +444,8 @@ class Relay {
         this.status = { type: 'stopped' }
         this.stop.abort()
       } else if (this.prune && !open && !pruningHeld(ctx)) {
-        emptyArray(rule)
+        emptyNode(rule, this.pruneMaps)
+        emptyBefore(rule)
       }
     } catch (error) {
       this.fail(error)
@@ -446,9 +492,74 @@ function pruningHeld(ctx: Context): boolean {
 // it emptied. Every element in it was built by passes the sink has seen,
 // the last of them the close pass just sent, and what those passes carry
 // is the sink's, so nothing sent so far changes.
-function emptyArray(rule: Rule): void {
+function emptyNode(rule: Rule, maps: boolean): void {
+  const node: any = (rule as any).node
+  if (Array.isArray(node)) {
+    if (0 < node.length) node.length = 0
+  } else if (maps && isMap(node)) {
+    for (const key of Object.keys(node)) delete node[key]
+    const order = (node as any)[KEY_ORDER]
+    if (Array.isArray(order)) order.length = 0
+  }
+}
+
+// The engine's record of a map's key order (`map: { ordered: true }`), a
+// property no enumeration sees, which emptying a map empties too.
+const KEY_ORDER = Symbol.for('tabnas.keyOrder')
+
+// A map of the tree: a plain object, with no prototype or `Object`'s, as the
+// grammars build them; never an instance of a class a grammar's value is.
+function isMap(value: unknown): value is Record<string, unknown> {
+  if (null === value || 'object' !== typeof value || Array.isArray(value)) return false
+  const proto = Object.getPrototypeOf(value)
+  return null === proto || Object.prototype === proto
+}
+
+// How far from its end a container is looked through for the node that
+// just closed, and for the arrays that might hold it: a finished node is the
+// last a grammar appended, so a close costs the same however long the
+// document's arrays and maps grow.
+const NEAR_THE_END = 8
+
+// When `rule`'s node is a container that an array within its parent's node
+// holds, set that array's elements before it to `undefined`: each was
+// closed before it, by passes the sink has seen. The array is looked for in
+// the parent's node and, near their end, in its members' values and its
+// elements, the places a grammar appends a finished node to (the array of
+// tables a toml document's root holds); the node near the array's end. An
+// element keeps its place, for a grammar that finds a node by position.
+function emptyBefore(rule: Rule): void {
   const node: unknown = (rule as any).node
-  if (Array.isArray(node) && 0 < node.length) node.length = 0
+  if (null === node || 'object' !== typeof node) return
+  const parent: unknown = (rule as any).parent?.node
+  if (null === parent || 'object' !== typeof parent || parent === node) return
+  if (emptyBeforeIn(parent, node)) return
+  if (Array.isArray(parent)) {
+    for (let i = parent.length - 1; i >= Math.max(0, parent.length - NEAR_THE_END); i--) {
+      if (emptyBeforeIn(parent[i], node)) return
+    }
+  } else if (isMap(parent)) {
+    // The engine's record of the keys' order, kept for the source
+    // (`map: { ordered: true }`), reads the last keys without listing all.
+    const order: unknown = (parent as any)[KEY_ORDER]
+    const keys: string[] = Array.isArray(order) ? order : Object.keys(parent)
+    for (let i = keys.length - 1; i >= Math.max(0, keys.length - NEAR_THE_END); i--) {
+      if (emptyBeforeIn(parent[keys[i]], node)) return
+    }
+  }
+}
+
+// When `array` is an array holding `node` near its end, set its elements
+// before it to `undefined`, back to the first one an earlier close set, so
+// that each is set once, and answer that it was found.
+function emptyBeforeIn(array: unknown, node: unknown): boolean {
+  if (!Array.isArray(array) || array === node) return false
+  let at = array.length - 1
+  const from = Math.max(0, array.length - NEAR_THE_END)
+  while (at >= from && array[at] !== node) at--
+  if (at < from) return false
+  for (let i = at - 1; i >= 0 && undefined !== array[i]; i--) array[i] = undefined
+  return true
 }
 
 // A token as a pass and a token item carry it, at byte offset `offset`, its

@@ -307,8 +307,8 @@ func TestPruningTheAbortFlagTheLimitsAndTheMetricsHoldFromAReader(t *testing.T) 
 			}
 		}
 
-		// Pruning: the same passes, and the same tree left behind, its
-		// lists emptied.
+		// Pruning: the same passes, and the same tree left behind, its lists
+		// and, json's being listed in PrunesMapsGrammars, its maps emptied.
 		var pruned [2]readerShown
 		for i, s := range both(func(s *ParserEventSource) *ParserEventSource { return s.Grammar("json").Prune() }) {
 			pruned[i] = readerRecorded(s)
@@ -316,11 +316,8 @@ func TestPruningTheAbortFlagTheLimitsAndTheMetricsHoldFromAReader(t *testing.T) 
 		if pruned[0].outcome != "ok continue" || !reflect.DeepEqual(pruned[1], pruned[0]) {
 			t.Fatalf("window %v: pruned from a reader %+v, over the text %+v", window, pruned[1].outcome, pruned[0].outcome)
 		}
-		tree := DatumFromValue(pruned[0].value)
-		records, ok := tree.GetPath(
-			[]Segment{KeySegment("response"), KeySegment("payload"), KeySegment("deep"), KeySegment("records")})
-		if !ok || records.Kind != DatumArray || len(records.Items) != 0 {
-			t.Fatalf("window %v: the records are not emptied: %v", window, records)
+		if tree := DatumFromValue(pruned[0].value); tree.Kind != DatumObject || len(tree.Members) != 0 {
+			t.Fatalf("window %v: the tree is not emptied: %v", window, tree)
 		}
 
 		// The abort flag: raised by the sink part way, the run is ABORTED
