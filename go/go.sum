@@ -30,7 +30,7 @@ github.com/tabnas/toml/go v0.5.22 h1:U9sD10aNwgCVu/IAWmDXpgAGMUGa+t7BC9FhmFtMa20
 github.com/tabnas/toml/go v0.5.22/go.mod h1:SCaCheo2zkm/NbAqBsggnkORybNnSa5dXF2288xAAb4=
 github.com/tabnas/xml/go v0.7.20 h1:zAFu8NJiG1TAvyWtLMxY2B8QqI8pvXA7TEXd6rD/l0I=
 github.com/tabnas/xml/go v0.7.20/go.mod h1:NYRsJHX8fCqD2SdX87HvMEsmBNSKQPsp6USq6+IGHpA=
-github.com/tabnas/yaml/go v0.5.31 h1:qvnh6kqqjDaIuho4aGIQpmqWYkl9fGoI6yV7o30g6zs=
-github.com/tabnas/yaml/go v0.5.31/go.mod h1:E3OJltu0vrYa7Xk/IUsjPCg9GjgFyOL/sUuo39TMY38=
+github.com/tabnas/yaml/go v0.5.32 h1:+l/cXq+6vPHZ5fMHLMaxKHBMWO0y9LM96DWq15q3rnU=
+github.com/tabnas/yaml/go v0.5.32/go.mod h1:Cei3iqhBBYNFa+bo3qKNfuR/l7vx6Y2urQZwWuPAAMc=
 github.com/tabnas/zon/go v0.5.19 h1:IJpKBu3+TXZN16sZxL0KKL+MZ2S0xcxEMPaZlXzKN9Y=
 github.com/tabnas/zon/go v0.5.19/go.mod h1:icZzykzKjw8lghDjgR3UzlEXoASnTFuXs9Xg1mWY9Og=

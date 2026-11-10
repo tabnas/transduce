@@ -79,16 +79,12 @@ func Prunable(grammar string) bool {
 // verified in this runtime that every document the suite reads them parses
 // alike with the history bounded and without, the same passes, the same
 // ending and the same value, and asserts the list in both directions.
-// Every one is in prunableGrammars. A grammar off it keeps the engine's
-// default, an unbounded history, because what it reads back through the
-// rule links reaches further than the bound keeps: yaml's childNode reads a
-// child's value at the end of the child's rotation chain, walking the
-// child's Next links, and a bounded history keeps a pusher's child as it
-// ended, with no Next, so a value of several items with nothing between
-// them ("a" "b", a block scalar and the text after it, a stream of JSON
-// objects) keeps its first item alone, though its passes are alike.
+// Every one is in prunableGrammars, and every grammar the suite runs is on
+// it. A grammar off it would keep the engine's default, an unbounded
+// history, because what it reads back through the rule links reaches
+// further than the bound keeps.
 var boundsHistoryGrammars = []string{
-	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "zon",
+	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "yaml", "zon",
 }
 
 // BoundsHistoryGrammars is the grammars a pruning ParserEventSource bounds

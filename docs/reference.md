@@ -288,12 +288,14 @@ A grammar may read further back through the links than three predecessors,
 so the list is a verified capability, as pruning is: the history half of the
 prune suites runs every document of every grammar bounded
 (`unverifiedHistory`, `UnverifiedHistory`) and not, compares the passes,
-the ending and the value, and holds the list both ways. TypeScript's names
-every grammar its suite runs; Go's every one but yaml, whose `childNode`
-walks a child's `Next` links, which a bounded history cuts (`DIVERGENCE.md`,
-entry 5). Only a run that prunes is bounded, since the bound buys flat
-memory only where the tree is emptied too, and in Go it costs two to three
-times the parse's time (tabnas/parser#339). Until 0.6.3, a TypeScript
+the ending and the value, and holds the list both ways. Each names every
+grammar its suite runs. Go's left out yaml until 0.6.5: yaml's Go plugin
+read a child's value at the end of the child's rotation chain, through the
+`Next` links a bounded history cuts, until tabnas/yaml 0.5.32 read it from
+the child alone, as its TypeScript does. Only a run that prunes is
+bounded, since the bound buys flat memory only where the tree is emptied
+too, and in Go it costs two to three times the parse's time
+(tabnas/parser#339). Until 0.6.3, a TypeScript
 source bounded every run, pruned or not, whatever the grammar, and a Go
 source bounded none.
 The suite asserts the list in both directions, and measures what pruning

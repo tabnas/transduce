@@ -187,16 +187,17 @@ every grammar with the history bounded (`unverifiedHistory`,
 `UnverifiedHistory`) and not, neither pruned, compares the passes, the
 ending and the value, and holds the list both ways; and the prune suites'
 pruned runs of a listed grammar are bounded, as a host's are. Every list
-entry is a prunable grammar. In TypeScript every grammar of the suite
-passes. In Go every one but yaml does: yaml's `childNode` reads a child's
-value at the end of the child's rotation chain, walking the child's `Next`
-links, and a bounded history keeps a pusher's child as it ended, with no
-`Next`, so a value of several items with nothing between them (`"a" "b"`,
-a block scalar and the text after it, a stream of JSON objects) keeps only
-its first item, in 12 documents, though their passes are alike. Rust needs
-no list: its engine bounds every parse at three by default, and each
-grammar's own suite runs under that. Until 0.6.3, TypeScript bounded every
-run's history, pruned or not, whatever the grammar.
+entry is a prunable grammar, and in each runtime every grammar of the
+suite passes. Until 0.6.5 Go's list left out yaml, whose Go plugin read a
+child's value at the end of the child's rotation chain, walking the
+child's `Next` links, which a bounded history cuts: a value of several
+items with nothing between them (`"a" "b"`, a block scalar and the text
+after it, a stream of JSON objects) kept only its first item, in 12
+documents, until tabnas/yaml 0.5.32 read a child's value from the child
+alone, as its TypeScript does. Rust needs no list: its engine bounds every
+parse at three by default, and each grammar's own suite runs under that.
+Until 0.6.3, TypeScript bounded every run's history, pruned or not,
+whatever the grammar.
 
 ## Repository map
 
