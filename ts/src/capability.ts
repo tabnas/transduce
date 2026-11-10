@@ -1,8 +1,8 @@
 /* Copyright (c) 2026 tabnas, MIT License */
 
-// Which grammars a `ParserEventSource` may prune behind its stream, in THIS
-// runtime (rs/src/source/capability.rs): a verified capability, never an
-// assumption. `test/prune.test.ts` runs every document of every grammar in
+// Which grammars a `ParserEventSource` may prune behind its stream, and which
+// of them have their maps emptied as well as their arrays, in THIS runtime
+// (rs/src/source/capability.rs): verified capabilities, never assumptions. `test/prune.test.ts` runs every document of every grammar in
 // the devDependencies pruned and not, compares the passes and the outcomes,
 // and asserts the list in both directions, so it can rot in neither. The
 // TypeScript grammars build their values through TypeScript rule passes,
@@ -44,7 +44,36 @@ export function isPrunable(grammar: string): boolean {
   return PRUNABLE.includes(grammar)
 }
 
+// The grammars whose maps a pruning `ParserEventSource` empties too, at a
+// close pass whose rule's node is the map, as it empties arrays: their
+// passes are the same with their maps emptied, on every document
+// `test/prune.test.ts` reads them, and the suite asserts the list in both
+// directions. Every one is in `PRUNABLE`. The grammars it leaves out read
+// their maps back during the parse: yaml, toml, xml, zon and feed find a key
+// or a table defined twice, or a name to merge or resolve, by looking it up
+// in the tree they are building, so with their maps emptied they pass
+// documents they refuse, or refuse documents they pass.
+export const PRUNES_MAPS: readonly string[] = Object.freeze([
+  'csv',
+  'ini',
+  'json',
+  'json5',
+  'jsonc',
+  'jsonic',
+  'jsonl',
+  'markdown',
+  'pgn',
+])
+
+// Whether `grammar`'s maps are emptied behind a pruning `ParserEventSource`'s
+// stream as well as its arrays.
+export function prunesMaps(grammar: string): boolean {
+  return PRUNES_MAPS.includes(grammar)
+}
+
 export const capability = Object.freeze({
   PRUNABLE,
+  PRUNES_MAPS,
   prunable: isPrunable,
+  prunesMaps,
 })

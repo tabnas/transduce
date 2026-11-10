@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 
@@ -120,20 +121,35 @@ const (
 //
 // The engine builds its value as it parses, so a long document's tree
 // holds every record, though nothing reads the value the parse returns.
-// Prune empties each list behind the stream: once the sink has seen a
-// close pass whose rule's node is a list, the source truncates that list
-// in place, in every rule that builds into it (tabnas.Rule.SetNode), so
-// the tree holds the elements of the passes since the last close on it.
-// That alters the value the engine returns, which this source never
-// reads, and it is sound for a grammar whose passes do not depend on what
-// its lists hold, so it is a verified capability: prune_test.go runs every
-// document of every grammar the tests depend on pruned and not, and
-// PrunableGrammars lists the grammars whose passes and outcomes never
+// Prune empties the tree behind the stream. Once the sink has seen a close
+// pass:
+//   - whose rule's node is a list, the source truncates that list in place,
+//     in every rule that builds into it (tabnas.Rule.SetNode), so the tree
+//     holds the elements of the passes since the last close on it;
+//   - whose rule's node is an element of a list its parent rule's node
+//     holds (directly, or as a member's or an element's value), the source
+//     sets the elements before it to nil: a list no rule's node is, such as
+//     the one a toml document's root holds its array of tables in, which
+//     the first case never reaches. The list keeps its length, and the node
+//     its place;
+//   - whose rule's node is a map, for a grammar PrunesMaps lists, the source
+//     deletes that map's members too, so an INI document's sections and a
+//     JSON object's members go as a list's elements do.
+//
+// That alters the value the engine returns, which this source never reads,
+// and it is sound for a grammar whose passes do not depend on what its tree
+// holds: yaml, toml, xml, zon and feed read their maps back, to find a key
+// or a table defined twice or a name to merge or resolve, which is why
+// their maps are left. So it is a verified capability: prune_test.go runs
+// every document of every grammar the tests depend on pruned and not, and
+// with its maps emptied and not, and PrunableGrammars and
+// PrunesMapsGrammars list the grammars whose passes and outcomes never
 // differed (rs/src/source/parser_events.rs has the contract's one
 // difference, a token whose value is a container of the tree). A run that
-// prunes is gated on the list, by the grammar's name (Grammar), and
+// prunes is gated on the first list, by the grammar's name (Grammar), and
 // without a listed name it fails with STREAMABILITY_UNKNOWN before the
-// parse, having sent nothing; Unverified lifts the gate for the suite.
+// parse, having sent nothing; Unverified lifts the gate for the suite, and
+// UnverifiedMaps empties the maps of any grammar, for the suite too.
 type ParserEventSource struct {
 	parser *tabnas.Tabnas
 	text   string
@@ -147,6 +163,8 @@ type ParserEventSource struct {
 	grammar    string
 	prune      bool
 	unverified bool
+	// unverifiedMaps empties maps too, whatever the grammar.
+	unverifiedMaps bool
 	// tokens sends token items whether or not the sink asks.
 	tokens bool
 	used   bool
@@ -190,10 +208,13 @@ func (p *ParserEventSource) Grammar(name string) *ParserEventSource {
 	return p
 }
 
-// Prune empties each list in the engine's tree once the sink has seen a
-// close pass on it, so the tree does not hold the whole document. The
-// passes are unchanged for a grammar PrunableGrammars lists, and Run
-// refuses to prune any other, with STREAMABILITY_UNKNOWN before the parse.
+// Prune empties the engine's tree behind the stream, so that it does not
+// hold the whole document: each list once the sink has seen a close pass on
+// it, a list's elements before one whose close pass the sink has seen, and,
+// for a grammar PrunesMaps lists, each map once the sink has seen a close
+// pass on it (the type's comment has the details). The passes are unchanged
+// for a grammar PrunableGrammars lists, and Run refuses to prune any other,
+// with STREAMABILITY_UNKNOWN before the parse.
 func (p *ParserEventSource) Prune() *ParserEventSource {
 	p.prune = true
 	return p
@@ -205,6 +226,16 @@ func (p *ParserEventSource) Prune() *ParserEventSource {
 // emptied, and the run still succeeds.
 func (p *ParserEventSource) Unverified() *ParserEventSource {
 	p.unverified = true
+	return p
+}
+
+// UnverifiedMaps is Unverified, and empties the grammar's maps as well as
+// its lists, whatever PrunesMaps says. It exists for the differential suite
+// that maintains that list and for nothing else: a grammar that reads its
+// maps back may make other passes once they are emptied.
+func (p *ParserEventSource) UnverifiedMaps() *ParserEventSource {
+	p.unverified = true
+	p.unverifiedMaps = true
 	return p
 }
 
@@ -271,9 +302,10 @@ type relay struct {
 	abort    *AbortFlag
 	stop     *AbortFlag
 	events   uint64
-	// prune empties the list a close pass's rule builds, once the sink has
-	// seen it.
-	prune bool
+	// prune empties the tree behind the stream, once the sink has seen a
+	// close pass; pruneMaps empties a map a close pass's rule builds too.
+	prune     bool
+	pruneMaps bool
 	// tokens is whether the run sends token items; held are the ignored
 	// tokens the lexer has cut and no pass has yet been sent after, in
 	// source order, from first on; reach is the byte offset past the
@@ -372,7 +404,8 @@ func (r *relay) onDone(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleD
 		r.status = relayStopped
 		r.stop.Abort()
 	case r.prune && !open && !pruningHeld(ctx):
-		emptyList(rule)
+		emptyNode(rule, r.pruneMaps)
+		emptyBefore(rule)
 	}
 }
 
@@ -398,7 +431,7 @@ func pruningHeld(ctx *tabnas.Context) bool {
 	return false
 }
 
-// emptyList truncates the list rule's node belongs to, in place, in the
+// emptyNode truncates the list rule's node belongs to, in place, in the
 // rules that build into it, when it is a list holding anything. Every
 // element in it was built by passes the sink has seen, the last of them
 // the close pass just sent, and what those passes carry is the sink's, so
@@ -407,7 +440,11 @@ func pruningHeld(ctx *tabnas.Context) bool {
 // elements are cleared first: a truncated slice keeps its backing array,
 // and that would otherwise keep every element it held reachable until a
 // later append wrote over it.
-func emptyList(rule *tabnas.Rule) {
+//
+// When maps is set, a map that rule's node is has its members deleted, in
+// place, which every holder of the map sees: a *tabnas.OrderedMap's keys and
+// values, a tabnas.MapRef's or a plain map's entries.
+func emptyNode(rule *tabnas.Rule, maps bool) {
 	switch v := rule.NodeCell().Node.(type) {
 	case []any:
 		if len(v) > 0 {
@@ -420,7 +457,115 @@ func emptyList(rule *tabnas.Rule) {
 			v.Val = v.Val[:0]
 			rule.SetNode(v)
 		}
+	case *tabnas.OrderedMap:
+		if maps && v != nil && len(v.Keys) > 0 {
+			clear(v.Vals)
+			clear(v.Keys)
+			v.Keys = v.Keys[:0]
+		}
+	case tabnas.MapRef:
+		if maps {
+			clear(v.Val)
+		}
+	case map[string]any:
+		if maps {
+			clear(v)
+		}
 	}
+}
+
+// identity is where a container's contents live, for telling one apart
+// from another: a map's or a list's data, or an ordered map's address; zero
+// for a scalar, and for an empty list, which holds nothing to find.
+func identity(v any) uintptr {
+	switch x := v.(type) {
+	case *tabnas.OrderedMap:
+		return reflect.ValueOf(x).Pointer()
+	case []any:
+		if len(x) > 0 {
+			return reflect.ValueOf(x).Pointer()
+		}
+	case tabnas.ListRef:
+		if len(x.Val) > 0 {
+			return reflect.ValueOf(x.Val).Pointer()
+		}
+	case tabnas.MapRef:
+		return reflect.ValueOf(x.Val).Pointer()
+	case map[string]any:
+		return reflect.ValueOf(x).Pointer()
+	}
+	return 0
+}
+
+// listOf is the list v is, or nil.
+func listOf(v any) []any {
+	switch x := v.(type) {
+	case []any:
+		return x
+	case tabnas.ListRef:
+		return x.Val
+	}
+	return nil
+}
+
+// emptyBefore sets to nil, when rule's node is a container that a list
+// within its parent's node holds, that list's elements before it: each was
+// closed before it, by passes the sink has seen. The list is looked for in
+// the parent's node, its members' values and its elements, the places a
+// grammar appends a finished node to (the array of tables a toml document's
+// root holds). An element keeps its place, for a grammar that finds a node
+// by position, and the list its length, so that every holder of it still
+// sees the same list.
+func emptyBefore(rule *tabnas.Rule) {
+	node := identity(rule.NodeCell().Node)
+	parent := rule.Parent
+	if node == 0 || parent == nil || parent == tabnas.NoRule {
+		return
+	}
+	held := parent.NodeCell().Node
+	if identity(held) == node || emptyBeforeIn(listOf(held), node) {
+		return
+	}
+	switch x := held.(type) {
+	case *tabnas.OrderedMap:
+		if x == nil {
+			return
+		}
+		for _, key := range x.Keys {
+			if emptyBeforeIn(listOf(x.Vals[key]), node) {
+				return
+			}
+		}
+	case tabnas.MapRef:
+		for _, value := range x.Val {
+			if emptyBeforeIn(listOf(value), node) {
+				return
+			}
+		}
+	case map[string]any:
+		for _, value := range x {
+			if emptyBeforeIn(listOf(value), node) {
+				return
+			}
+		}
+	}
+	for _, item := range listOf(held) {
+		if emptyBeforeIn(listOf(item), node) {
+			return
+		}
+	}
+}
+
+// emptyBeforeIn sets list's elements before the last place it holds the
+// container node to nil, and reports whether node was found.
+func emptyBeforeIn(list []any, node uintptr) bool {
+	for at := len(list) - 1; at >= 0; at-- {
+		if identity(list[at]) == node {
+			clear(list[:at])
+			return true
+		}
+	}
+	return false
 }
 
 // Run parses, relaying each pass into sink, then End. A source runs once:
@@ -448,7 +593,9 @@ func (p *ParserEventSource) RunWithValue(sink ParserSink) (Flow, *Fail, any) {
 		return Continue, f, nil
 	}
 	tokens := p.tokens || shared.WantsTokens(sink)
-	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag(), prune: p.prune, tokens: tokens}
+	pruneMaps := p.prune && (p.unverifiedMaps || PrunesMaps(p.grammar))
+	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag(), prune: p.prune,
+		pruneMaps: pruneMaps, tokens: tokens}
 	if tokens {
 		p.parser.Sub(func(tkn *tabnas.Token, rule *tabnas.Rule, ctx *tabnas.Context) {
 			r.onLex(tkn, rule, ctx)

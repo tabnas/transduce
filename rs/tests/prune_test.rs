@@ -1,20 +1,27 @@
-//! The differential suite behind `capability::prunable`.
+//! The differential suite behind `capability::prunable` and
+//! `capability::prunes_maps`.
 //!
-//! A `ParserEventSource` that prunes empties each array in the engine's
-//! tree once the sink has seen a close pass on it. A pass's value is a
-//! scalar or nothing, so for a grammar that never reads its arrays back
-//! the passes are the same either way; a grammar whose actions or
-//! conditions do read them may make other passes, or fail elsewhere, once
-//! they are emptied. So for every grammar in the dev-dependencies and every
-//! document the suite has for it, a run that prunes must relay the same
-//! passes as one that does not, pass for pass in the fixture encoding, and
-//! end the same way: both complete, or both fail with the same code,
-//! position and message.
+//! A `ParserEventSource` that prunes empties the engine's tree behind the
+//! stream: each array once the sink has seen a close pass on it, and an
+//! array's elements before one whose close pass it has seen; and, for a
+//! grammar `capability::prunes_maps` lists, each map once the sink has
+//! seen a close pass on it. A pass's value is a scalar or nothing, so for
+//! a grammar that never reads its tree back the passes are the same either
+//! way; a grammar whose actions or conditions do read it may make other
+//! passes, or fail elsewhere, once it is emptied. So for every grammar in
+//! the dev-dependencies and every document the suite has for it, a run
+//! that prunes must relay the same passes as one that does not, pass for
+//! pass in the fixture encoding, and end the same way: both complete, or
+//! both fail with the same code, position and message. The suite runs each
+//! document twice pruned, with the grammar's maps left and with them
+//! emptied (`ParserEventSource::unverified_maps`), and holds each list to
+//! its runs.
 //!
 //! One difference short of identity is the contract, and the suite counts
 //! it apart: a token whose value is a container of the tree carries what
 //! the tree holds when its pass is made, so the arrays in it may have been
-//! emptied, while its kind and its maps' members are as they were. yaml's
+//! emptied, and its maps too in the run that empties them, while its kind
+//! is as it was. yaml's
 //! lexer resolves an alias to the anchored node so (anchors-aliases.tsv),
 //! and yaml's part reads such a token's kind alone, refusing an alias to a
 //! sequence or a mapping as one whose members the passes do not show. A
@@ -28,15 +35,20 @@
 //! `test/spec/*.tsv` rows of the sibling checkout this crate builds it
 //! from, under the options its `make` gives (a row's own options are not
 //! applied: the suite runs one parser). A grammar is listed in
-//! `capability::PRUNABLE` only when no document differs, and the suite
-//! asserts the list in both directions, so it can rot in neither.
+//! `capability::PRUNABLE` only when no document differs pruned, and in
+//! `capability::PRUNES_MAPS` only when none differs with its maps emptied
+//! too, and the suite asserts both lists in both directions, so they can
+//! rot in neither.
 //!
 //! The second half measures what pruning is for: ten times the records of
 //! a document leave the pruned tree holding exactly as many elements,
-//! while the tree a run that does not prune hands back holds every record.
+//! while the tree a run that does not prune hands back holds every record;
+//! and so do ten times an INI document's sections, and a JSON object's
+//! members, whose grammars have their maps emptied.
 
 mod support;
 
+use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
 
@@ -44,6 +56,16 @@ use tabnas::{Tabnas, Value};
 use tabnas_transduce::{
     capability, Datum, Fail, Flow, ParserEvent, ParserEventSource, ParserSink, RulePass, PRUNE_HOLD,
 };
+
+/// How a run prunes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pruning {
+    No,
+    /// The arrays, whatever the grammar.
+    Arrays,
+    /// The arrays and the maps, whatever the grammar.
+    Maps,
+}
 
 /// The generated documents' records in the differential: as many shapes
 /// as 2,000 would hold, at a tenth of the parsing.
@@ -67,7 +89,7 @@ const GRAMMARS: &[Grammar] = &[
     Grammar {
         name: "json",
         make: tabnas_json::make,
-        generated: &["records.json"],
+        generated: &["records.json", "members.json"],
         repo: "json",
     },
     Grammar {
@@ -103,13 +125,13 @@ const GRAMMARS: &[Grammar] = &[
     Grammar {
         name: "toml",
         make: tabnas_toml::make,
-        generated: &[],
+        generated: &["tables.toml"],
         repo: "toml",
     },
     Grammar {
         name: "ini",
         make: tabnas_ini::make,
-        generated: &[],
+        generated: &["sections.ini"],
         repo: "ini",
     },
     Grammar {
@@ -158,8 +180,43 @@ fn generated(name: &str, records: usize) -> String {
         "records.yaml" => support::records_yaml(records),
         "records.xml" => support::records_xml(records),
         "records.pgn" => support::records_pgn(records),
+        "members.json" => members_json(records),
+        "sections.ini" => sections_ini(records),
+        "tables.toml" => tables_toml(records),
         other => panic!("no generator for {other}"),
     }
+}
+
+/// A JSON object of `records` members, each an object of three.
+fn members_json(records: usize) -> String {
+    let members: Vec<String> = (0..records)
+        .map(|i| format!("\"k{i}\": {{\"id\": {i}, \"name\": \"n{i}\", \"tags\": [\"a\", \"b\"]}}"))
+        .collect();
+    format!("{{\n{}\n}}\n", members.join(",\n"))
+}
+
+/// An INI document of `records` sections, each of three keys.
+fn sections_ini(records: usize) -> String {
+    let mut out = String::new();
+    for i in 0..records {
+        let _ = write!(
+            out,
+            "[s{i}]\nid = {i}\nname = n{i}\ntext = the text of section {i}\n\n"
+        );
+    }
+    out
+}
+
+/// A TOML array of `records` tables, each of three keys.
+fn tables_toml(records: usize) -> String {
+    let mut out = String::new();
+    for i in 0..records {
+        let _ = write!(
+            out,
+            "[[items]]\nid = {i}\nname = \"n{i}\"\ntext = \"the text of table {i}\"\n\n"
+        );
+    }
+    out
 }
 
 /// Every committed fixture, by file name, in a stable order.
@@ -203,10 +260,11 @@ fn own_corpus(repo: &str) -> Vec<(String, String)> {
 }
 
 /// The passes, each in the fixture encoding, and again with the arrays in
-/// its tokens' container values emptied: the passes as pruning may leave
-/// them.
+/// its tokens' container values emptied, and the maps when `maps`: the
+/// passes as pruning may leave them.
 #[derive(Default)]
 struct Passes {
+    maps: bool,
     exact: Vec<String>,
     shaped: Vec<String>,
 }
@@ -215,8 +273,8 @@ impl ParserSink for Passes {
     fn event(&mut self, ev: &ParserEvent) -> Result<Flow, Fail> {
         self.exact.push(ev.to_json().to_string());
         let shaped = match ev {
-            ParserEvent::Open(pass) => ParserEvent::Open(shaped(pass)),
-            ParserEvent::Close(pass) => ParserEvent::Close(shaped(pass)),
+            ParserEvent::Open(pass) => ParserEvent::Open(shaped(pass, self.maps)),
+            ParserEvent::Close(pass) => ParserEvent::Close(shaped(pass, self.maps)),
             // The suite asks for none; a token item is no grammar's value.
             ev @ (ParserEvent::Token(_) | ParserEvent::End) => ev.clone(),
         };
@@ -225,40 +283,51 @@ impl ParserSink for Passes {
     }
 }
 
-/// The pass with the arrays in its tokens' container values emptied.
-fn shaped(pass: &RulePass) -> RulePass {
+/// The pass with the arrays in its tokens' container values emptied, and
+/// the maps when `maps`.
+fn shaped(pass: &RulePass, maps: bool) -> RulePass {
     let mut pass = pass.clone();
     for token in &mut pass.tokens {
-        token.val = emptied(&token.val);
+        token.val = emptied(&token.val, maps);
     }
     pass
 }
 
-/// A datum with every array in it emptied, its maps' members kept.
-fn emptied(datum: &Datum) -> Datum {
+/// A datum with every array in it emptied, and every map when `maps`; a
+/// map that is kept keeps its members, their own containers emptied.
+fn emptied(datum: &Datum, maps: bool) -> Datum {
     match datum {
         Datum::Array(_) => Datum::Array(Vec::new()),
+        Datum::Object(_) if maps => Datum::Object(Default::default()),
         Datum::Object(members) => Datum::Object(
             members
                 .iter()
-                .map(|(name, value)| (name.clone(), emptied(value)))
+                .map(|(name, value)| (name.clone(), emptied(value, maps)))
                 .collect(),
         ),
         scalar => scalar.clone(),
     }
 }
 
-/// One run: how it ended, its passes, and the engine's tree afterwards.
+/// One run: how it ended, its passes, shaped as a run with `shape` would
+/// leave them, and the engine's tree afterwards.
 fn run(
     make: fn() -> Tabnas,
     text: &str,
-    prune: bool,
+    pruning: Pruning,
+    shape: Pruning,
 ) -> (Result<Flow, Fail>, Passes, Option<Value>) {
-    let mut source = ParserEventSource::new(make(), text);
-    if prune {
-        source = source.prune().unverified();
-    }
-    source.run_owned_with_value(Passes::default())
+    let passes = Passes {
+        maps: shape == Pruning::Maps,
+        ..Passes::default()
+    };
+    let source = ParserEventSource::new(make(), text);
+    let source = match pruning {
+        Pruning::No => source,
+        Pruning::Arrays => source.prune().unverified(),
+        Pruning::Maps => source.prune().unverified_maps(),
+    };
+    source.run_owned_with_value(passes)
 }
 
 /// How a run ended, in the terms the two runs must agree on.
@@ -282,9 +351,9 @@ enum Outcome {
 }
 
 /// How the pruned run compares with the one that did not prune.
-fn compare(make: fn() -> Tabnas, text: &str) -> Outcome {
-    let (whole, kept, _) = run(make, text, false);
-    let (pruned, left, _) = run(make, text, true);
+fn compare(make: fn() -> Tabnas, text: &str, pruning: Pruning) -> Outcome {
+    let (whole, kept, _) = run(make, text, Pruning::No, pruning);
+    let (pruned, left, _) = run(make, text, pruning, pruning);
     let (whole, pruned) = (ending(&whole), ending(&pruned));
     if whole != pruned {
         return Outcome::Differs(format!("ended {whole} without pruning, {pruned} pruned"));
@@ -316,21 +385,26 @@ fn documents(grammar: &Grammar) -> Vec<(String, String)> {
 }
 
 /// Each grammar's documents, pruned and not; the differences, by grammar.
-fn differences(grammar: &Grammar) -> Vec<String> {
+fn differences(grammar: &Grammar, pruning: Pruning) -> Vec<String> {
     let started = std::time::Instant::now();
+    let how = if pruning == Pruning::Maps {
+        "with its maps emptied"
+    } else {
+        "pruned"
+    };
     let docs = documents(grammar);
     let total = docs.len();
     let mut found = Vec::new();
     let mut shaped = Vec::new();
     for (i, (name, text)) in docs.iter().enumerate() {
-        match compare(grammar.make, text) {
+        match compare(grammar.make, text, pruning) {
             Outcome::Same => {}
             Outcome::SameShape => shaped.push(name.as_str()),
             Outcome::Differs(why) => found.push(format!("{name}: {why}")),
         }
         if (i + 1) % 100 == 0 || i + 1 == total {
             println!(
-                "{}: {} of {total} ({}%) documents, {} differing, {:.1} s",
+                "{} {how}: {} of {total} ({}%) documents, {} differing, {:.1} s",
                 grammar.name,
                 i + 1,
                 (i + 1) * 100 / total,
@@ -341,7 +415,7 @@ fn differences(grammar: &Grammar) -> Vec<String> {
     }
     if !shaped.is_empty() {
         println!(
-            "{}: {} the same once the arrays in their tokens' containers are set aside: {}",
+            "{} {how}: {} the same once the containers in their tokens' values are set aside: {}",
             grammar.name,
             shaped.len(),
             shaped.join(", ")
@@ -350,14 +424,15 @@ fn differences(grammar: &Grammar) -> Vec<String> {
     found
 }
 
-/// The list in both directions, for one grammar: listed, and no document
-/// makes it differ; or not listed, and some document does.
+/// Both lists in both directions, for one grammar: listed, and no document
+/// makes it differ; or not listed, and some document does. A grammar that
+/// is not prunable is not run with its maps emptied, and is in neither.
 fn prunes_as_the_list_says(name: &str) {
     let grammar = GRAMMARS
         .iter()
         .find(|g| g.name == name)
         .expect("the grammar is in the suite");
-    let found = differences(grammar);
+    let found = differences(grammar, Pruning::Arrays);
     match (capability::prunable(name), found.is_empty()) {
         (true, false) => panic!(
             "{name} is in capability::PRUNABLE, but {} of its documents differ:\n    {}",
@@ -367,6 +442,29 @@ fn prunes_as_the_list_says(name: &str) {
         (false, true) => {
             panic!("{name} is not in capability::PRUNABLE, but none of its documents differs")
         }
+        _ => {}
+    }
+    if !capability::prunable(name) {
+        assert!(!capability::prunes_maps(name));
+        return;
+    }
+    let found = differences(grammar, Pruning::Maps);
+    match (capability::prunes_maps(name), found.is_empty()) {
+        (true, false) => panic!(
+            "{name} is in capability::PRUNES_MAPS, but {} of its documents differ with its \
+             maps emptied:\n    {}",
+            found.len(),
+            found.join("\n    ")
+        ),
+        (false, true) => panic!(
+            "{name} is not in capability::PRUNES_MAPS, but none of its documents differs with \
+             its maps emptied"
+        ),
+        (false, false) => println!(
+            "{name} with its maps emptied: {} documents differ, the first {}",
+            found.len(),
+            found[0]
+        ),
         _ => {}
     }
 }
@@ -389,7 +487,7 @@ macro_rules! prunes_as_the_list_says {
             for grammar in GRAMMARS {
                 assert!(tested.contains(&grammar.name), "{} has no test", grammar.name);
             }
-            for name in capability::PRUNABLE {
+            for name in capability::PRUNABLE.iter().chain(capability::PRUNES_MAPS) {
                 assert!(
                     GRAMMARS.iter().any(|g| g.name == *name),
                     "{name} is listed, and this suite never runs it"
@@ -416,25 +514,38 @@ prunes_as_the_list_says! {
     pgn_prunes_as_the_list_says: "pgn",
 }
 
-/// Every element of every array in `value`, and every member of every map.
+/// Every element of every array in `value` that holds something, and every
+/// member of every map: what the tree keeps reachable. An element pruning
+/// set to `Undefined` keeps its place and holds nothing.
 fn elements(value: &Value) -> usize {
+    let held = |items: &[Value]| {
+        items
+            .iter()
+            .filter(|item| !matches!(item, Value::Undefined))
+            .map(|item| 1 + elements(item))
+            .sum::<usize>()
+    };
     match value {
-        Value::Array(items) => items.len() + items.iter().map(elements).sum::<usize>(),
-        Value::ListRef(list) => list.value.len() + list.value.iter().map(elements).sum::<usize>(),
+        Value::Array(items) => held(items),
+        Value::ListRef(list) => held(&list.value),
         Value::Object(map) => map.len() + map.values().map(elements).sum::<usize>(),
         Value::MapRef(map) => map.value.len() + map.value.values().map(elements).sum::<usize>(),
         _ => 0,
     }
 }
 
-/// What the tree holds after a run of `records` records, pruned or not.
+/// What the tree holds after a run of `records` records, pruned or not:
+/// pruned as a host prunes, by the grammar's name and its verified lists.
 fn left(grammar: &str, doc: &str, records: usize, prune: bool) -> usize {
     let make = GRAMMARS
         .iter()
         .find(|g| g.name == grammar)
         .expect("the grammar is in the suite")
         .make;
-    let (result, _, value) = run(make, &generated(doc, records), prune);
+    let text = generated(doc, records);
+    let source = ParserEventSource::new(make(), &text).grammar(grammar);
+    let source = if prune { source.prune() } else { source };
+    let (result, _, value) = source.run_owned_with_value(Passes::default());
     assert_eq!(
         result.unwrap(),
         Flow::Continue,
@@ -492,6 +603,32 @@ leaves_the_pruned_tree_as_it_was! {
     ten_times_the_xml_records_leave_the_pruned_tree_as_it_was: "xml" "records.xml",
     ten_times_the_csv_records_leave_the_pruned_tree_as_it_was: "csv" "records.csv",
     ten_times_the_pgn_games_leave_the_pruned_tree_as_it_was: "pgn" "records.pgn",
+    ten_times_the_json_members_leave_the_pruned_tree_as_it_was: "json" "members.json",
+    ten_times_the_ini_sections_leave_the_pruned_tree_as_it_was: "ini" "sections.ini",
+}
+
+/// A grammar `capability::prunes_maps` lists has its maps emptied with its
+/// arrays, and its passes are the same; toml, which reads its maps back,
+/// keeps its tables' keys.
+#[test]
+fn pruning_a_grammar_whose_maps_are_emptied_empties_them_and_leaves_the_passes() {
+    let src = r#"{"a":[1,2,3],"b":[[4],[5,{"c":[6]}]],"d":{"e":"f"}}"#;
+    let (whole, kept, _) = run(tabnas_json::make, src, Pruning::No, Pruning::No);
+    let (result, left, value) = ParserEventSource::new(tabnas_json::make(), src)
+        .grammar("json")
+        .prune()
+        .run_owned_with_value(Passes::default());
+    assert_eq!(result.unwrap(), whole.unwrap());
+    assert_eq!(left.exact, kept.exact);
+    let value = value.expect("a parse that completed returns a value");
+    assert_eq!(elements(&value), 0, "{value:?}");
+    let (result, _, value) = ParserEventSource::new(tabnas_toml::make(), "[a]\nb = 1\n")
+        .grammar("toml")
+        .prune()
+        .run_owned_with_value(Passes::default());
+    assert_eq!(result.unwrap(), Flow::Continue);
+    let value = value.expect("a parse that completed returns a value");
+    assert_eq!(elements(&value), 2, "the table and its key: {value:?}");
 }
 
 /// What the tree of a JSON document of [`RECORDS`] records holds after a
@@ -523,7 +660,7 @@ fn left_held(hold: Option<f64>) -> usize {
 #[test]
 fn a_held_pruning_empties_no_array() {
     let text = generated("records.json", RECORDS);
-    let (result, _, value) = run(tabnas_json::make, &text, false);
+    let (result, _, value) = run(tabnas_json::make, &text, Pruning::No, Pruning::No);
     assert_eq!(result.unwrap(), Flow::Continue);
     let whole = elements(&value.expect("a parse that completed returns a value"));
     let (pruned, held, zero) = (left_held(None), left_held(Some(1.0)), left_held(Some(0.0)));

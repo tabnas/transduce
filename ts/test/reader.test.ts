@@ -309,12 +309,12 @@ describe('ParserEventSource from a reader', () => {
       configure(ParserEventSource.fromReader(parser('json', window), new Pieces(utf8(text), 5))),
     ]
     for (const window of [true, false]) {
-      // Pruning: the same passes, and the same tree left behind, its
-      // arrays emptied.
+      // Pruning: the same passes, and the same tree left behind, its arrays
+      // and, json's being listed in capability.PRUNES_MAPS, its maps emptied.
       const [overText, fromReader] = sources(window, (s) => s.grammar('json').prune()).map((s) => run(s))
       assert.equal(overText.outcome, 'continue')
       assert.deepStrictEqual(fromReader, overText)
-      assert.deepEqual((overText.value as any).response.payload.deep.records, [])
+      assert.deepEqual(JSON.parse(JSON.stringify(overText.value)), {})
 
       // The abort flag: raised by the sink part way, the run is ABORTED
       // after the same passes.

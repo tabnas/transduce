@@ -232,8 +232,9 @@ pub struct ParserSource<'s> { parser: Tabnas, text: &'s str,
     limits: Limits, abort: AbortFlag, metrics: Arc<Metrics> }   // parse, then walk; its
                                            // incremental mode went at step 13
 pub struct ParserEventSource<'s> { … }    // the rule passes a part reads; prune()
-                                           // empties each array behind the stream
-pub mod capability { pub fn prunable(grammar: &str) -> bool }  // the verified list
+                                           // empties the tree behind the stream
+pub mod capability { pub fn prunable(grammar: &str) -> bool;    // the verified lists
+                     pub fn prunes_maps(grammar: &str) -> bool }
 ```
 
 ### 2.2 The rule-event adapter (source/rule_events.rs)
