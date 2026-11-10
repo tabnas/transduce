@@ -9,12 +9,11 @@ Every runtime runs every row: TypeScript agrees with Rust on all of them,
 and Go skips the rows `specDivergences` in `go/spec_test.go` names, each
 a difference in a Go grammar module, measured against Rust. Every entry
 here is re-measured by running its input through each runtime, and an
-entry that closes is deleted together with the test that pins it.
+entry that closes is deleted together with the test that pins it. The
+others keep their numbers, which other repositories cite.
 
 Entry 4 is measured: a verified list that differs, because one runtime's
-suite cannot earn an entry the others' do. Entry 5 is measured too: a
-verified list that differs, because one runtime's grammar reads further
-back than the others'. Entry 6
+suite cannot earn an entry the others' do. Entry 6
 is measured: a token's value as two engines give it and the third does
 not. The rest is what the shared
 fixtures deliberately leave out, because it belongs to the Rust runtime
@@ -105,35 +104,6 @@ and not in Go; every port has retired that list.)
 Pinned in Go by `TestEveryGrammarPrunesAsTheListSays` (`go/prune_test.go`),
 and in TypeScript by the prune suite's `pgn` case
 (`ts/test/prune.test.ts`).
-
-## 5. Go does not bound yaml's rule history
-
-A TypeScript or Go `ParserEventSource` that prunes a grammar its runtime's
-verified list names (`BOUNDS_HISTORY`, `ts/src/capability.ts`;
-`BoundsHistoryGrammars`, `go/capability.go`) bounds the engine's rule
-history at three predecessors (`STREAM_RULE_HISTORY`, `StreamRuleHistory`),
-and the Rust engine bounds every parse at three by default. TypeScript's
-list names yaml and Go's does not, so a pruned Go yaml stream keeps every
-rule it made reachable until the document ends, and its memory grows with
-the document's length; TypeScript's and Rust's do not. The passes and the
-output are the same in every runtime.
-
-Why: yaml's Go `childNode` reads a child's value at the end of the child's
-rotation chain, walking the child's `Next` links while each `Next.Prev` is
-the rule before (a Go slice is a header, so the rotated rules' appends are
-not seen through the first child's node). A bounded history keeps a
-pusher's child as it ended, with no `Next`, so with the bound a value of
-several items with nothing between them (`"a" "b"`, a block scalar and
-the text after it, a stream of JSON objects) keeps its first item alone:
-12 of the suite's 686 yaml documents differ in value, their passes alike.
-yaml's TypeScript reads `rule.child.node`, an array every rotated rule
-appends to, and every document parses alike bounded and not. The entry
-closes when Go's yaml reads its value without walking `Next`, and the Go
-suite then lists it.
-
-Pinned in Go by `TestEveryGrammarBoundsTheHistoryAsTheListSays`
-(`go/history_test.go`), and in TypeScript by the history half of the prune
-suite (`ts/test/prune.test.ts`).
 
 ## 6. The engine's own space, line and comment tokens carry their text as their value in Rust
 
