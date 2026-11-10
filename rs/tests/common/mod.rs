@@ -624,23 +624,34 @@ pub fn row_parser(row: &Row) -> Tabnas {
     }
 }
 
-/// What a `ParserEventSource` delivered.
+/// What a `ParserEventSource` delivered; `tokens` asks for token items.
 #[derive(Default)]
-struct Passes(Vec<ParserEvent>);
+struct Passes {
+    seen: Vec<ParserEvent>,
+    tokens: bool,
+}
 
 impl ParserSink for Passes {
     fn event(&mut self, ev: &ParserEvent) -> Result<Flow, Fail> {
-        self.0.push(ev.clone());
+        self.seen.push(ev.clone());
         Ok(Flow::Continue)
+    }
+
+    fn wants_tokens(&self) -> bool {
+        self.tokens
     }
 }
 
 /// A pass as the `names` stage writes it, `"name:open"` or
-/// `"name:close"`, and the end as `"end"`.
+/// `"name:close"`, a token item as `[name, src, offset]`, and the end as
+/// `"end"`.
 fn pass_name(ev: &ParserEvent) -> Value {
     match ev {
         ParserEvent::Open(pass) => s(&format!("{}:open", pass.name)),
         ParserEvent::Close(pass) => s(&format!("{}:close", pass.name)),
+        ParserEvent::Token(t) => {
+            Value::Array(vec![s(&t.name), s(&t.src), Value::Number(t.offset as f64)])
+        }
         ParserEvent::End => s("end"),
     }
 }
@@ -651,8 +662,8 @@ fn pass_encoded(ev: &ParserEvent) -> Value {
 }
 
 /// A pass as the `tokens` stage writes it: `["rule:open", [[name, val,
-/// src, row, col]...]]`, its tokens as the fixture encoding writes them,
-/// and the end as `"end"`.
+/// src, row, col, offset]...]]`, its tokens as the fixture encoding writes
+/// them, and the end as `"end"`.
 fn pass_tokens(ev: &ParserEvent) -> Value {
     let mut json = ev.to_json();
     let Some(tokens) = json.get_mut(1).and_then(|rule| rule.get_mut("tokens")) else {
@@ -663,18 +674,23 @@ fn pass_tokens(ev: &ParserEvent) -> Value {
 
 /// `parser-events.tsv`: the passes `ParserEventSource` delivered, in the
 /// fixture encoding (`passes`), by name and tokens (`tokens`) or by name
-/// (`names`).
+/// (`names`); and, with token items asked for, by name, each token item as
+/// `[name, src, offset]` (`trivia`).
 pub fn parser_events(row: &Row, input: &str) -> Result<Value, Failed> {
+    let stage = row.named("stage");
     let (outcome, seen) = ParserEventSource::new(row_parser(row), input)
         .limits(limits(row))
-        .run_owned(Passes::default());
-    let encode: fn(&ParserEvent) -> Value = match row.named("stage") {
+        .run_owned(Passes {
+            seen: Vec::new(),
+            tokens: stage == "trivia",
+        });
+    let encode: fn(&ParserEvent) -> Value = match stage {
         "passes" => pass_encoded,
         "tokens" => pass_tokens,
-        "names" => pass_name,
+        "names" | "trivia" => pass_name,
         other => panic!("{}: no stage {other:?}", row.location()),
     };
-    let recorded = Value::Array(seen.0.iter().map(encode).collect());
+    let recorded = Value::Array(seen.seen.iter().map(encode).collect());
     match outcome {
         Ok(_) => Ok(recorded),
         Err(fail) => Err(Failed {

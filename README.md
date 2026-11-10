@@ -20,7 +20,10 @@ tabnas parse ──rule passes──▶ format's part ──▶ JsonEvents/1 ─
   ships a transducer part streams through it, over the rule passes
   `ParserEventSource` delivers, from a reader a window at a time where
   the grammar declares one, with the engine's arrays emptied behind the
-  stream on request; the rest are walked whole. JSON Lines and CSV
+  stream on request; the rest are walked whole. Every token a pass
+  carries has its byte offset, and a part that asks for them also gets
+  the tokens the parser did not take (white space, line breaks,
+  comments), in source order among the passes. JSON Lines and CSV
   stream so too, so memory stays flat whatever the file's size. Every
   port read those two with line sources, a record or a chunk of records
   at a time, and streamed the grammars its differential suite verified

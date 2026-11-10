@@ -30,6 +30,7 @@ const (
 	ParserOpen  = shared.ParserOpen
 	ParserClose = shared.ParserClose
 	ParserEnd   = shared.ParserEnd
+	ParserToken = shared.ParserToken
 )
 
 // ParserEventSource is ParserEvents/1 from a tabnas parse of one text, or
@@ -55,8 +56,10 @@ const (
 //     engine's O[:ON] or C[:CN]), less the B it gave back from their end,
 //     which are the next rule's to consume, and none when B is more than it
 //     recorded, since a close alternate can back up a token it did not
-//     record. A token is its name, its value, its source text and its
-//     1-based row and column; a token with no value (the end of the
+//     record. A token is its name, its value, its source text, its
+//     1-based row and column and its byte offset (where it starts, in
+//     UTF-8 bytes from the document's start: the engine's SI); a token
+//     with no value (the end of the
 //     source, or a fixed token such as `[`) has null, and a number
 //     carries its source text as its lexeme when that text is a JSON
 //     number spelling the value (RFC 8259);
@@ -71,6 +74,24 @@ const (
 // serialized grammar's pd_ keys), so it is never the document's. The
 // engine flags it (RuleDone.Probe), and the source drops it before any
 // sink sees it.
+//
+// A sink that asks for them (shared.TokenSink), or a source told to send
+// them (Tokens), also gets a ParserToken for each token the lexer gave and
+// the parser did not take: one of the grammar's ignored tokens (its IGNORE
+// token set: white space, a line break, a comment). The source then
+// subscribes to the engine's lexer (Sub), takes each ignored token as the
+// lexer cuts it, and holds it until the first pass that consumed a token
+// after it, which it sends it before; those still held when the parse
+// returns go before the End. So a token item is in source order among the
+// passes, and the source holds no more than the ignored tokens between two
+// passes. A token lexed while a probe is open is the document's all the
+// same: a probe's rewind replays the tokens the parser consumed from the
+// engine's history, and the lexer never cuts that text again, so a token
+// item dropped there would be lost. A token the lexer cuts again (a relex
+// re-cuts the text after a token it renegotiates) starts before the
+// furthest one taken, and is dropped as the one already held. A sink that
+// does not ask gets the passes alone, and the source subscribes to no
+// lexer event for it.
 //
 // The source holds its limits as it builds each pass, before the sink
 // sees it: a token's value or source text, or a pass's value, longer than
@@ -126,7 +147,9 @@ type ParserEventSource struct {
 	grammar    string
 	prune      bool
 	unverified bool
-	used       bool
+	// tokens sends token items whether or not the sink asks.
+	tokens bool
+	used   bool
 }
 
 // NewParserEventSource is a source with default limits, its own abort flag
@@ -205,6 +228,14 @@ func (p *ParserEventSource) gate() *Fail {
 }
 
 // Limits sets the run's limits.
+// Tokens sends a ParserToken for each token the parser did not take,
+// whether or not the sink asks for them (shared.TokenSink, which a run also
+// follows).
+func (p *ParserEventSource) Tokens() *ParserEventSource {
+	p.tokens = true
+	return p
+}
+
 func (p *ParserEventSource) Limits(limits Limits) *ParserEventSource {
 	p.limits = limits
 	return p
@@ -243,6 +274,52 @@ type relay struct {
 	// prune empties the list a close pass's rule builds, once the sink has
 	// seen it.
 	prune bool
+	// tokens is whether the run sends token items; held are the ignored
+	// tokens the lexer has cut and no pass has yet been sent after, in
+	// source order, from first on; reach is the byte offset past the
+	// furthest token taken, so a token that starts before it is one the
+	// lexer cut again.
+	tokens bool
+	held   []PassToken
+	first  int
+	reach  uint64
+}
+
+// release sends the token items held that start before the byte offset
+// before, in order.
+func (r *relay) release(before uint64) (Flow, *Fail) {
+	for r.first < len(r.held) && r.held[r.first].Offset < before {
+		token := r.held[r.first]
+		r.held[r.first] = PassToken{}
+		r.first++
+		flow, f := r.send(ParserEvent{Kind: ParserToken, Token: &token})
+		if f != nil || flow == Stop {
+			return flow, f
+		}
+	}
+	if r.first == len(r.held) {
+		r.held, r.first = r.held[:0], 0
+	}
+	return Continue, nil
+}
+
+// onLex is one token the lexer cut: held when it is an ignored token the
+// run has not taken yet.
+func (r *relay) onLex(tkn *tabnas.Token, rule *tabnas.Rule, ctx *tabnas.Context) {
+	if r.status != relayRunning || tkn == nil || ctx == nil || ctx.Cfg == nil || !ctx.Cfg.IgnoreSet[tkn.Tin] {
+		return
+	}
+	offset := uint64(max0(tkn.SI))
+	if offset < r.reach {
+		return
+	}
+	r.reach = offset + uint64(len(tkn.Src))
+	token, f := passToken(tkn, rule, ctx, r.maxBytes)
+	if f != nil {
+		r.failWith(f)
+		return
+	}
+	r.held = append(r.held, token)
 }
 
 func (r *relay) send(ev ParserEvent) (Flow, *Fail) {
@@ -273,6 +350,19 @@ func (r *relay) onDone(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleD
 	kind := ParserOpen
 	if !open {
 		kind = ParserClose
+	}
+	// The token items before the last token this pass consumed come first.
+	if r.tokens && len(pass.Tokens) > 0 {
+		flow, f := r.release(pass.Tokens[len(pass.Tokens)-1].Offset)
+		switch {
+		case f != nil:
+			r.failWith(f)
+			return
+		case flow == Stop:
+			r.status = relayStopped
+			r.stop.Abort()
+			return
+		}
 	}
 	flow, f := r.send(ParserEvent{Kind: kind, Pass: pass})
 	switch {
@@ -357,7 +447,13 @@ func (p *ParserEventSource) RunWithValue(sink ParserSink) (Flow, *Fail, any) {
 	if f := p.gate(); f != nil {
 		return Continue, f, nil
 	}
-	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag(), prune: p.prune}
+	tokens := p.tokens || shared.WantsTokens(sink)
+	r := &relay{sink: sink, maxBytes: p.limits.MaxScalarBytes, abort: p.abort, stop: NewAbortFlag(), prune: p.prune, tokens: tokens}
+	if tokens {
+		p.parser.Sub(func(tkn *tabnas.Token, rule *tabnas.Rule, ctx *tabnas.Context) {
+			r.onLex(tkn, rule, ctx)
+		}, nil)
+	}
 	p.parser.SubRuleDone(func(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleDone) {
 		r.onDone(rule, ctx, done)
 	})
@@ -379,8 +475,34 @@ func (p *ParserEventSource) RunWithValue(sink ParserSink) (Flow, *Fail, any) {
 	if err != nil {
 		return Continue, engineFailure(err, p.abort), nil
 	}
+	if flow, f := r.release(math.MaxUint64); f != nil || flow == Stop {
+		return flow, f, nil
+	}
 	flow, f := r.send(ParserEvent{Kind: ParserEnd})
 	return flow, f, value
+}
+
+// passToken is a token as a pass and a token item carry it, its sizes held
+// to max_scalar_bytes. Its offset is the engine's SI, which counts bytes.
+func passToken(tok *tabnas.Token, rule *tabnas.Rule, ctx *tabnas.Context, max int) (PassToken, *Fail) {
+	if f := scalarHeld(len(tok.Src), "a token's source text", max); f != nil {
+		return PassToken{}, f
+	}
+	val := scalarOf(tok.ResolveVal(rule, ctx), tok.Src, true)
+	if val.Kind == shared.DatumString {
+		if f := scalarHeld(len(val.Text), "a token's value", max); f != nil {
+			return PassToken{}, f
+		}
+	}
+	return PassToken{Name: tok.Name, Val: val, Src: tok.Src, Row: uint64(tok.RI), Col: uint64(tok.CI), Offset: uint64(max0(tok.SI))}, nil
+}
+
+// max0 is n, or 0 when n is negative.
+func max0(n int) int {
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // rulePass is the pass as alchemy's RulePass, its sizes held to
@@ -400,16 +522,11 @@ func rulePass(rule *tabnas.Rule, ctx *tabnas.Context, done tabnas.RuleDone, open
 	}
 	pass := &RulePass{Name: rule.Name, D: uint64(rule.D), I: uint64(rule.I), Forced: done.Forced, Tokens: []PassToken{}}
 	for _, tok := range recorded[:keep] {
-		if f := scalarHeld(len(tok.Src), "a token's source text", max); f != nil {
+		token, f := passToken(tok, rule, ctx, max)
+		if f != nil {
 			return nil, f
 		}
-		val := scalarOf(tok.ResolveVal(rule, ctx), tok.Src, true)
-		if val.Kind == shared.DatumString {
-			if f := scalarHeld(len(val.Text), "a token's value", max); f != nil {
-				return nil, f
-			}
-		}
-		pass.Tokens = append(pass.Tokens, PassToken{Name: tok.Name, Val: val, Src: tok.Src, Row: uint64(tok.RI), Col: uint64(tok.CI)})
+		pass.Tokens = append(pass.Tokens, token)
 	}
 	if done.Alt != nil {
 		g := append([]string(nil), done.Alt.G...)

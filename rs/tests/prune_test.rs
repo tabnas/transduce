@@ -217,7 +217,8 @@ impl ParserSink for Passes {
         let shaped = match ev {
             ParserEvent::Open(pass) => ParserEvent::Open(shaped(pass)),
             ParserEvent::Close(pass) => ParserEvent::Close(shaped(pass)),
-            ParserEvent::End => ParserEvent::End,
+            // The suite asks for none; a token item is no grammar's value.
+            ev @ (ParserEvent::Token(_) | ParserEvent::End) => ev.clone(),
         };
         self.shaped.push(shaped.to_json().to_string());
         Ok(Flow::Continue)

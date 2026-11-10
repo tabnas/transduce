@@ -7,10 +7,11 @@
 // JSONC's and JSON Lines' grammars, whose matchers are the engine's own,
 // are given `lex.window` and are read a window at a time; every other
 // grammar reads the reader whole first. The passes, the value and the
-// outcome must be the same, and a reader that fails, or bytes that are not
-// UTF-8, are `INPUT_INVALID` with the engine's `unreadable`. The pruning,
-// the abort flag, the limits and the metrics hold from a reader as they do
-// over a text.
+// outcome must be the same, with token items and without, and a reader
+// that fails, or bytes that are not UTF-8, are `INPUT_INVALID` with the
+// engine's `unreadable`. Every token's byte offset is where its text
+// stands in the document. The pruning, the abort flag, the limits and the
+// metrics hold from a reader as they do over a text.
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -67,19 +68,55 @@ class Failing {
 }
 
 // The passes a run delivered, in the fixture encoding. With `abort`, the
-// sink raises the flag once it has seen `abortAt` events.
+// sink raises the flag once it has seen `abortAt` events; with `tokens`, it
+// asks for token items.
 class Passes implements ParserSink {
   seen: unknown[] = []
 
   constructor(
     private readonly abort?: AbortFlag,
     private readonly abortAt = 0,
+    private readonly tokens = false,
   ) {}
 
   event(ev: ParserEvent): Flow {
     this.seen.push(parserEventToJSON(ev))
     if (undefined !== this.abort && this.seen.length === this.abortAt) this.abort.abort()
     return 'continue'
+  }
+
+  wantsTokens(): boolean {
+    return this.tokens
+  }
+}
+
+// Every token's byte offset is where its text stands in `text`, or, for a
+// token whose text is not there (one a grammar makes, such as the YAML
+// document marker it supplies at the end), the place its row and column
+// name: a pass's tokens, `[name, val, src, row, col, offset]`, and a token
+// item's. rs/tests/reader_test.rs's `offsets_hold`.
+function offsetsHold(file: string, text: string, passes: unknown[]): void {
+  const bytes = utf8(text)
+  const lines = text.split('\n')
+  const place = (row: number, col: number): number => {
+    let at = 0
+    for (let r = 1; r < row && r - 1 < lines.length; r++) at += utf8(lines[r - 1]).length + 1
+    const line = Array.from(lines[row - 1] ?? '')
+    return Math.min(bytes.length, at + utf8(line.slice(0, col - 1).join('')).length)
+  }
+  const check = (src: string, row: number, col: number, offset: number, what: unknown) => {
+    const want = utf8(src)
+    const there = offset + want.length <= bytes.length && want.every((b, i) => b === bytes[offset + i])
+    assert.ok(
+      there || offset === place(row, col),
+      `${file}: byte ${offset} is neither where ${JSON.stringify(src)} is nor where its row and column are: ${JSON.stringify(what)}`,
+    )
+  }
+  for (const pass of passes as any[]) {
+    if ('token' === pass[0]) check(pass[1].src, pass[1].row, pass[1].col, pass[1].offset, pass)
+    else if ('open' === pass[0] || 'close' === pass[0]) {
+      for (const t of pass[1].tokens) check(t[2], t[3], t[4], t[5], t)
+    }
   }
 }
 
@@ -148,16 +185,48 @@ describe('ParserEventSource from a reader', () => {
       if (undefined === named) continue
       const [name, window] = named
       const text = readFileSync(join(FIXTURES_DIR, file), 'utf8')
-      const whole = run(new ParserEventSource(parser(name, window), text))
-      for (const size of [1, 3, 64]) {
-        const reader = new Pieces(utf8(text), size)
-        const read = run(ParserEventSource.fromReader(parser(name, window), reader))
-        assert.deepStrictEqual(read, whole, `${file} in pieces of ${size}`)
-        compared++
+      for (const tokens of [false, true]) {
+        const whole = run(new ParserEventSource(parser(name, window), text), new Passes(undefined, 0, tokens))
+        offsetsHold(file, text, whole.passes)
+        if (!tokens) {
+          assert.ok(!whole.passes.some((p: any) => 'token' === p[0]), `${file}: token items no sink asked for`)
+        }
+        for (const size of [1, 3, 64]) {
+          const reader = new Pieces(utf8(text), size)
+          const read = run(ParserEventSource.fromReader(parser(name, window), reader), new Passes(undefined, 0, tokens))
+          assert.deepStrictEqual(read, whole, `${file} in pieces of ${size}, tokens ${tokens}`)
+          compared++
+        }
       }
     }
     console.log(`reader: ${compared} runs from a reader compared with the text read whole`)
-    assert.ok(compared >= 60, String(compared))
+    assert.ok(compared >= 120, String(compared))
+  })
+
+  it('a long document from a reader keeps its byte offsets past the text it drops', () => {
+    // Comments and strings of characters of one, two, three and four UTF-8
+    // bytes (two UTF-16 units for the last), well past the 64 KiB the
+    // offsets keep behind their slower cursor, read a window at a time in
+    // pieces of several sizes: each token's offset is where its text is,
+    // and the run is the run over the text.
+    const records: string[] = []
+    for (let i = 0; 4000 > i; i++) {
+      records.push(`  /* ${i} é 日 😀 */ {"k${i}": "a é 日 😀 ${i}"} // ü\n`)
+    }
+    const text = `[\n${records.join(',')}]\n`
+    assert.ok(text.length > 200000, String(text.length))
+    for (const tokens of [false, true]) {
+      const whole = run(new ParserEventSource(parser('jsonc', true), text), new Passes(undefined, 0, tokens))
+      assert.equal(whole.outcome, 'continue')
+      offsetsHold('long.jsonc', text, whole.passes)
+      for (const size of [7, 4096, 65536]) {
+        const read = run(
+          ParserEventSource.fromReader(parser('jsonc', true), new Pieces(utf8(text), size)),
+          new Passes(undefined, 0, tokens),
+        )
+        assert.deepStrictEqual(read, whole, `long.jsonc in pieces of ${size}, tokens ${tokens}`)
+      }
+    }
   })
 
   it('an unreadable source is invalid input', () => {

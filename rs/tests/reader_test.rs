@@ -4,8 +4,10 @@
 // few bytes at a time. JSON's, JSONC's and JSON Lines' grammars, whose
 // matchers are the engine's own, declare `lex.window` and are read a window
 // at a time; every other grammar reads the reader whole first. The passes,
-// the value and the outcome must be the same, and a reader that fails is
-// `INPUT_INVALID` with the engine's `unreadable`.
+// the value and the outcome must be the same, with token items and
+// without, and a reader that fails is `INPUT_INVALID` with the engine's
+// `unreadable`. Every token's byte offset is where its text stands in the
+// document.
 
 mod common;
 
@@ -51,14 +53,64 @@ impl Read for Failing {
     }
 }
 
-/// The passes a run delivered, in the fixture encoding.
+/// The passes a run delivered, in the fixture encoding; the flag asks for
+/// token items.
 #[derive(Default)]
-struct Passes(Vec<serde_json::Value>);
+struct Passes(Vec<serde_json::Value>, bool);
 
 impl ParserSink for Passes {
     fn event(&mut self, ev: &ParserEvent) -> Result<Flow, Fail> {
         self.0.push(ev.to_json());
         Ok(Flow::Continue)
+    }
+
+    fn wants_tokens(&self) -> bool {
+        self.1
+    }
+}
+
+/// Every token's byte offset is where its text stands in `text`, or, for a
+/// token whose text is not there (one a grammar makes, such as the YAML
+/// document marker it supplies at the end), the place its row and column
+/// name: a pass's tokens, `[name, val, src, row, col, offset]`, and a
+/// token item's.
+fn offsets_hold(file: &str, text: &str, passes: &[serde_json::Value]) {
+    let place = |row: u64, col: u64| -> usize {
+        let mut at = 0;
+        for _ in 1..row {
+            at += text[at..].find('\n').map_or(text.len() - at, |n| n + 1);
+        }
+        text[at..]
+            .char_indices()
+            .nth(col as usize - 1)
+            .map_or(text.len(), |(n, _)| at + n)
+    };
+    let check = |src: &serde_json::Value,
+                 row: &serde_json::Value,
+                 col: &serde_json::Value,
+                 offset: &serde_json::Value,
+                 what: &serde_json::Value| {
+        let src = src.as_str().unwrap();
+        let offset = offset.as_u64().unwrap() as usize;
+        let there = text.get(offset..).is_some_and(|rest| rest.starts_with(src));
+        assert!(
+            there || offset == place(row.as_u64().unwrap(), col.as_u64().unwrap()),
+            "{file}: byte {offset} is neither where {src:?} is nor where its row and column are: {what}"
+        );
+    };
+    for pass in passes {
+        match pass[0].as_str() {
+            Some("token") => {
+                let t = &pass[1];
+                check(&t["src"], &t["row"], &t["col"], &t["offset"], pass)
+            }
+            Some("open" | "close") => {
+                for t in pass[1]["tokens"].as_array().unwrap() {
+                    check(&t[2], &t[3], &t[4], &t[5], t);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -91,8 +143,11 @@ fn parser(name: &str, window: bool) -> Tabnas {
 }
 
 /// What a run showed: its outcome, its passes and the value it returned.
-fn run(source: ParserEventSource<'_>) -> (String, Vec<serde_json::Value>, Option<String>) {
-    let (outcome, passes, value) = source.run_owned_with_value(Passes::default());
+fn run(
+    source: ParserEventSource<'_>,
+    tokens: bool,
+) -> (String, Vec<serde_json::Value>, Option<String>) {
+    let (outcome, passes, value) = source.run_owned_with_value(Passes(Vec::new(), tokens));
     let outcome = match outcome {
         Ok(flow) => format!("{flow:?}"),
         Err(fail) => format!(
@@ -126,19 +181,31 @@ fn every_fixture_streams_the_same_from_a_reader() {
             continue;
         };
         let text = fs::read_to_string(fixtures_dir().join(file)).expect("a UTF-8 fixture");
-        let whole = run(ParserEventSource::new(parser(name, window), &text));
-        for size in [1, 3, 64] {
-            let reader = Pieces {
-                bytes: text.clone().into_bytes(),
-                at: 0,
-                size,
-            };
-            let read = run(ParserEventSource::from_reader(parser(name, window), reader));
-            assert_eq!(read, whole, "{file} in pieces of {size}");
-            compared += 1;
+        for tokens in [false, true] {
+            let whole = run(ParserEventSource::new(parser(name, window), &text), tokens);
+            offsets_hold(file, &text, &whole.1);
+            if !tokens {
+                assert!(
+                    !whole.1.iter().any(|p| p[0] == "token"),
+                    "{file}: token items no sink asked for"
+                );
+            }
+            for size in [1, 3, 64] {
+                let reader = Pieces {
+                    bytes: text.clone().into_bytes(),
+                    at: 0,
+                    size,
+                };
+                let read = run(
+                    ParserEventSource::from_reader(parser(name, window), reader),
+                    tokens,
+                );
+                assert_eq!(read, whole, "{file} in pieces of {size}, tokens {tokens}");
+                compared += 1;
+            }
         }
     }
-    assert!(compared >= 60, "{compared}");
+    assert!(compared >= 120, "{compared}");
 }
 
 #[test]

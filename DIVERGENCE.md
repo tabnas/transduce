@@ -13,7 +13,9 @@ entry that closes is deleted together with the test that pins it.
 
 Entry 4 is measured: a verified list that differs, because one runtime's
 suite cannot earn an entry the others' do. Entry 5 is measured too: what a
-Go stream holds, which an engine defect keeps from being bounded. The rest is what the shared
+Go stream holds, which an engine defect keeps from being bounded. Entry 6
+is measured: a token's value as two engines give it and the third does
+not. The rest is what the shared
 fixtures deliberately leave out, because it belongs to the Rust runtime
 or is not yet decided, so that a port does not read the absence of a row
 as coverage, or as licence.
@@ -127,3 +129,32 @@ Go history keeps those writes.
 
 Pinned in TypeScript by `ts/test/history.test.ts`. Go has no test of a
 bound it does not set.
+
+## 6. The engine's own space, line and comment tokens carry their text as their value in Rust
+
+A token item (`ParserEvent::Token`) carries the token's value as the
+engine gives it, as a pass's tokens do. The engine's own ignored tokens,
+`#SP`, `#LN` and `#CM`, have no value in TypeScript and Go, which the
+encoding writes as `null`, and their text in Rust:
+
+| token | TypeScript | Go | Rust |
+|---|---|---|---|
+| `#SP` for `  ` | `null` | `null` | `"  "` |
+| `#LN` for a line feed | `null` | `null` | `"\n"` |
+| `#CM` for `/* x */` | `null` | `null` | `"/* x */"` |
+
+The name, the text (`src`), the position and the byte offset are the
+same in every runtime, and a part reads a token item's text from its
+`src`. The split was there before token items: a grammar that consumes
+`#LN` (JSON Lines does) carries it in a pass's tokens with the same two
+values. It is the engine's to repair, in TypeScript's direction, as it
+repaired a fixed token's value (tabnas/parser's `DIVERGENCE.md`, "Rule
+instance numbers start at 0 in Go and Rust, and a fixed token's value is
+its text in Rust"); this entry closes then. Until it does, no row of
+`parser-events.tsv` writes a token item's value: the `trivia` stage
+writes its name, its text and its offset.
+
+Pinned in Rust by `a_space_token_item_carries_its_text_as_its_value`
+(`rs/src/source/parser_events.rs`), in TypeScript by `a space token item
+has no value` (`ts/test/parser-events.test.ts`) and in Go by
+`TestASpaceTokenItemHasNoValue` (`go/parser_events_test.go`).

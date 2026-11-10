@@ -23,8 +23,10 @@
 //   engine's `o[:oN]` or `c[:cN]`), less the `b` it gave back from their
 //   end, which are the next rule's to consume, and none when `b` is more
 //   than it recorded, since a close alternate can back up a token it did
-//   not record. A token is its name, its value, its source text and its
-//   1-based row and column; a token with no value (the end of the source,
+//   not record. A token is its name, its value, its source text, its
+//   1-based row and column and its byte offset (where it starts, in UTF-8
+//   bytes from the document's start; `ByteOffsets` below converts the
+//   engine's UTF-16 index); a token with no value (the end of the source,
 //   or a fixed token such as `[`) has `null`, and a number carries
 //   its source text as its lexeme when that text is a JSON number spelling
 //   the value (RFC 8259), so a renderer can write it as it stands;
@@ -37,6 +39,24 @@
 // serialized grammar's `pd_` keys), so it is never the document's. The
 // engine flags it (`RuleDone.probe`), and the source drops it before any
 // sink sees it.
+//
+// A sink that asks for them (`ParserSink.wantsTokens`), or a source told to
+// send them (`tokens()`), also gets a `token` item for each token the lexer
+// gave and the parser did not take: one of the grammar's ignored tokens
+// (its `IGNORE` token set: white space, a line break, a comment). The
+// source then subscribes to the engine's lexer (`sub({ lex })`), takes each
+// ignored token as the lexer cuts it, and holds it until the first pass
+// that consumed a token after it, which it sends it before; those still
+// held when the parse returns go before the `end`. So a token item is in
+// source order among the passes, and the source holds no more than the
+// ignored tokens between two passes. A token lexed while a probe is open is
+// the document's all the same: a probe's rewind replays the tokens the
+// parser consumed from the engine's history, and the lexer never cuts that
+// text again, so a token item dropped there would be lost. A token the
+// lexer cuts again (a relex re-cuts the text after a token it renegotiates)
+// starts before the furthest one taken, and is dropped as the one already
+// held. A sink that does not ask gets the passes alone, and the source
+// subscribes to no lexer event for it.
 //
 // The source holds its limits as it builds each pass, before the sink sees
 // it: a token's value or source text, or a pass's value, longer than
@@ -89,6 +109,7 @@ import {
   fromTabnas,
   isJsonNumber,
   utf8Bytes,
+  wantsTokens,
 } from '@tabnas/alchemy/shared'
 import type { Flow, ParserEvent, ParserSink, PassAlt, PassToken, RulePass } from '@tabnas/alchemy/shared'
 import type { Context, Reader, Rule, RuleDone, Tabnas } from '@tabnas/parser'
@@ -110,6 +131,7 @@ export class ParserEventSource {
   private grammarName: string | null = null
   private pruning = false
   private isUnverified = false
+  private sendTokens = false
   private used = false
 
   // A source with default limits, its own abort flag and fresh metrics,
@@ -157,6 +179,14 @@ export class ParserEventSource {
   // parse.
   prune(): this {
     this.pruning = true
+    return this
+  }
+
+  // Send a `token` item for each token the parser did not take, whether or
+  // not the sink asks for them (`ParserSink.wantsTokens`, which a run also
+  // follows).
+  tokens(): this {
+    this.sendTokens = true
     return this
   }
 
@@ -226,7 +256,12 @@ export class ParserEventSource {
     if (null !== refused) throw refused
     const abort = this.abortFlag
     const stop = new AbortFlag()
-    const relay = new Relay(sink, this.sourceLimits.max_scalar_bytes, abort, stop, this.pruning)
+    const reader = this.reader
+    // The byte offsets of the engine's UTF-16 positions: over the text,
+    // or over what the reader gives as the engine reads it.
+    const offsets = null === reader ? new ByteOffsets(this.text, false) : new ByteOffsets('', true)
+    const tokens = this.sendTokens || wantsTokens(sink)
+    const relay = new Relay(sink, this.sourceLimits.max_scalar_bytes, abort, stop, this.pruning, offsets, tokens)
     // A stream keeps no more of the rules behind it than a grammar reads.
     boundHistory(this.parser)
     prepare(
@@ -234,12 +269,21 @@ export class ParserEventSource {
       () => !abort.isAborted() && !stop.isAborted(),
       (rule, done, ctx) => relay.onDone(rule, done, ctx),
     )
-    const reader = this.reader
+    if (tokens) this.parser.sub({ lex: (tkn: any, _rule: Rule, ctx: Context) => relay.onLex(tkn, ctx) })
     let parsed: { ok: true; value: unknown } | { ok: false; error: unknown }
     try {
       parsed = {
         ok: true,
-        value: null === reader ? this.parser.parse(this.text) : this.parser.parseReader(reader),
+        value:
+          null === reader
+            ? this.parser.parse(this.text)
+            : this.parser.parseReader({
+                read(buf: Uint8Array): number {
+                  const n = reader.read(buf)
+                  if (0 < n && n <= buf.length) offsets.feed(buf.subarray(0, n))
+                  return n
+                },
+              }),
       }
     } catch (error) {
       parsed = { ok: false, error }
@@ -249,6 +293,7 @@ export class ParserEventSource {
       if ('failed' === status.type) throw status.error
       if ('stopped' === status.type) return { flow: 'stop', value: undefined }
       if (!parsed.ok) throw engineFailure(parsed.error, abort)
+      if ('stop' === relay.release(Infinity)) return { flow: 'stop', value: undefined }
       return { flow: relay.send({ type: 'end' }), value: parsed.value }
     } finally {
       this.sourceMetrics.events += relay.events
@@ -262,6 +307,13 @@ type Status = { type: 'running' } | { type: 'stopped' } | { type: 'failed'; erro
 class Relay {
   status: Status = { type: 'running' }
   events = 0
+  // The ignored tokens the lexer has cut and no pass has yet been sent
+  // after, in source order, when the run sends token items.
+  private held: PassToken[] = []
+  private first = 0
+  // The byte offset past the furthest token taken: a token that starts
+  // before it is one the lexer cut again.
+  private reach = 0
 
   constructor(
     readonly sink: ParserSink,
@@ -271,11 +323,46 @@ class Relay {
     readonly stop: AbortFlag,
     // Empty the array a close pass's rule builds, once the sink has seen it.
     readonly prune: boolean,
+    // The byte offsets of the tokens' UTF-16 positions.
+    readonly offsets: ByteOffsets,
+    // Whether the run sends token items.
+    readonly tokens: boolean,
   ) {}
 
   send(ev: ParserEvent): Flow {
     this.events++
     return this.sink.event(ev)
+  }
+
+  // Send the token items held that start before `before`, a byte offset, in
+  // order.
+  release(before: number): Flow {
+    while (this.first < this.held.length && this.held[this.first].offset < before) {
+      const token = this.held[this.first++]
+      if ('stop' === this.send({ type: 'token', token })) return 'stop'
+    }
+    if (this.first === this.held.length) {
+      this.held = []
+      this.first = 0
+    }
+    return 'continue'
+  }
+
+  // One token the lexer cut: held when it is an ignored token the run has
+  // not taken yet.
+  onLex(tkn: any, ctx: Context): void {
+    if ('running' !== this.status.type) return
+    const ignore = (ctx as any).cfg?.tokenSetTins?.IGNORE
+    if (null == ignore || !ignore[tkn.tin]) return
+    try {
+      const at = this.offsets.ofItem(Math.max(0, tkn.sI))
+      if (at < this.reach) return
+      const token = passToken(tkn, at, this.maxScalarBytes)
+      this.reach = at + utf8Bytes(token.src)
+      this.held.push(token)
+    } catch (error) {
+      this.fail(error)
+    }
   }
 
   private fail(error: unknown): void {
@@ -293,13 +380,21 @@ class Relay {
     const open = 'o' === done.state
     let ev: ParserEvent
     try {
-      const pass = rulePass(rule, done, open, this.maxScalarBytes)
+      const pass = rulePass(rule, done, open, this.maxScalarBytes, this.offsets)
       ev = open ? { type: 'open', pass } : { type: 'close', pass }
     } catch (error) {
       this.fail(error)
       return
     }
     try {
+      // The token items before the last token this pass consumed come
+      // first.
+      const tokens = ev.pass.tokens
+      if (this.tokens && 0 < tokens.length && 'stop' === this.release(tokens[tokens.length - 1].offset)) {
+        this.status = { type: 'stopped' }
+        this.stop.abort()
+        return
+      }
       if ('stop' === this.send(ev)) {
         this.status = { type: 'stopped' }
         this.stop.abort()
@@ -356,19 +451,23 @@ function emptyArray(rule: Rule): void {
   if (Array.isArray(node) && 0 < node.length) node.length = 0
 }
 
+// A token as a pass and a token item carry it, at byte offset `offset`, its
+// sizes held to `max_scalar_bytes`.
+function passToken(t: any, offset: number, max: number): PassToken {
+  const src: string = 'string' === typeof t.src ? t.src : String(t.src ?? '')
+  held(utf8Bytes(src), "a token's source text", max)
+  const val = scalarOf(t.val, src)
+  if ('string' === val.type) held(utf8Bytes(val.value), "a token's value", max)
+  return { name: t.name, val, src, row: t.rI, col: t.cI, offset }
+}
+
 // The pass as alchemy's `RulePass`, its sizes held to `max_scalar_bytes`.
-function rulePass(rule: Rule, done: RuleDone, open: boolean, max: number): RulePass {
+function rulePass(rule: Rule, done: RuleDone, open: boolean, max: number, offsets: ByteOffsets): RulePass {
   const r: any = rule
   const recorded: any[] = open ? r.o.slice(0, r.oN) : r.c.slice(0, r.cN)
   const b = null == done.alt ? 0 : done.alt.b
   const kept = recorded.slice(0, Math.max(0, recorded.length - b))
-  const tokens: PassToken[] = kept.map((t: any) => {
-    const src: string = 'string' === typeof t.src ? t.src : String(t.src ?? '')
-    held(utf8Bytes(src), "a token's source text", max)
-    const val = scalarOf(t.val, src)
-    if ('string' === val.type) held(utf8Bytes(val.value), "a token's value", max)
-    return { name: t.name, val, src, row: t.rI, col: t.cI }
-  })
+  const tokens: PassToken[] = kept.map((t: any) => passToken(t, offsets.ofPass(Math.max(0, t.sI)), max))
   let value: Datum | undefined
   if (!open && undefined !== r.node && undefined !== engineScalar(r.node)) {
     const first = r.o[0]
@@ -416,3 +515,107 @@ function held(bytes: number, what: string, max: number): void {
     throw Fail.limit('max_scalar_bytes', max, `${what} of ${bytes} bytes is larger than ${max}`)
   }
 }
+
+// The byte offsets of the engine's token positions, which count UTF-16
+// units: where a token starts, in UTF-8 bytes from the document's start,
+// as Rust's engine gives it (`site.si`) and Go's counts it. The text is
+// scanned once, in order, by two cursors: one for the passes' tokens,
+// which arrive in source order, and one for the token items, which the
+// lexer cuts in source order ahead of the passes. A position before a
+// cursor scans again from the text's start (or, over a reader, from the
+// oldest text kept), which only a grammar's own rewind outside a probe
+// would ask. Over a reader the source decodes the bytes as the engine
+// reads them, and keeps the text from the slower cursor on, less a block
+// it lets gather before it drops it, never the document.
+export class ByteOffsets {
+  // The text from `base` on.
+  private text: string
+  // The UTF-16 position of `text[0]`, and its byte offset.
+  private base = 0
+  private baseBytes = 0
+  private readonly passes = { at: 0, bytes: 0 }
+  private readonly items = { at: 0, bytes: 0, used: false }
+  private readonly decoder: TextDecoder | null
+
+  constructor(text: string, reading: boolean) {
+    this.text = text
+    this.decoder = reading ? new TextDecoder('utf-8', { ignoreBOM: true }) : null
+  }
+
+  // Bytes the engine read, in order.
+  feed(bytes: Uint8Array): void {
+    if (null !== this.decoder) this.text += this.decoder.decode(bytes, { stream: true })
+  }
+
+  // The byte offset of a pass's token at UTF-16 position `at`.
+  ofPass(at: number): number {
+    const bytes = this.scan(this.passes, at)
+    this.drop()
+    return bytes
+  }
+
+  // The byte offset of a token item at UTF-16 position `at`.
+  ofItem(at: number): number {
+    this.items.used = true
+    return this.scan(this.items, at)
+  }
+
+  private scan(cursor: { at: number; bytes: number }, at: number): number {
+    if (at < cursor.at) {
+      if (at < this.base) {
+        throw new Fail('PROTOCOL_ORDER_ERROR', `a token at ${at} is before the text the source keeps, from ${this.base}`)
+      }
+      cursor.at = this.base
+      cursor.bytes = this.baseBytes
+    }
+    const text = this.text
+    let bytes = cursor.bytes
+    let i = cursor.at - this.base
+    const end = Math.min(at - this.base, text.length)
+    while (i < end) {
+      const c = text.charCodeAt(i)
+      if (c < 0x80) {
+        bytes += 1
+        i += 1
+      } else if (c < 0x800) {
+        bytes += 2
+        i += 1
+      } else if (0xd800 <= c && c < 0xdc00 && i + 1 < text.length) {
+        const d = text.charCodeAt(i + 1)
+        if (0xdc00 <= d && d < 0xe000) {
+          bytes += 4
+          i += 2
+        } else {
+          bytes += 3
+          i += 1
+        }
+      } else {
+        bytes += 3
+        i += 1
+      }
+    }
+    cursor.at = this.base + i
+    cursor.bytes = bytes
+    return bytes
+  }
+
+  // Over a reader, drop the text both cursors are past, once a block of it
+  // has gathered.
+  private drop(): void {
+    if (null === this.decoder) return
+    let keep = this.passes.at
+    let keepBytes = this.passes.bytes
+    if (this.items.used && this.items.at < keep) {
+      keep = this.items.at
+      keepBytes = this.items.bytes
+    }
+    if (keep - this.base < DROP_BLOCK) return
+    this.text = this.text.substring(keep - this.base)
+    this.base = keep
+    this.baseBytes = keepBytes
+  }
+}
+
+// How much text the offsets let gather behind their slower cursor before
+// they drop it: the engine's own window block.
+const DROP_BLOCK = 64 * 1024
