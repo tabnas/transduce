@@ -142,8 +142,11 @@ Pruning empties two shapes for every listed grammar, and a third for some
   (directly, or as a member's or an element's value), the elements before
   it are set to nothing: the array a toml document's root holds its array
   of tables in, which the first case never reaches. Each element keeps its
-  place, so a grammar that finds a node by position still finds it. Every
-  grammar passes the suite with it.
+  place, so a grammar that finds a node by position still finds it. The
+  node is looked for near the ends of the parent's containers, where a
+  grammar appends it, and each element is set once, so a close costs the
+  same however long the document grows. Every grammar passes the suite
+  with it.
 - **A map, for a grammar `capability::prunes_maps` lists** (`PRUNES_MAPS`,
   TypeScript's `PRUNES_MAPS`, Go's `PrunesMaps`), a second list the same
   suite holds both ways by running every document with the maps emptied

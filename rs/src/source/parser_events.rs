@@ -82,7 +82,10 @@
 //!   passed: an array no rule's node is, such as the one a grammar appends
 //!   each table or block to, which the first case never reaches. Each
 //!   element is set to `Undefined`, so the array keeps its length and the
-//!   node keeps its place, for a grammar that finds it by position;
+//!   node keeps its place, for a grammar that finds it by position. The
+//!   node is looked for near the ends of the parent's containers, where a
+//!   grammar appends it, and each element is set once, so a close costs
+//!   the same however long the document grows;
 //! - whose rule's node is a map, for a grammar
 //!   [`super::capability::prunes_maps`] lists, the source empties that map
 //!   too, so a map's members (an INI document's sections, a JSON object's
@@ -608,14 +611,21 @@ fn container(value: &Value) -> Option<*const ()> {
     }
 }
 
+/// How far from its end a container is looked through for the node that
+/// just closed, and for the arrays that might hold it: a finished node is
+/// the last a grammar appended, so a close costs the same however long the
+/// document's arrays and maps grow.
+const NEAR_THE_END: usize = 8;
+
 /// When `rule`'s node is a container that an array within its parent's
-/// node holds, set that array's elements before it to `Undefined`: each
-/// was closed before it, by passes the sink has seen. The array is looked
-/// for in the parent's node, its members' values and its elements, the
-/// places a grammar appends a finished node to (the array of tables a
-/// toml document's root holds, a document's blocks). An element keeps its
-/// place, for a grammar that finds a node by position. A container also
-/// held elsewhere is left as it is, as [`empty_node`] leaves it.
+/// node holds, set that array's elements before it to `Undefined`: each was
+/// closed before it, by passes the sink has seen. The array is looked for
+/// in the parent's node and, near their end, in its members' values and its
+/// elements, the places a grammar appends a finished node to (the array of
+/// tables a toml document's root holds); the node near the array's end. An
+/// element keeps its place, for a grammar that finds a node by position. A
+/// container also held elsewhere is left as it is, as [`empty_node`] leaves
+/// it.
 fn empty_before(rule: &Rule) {
     let Some(node) = rule
         .node
@@ -631,37 +641,41 @@ fn empty_before(rule: &Rule) {
     if Rc::ptr_eq(parent, &rule.node) {
         return;
     }
-    if let Ok(mut parent) = parent.try_borrow_mut() {
-        if !empty_before_in(&mut parent, node) {
-            let held = match &mut *parent {
-                Value::Array(items) => Arc::get_mut(items).map(|items| items.as_mut_slice()),
-                Value::ListRef(list) => Arc::get_mut(list).map(|list| list.value.as_mut_slice()),
-                _ => None,
-            };
-            if let Some(items) = held {
-                for item in items {
-                    if empty_before_in(item, node) {
-                        return;
-                    }
-                }
+    let Ok(mut parent) = parent.try_borrow_mut() else {
+        return;
+    };
+    if empty_before_in(&mut parent, node) {
+        return;
+    }
+    let held = match &mut *parent {
+        Value::Array(items) => Arc::get_mut(items).map(|items| items.as_mut_slice()),
+        Value::ListRef(list) => Arc::get_mut(list).map(|list| list.value.as_mut_slice()),
+        _ => None,
+    };
+    if let Some(items) = held {
+        let from = items.len().saturating_sub(NEAR_THE_END);
+        for item in items[from..].iter_mut().rev() {
+            if empty_before_in(item, node) {
+                return;
             }
-            let members = match &mut *parent {
-                Value::Object(members) => Arc::get_mut(members).map(|m| m.values_mut()),
-                _ => None,
-            };
-            if let Some(values) = members {
-                for value in values {
-                    if empty_before_in(value, node) {
-                        return;
-                    }
-                }
+        }
+    }
+    let members = match &mut *parent {
+        Value::Object(members) => Arc::get_mut(members),
+        _ => None,
+    };
+    if let Some(members) = members {
+        for value in members.values_mut().rev().take(NEAR_THE_END) {
+            if empty_before_in(value, node) {
+                return;
             }
         }
     }
 }
 
-/// When `array` is an array holding `node`, set its elements before the
-/// last place it holds `node` to `Undefined`, and answer that it was found.
+/// When `array` is an array holding `node` near its end, set its elements
+/// before it to `Undefined`, back to the first one an earlier close set, so
+/// that each is set once, and answer that it was found.
 fn empty_before_in(array: &mut Value, node: *const ()) -> bool {
     let items = match array {
         Value::Array(items) => Arc::get_mut(items).map(|items| items.as_mut_slice()),
@@ -671,15 +685,21 @@ fn empty_before_in(array: &mut Value, node: *const ()) -> bool {
     let Some(items) = items else {
         return false;
     };
-    match items.iter().rposition(|item| container(item) == Some(node)) {
-        Some(at) => {
-            for item in &mut items[..at] {
-                *item = Value::Undefined;
-            }
-            true
+    let from = items.len().saturating_sub(NEAR_THE_END);
+    let Some(at) = items[from..]
+        .iter()
+        .rposition(|item| container(item) == Some(node))
+        .map(|at| from + at)
+    else {
+        return false;
+    };
+    for item in items[..at].iter_mut().rev() {
+        if matches!(item, Value::Undefined) {
+            break;
         }
-        None => false,
+        *item = Value::Undefined;
     }
+    true
 }
 
 /// A token as a pass and a token item carry it, its sizes held to

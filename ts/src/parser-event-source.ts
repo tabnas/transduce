@@ -94,7 +94,9 @@
 //   sets the elements before it to `undefined`: an array no rule's node is,
 //   such as the one a toml document's root holds its array of tables in,
 //   which the first case never reaches. The array keeps its length, and
-//   the node its place;
+//   the node its place. The node is looked for near the ends of the
+//   parent's containers, where a grammar appends it, and each element is
+//   set once, so a close costs the same however long the document grows;
 // - whose rule's node is a map, for a grammar `capability.prunesMaps`
 //   lists, the source deletes that map's members too, so an INI document's
 //   sections and a JSON object's members go as an array's elements do.
@@ -513,13 +515,19 @@ function isMap(value: unknown): value is Record<string, unknown> {
   return null === proto || Object.prototype === proto
 }
 
+// How far from its end a container is looked through for the node that
+// just closed, and for the arrays that might hold it: a finished node is the
+// last a grammar appended, so a close costs the same however long the
+// document's arrays and maps grow.
+const NEAR_THE_END = 8
+
 // When `rule`'s node is a container that an array within its parent's node
 // holds, set that array's elements before it to `undefined`: each was
 // closed before it, by passes the sink has seen. The array is looked for in
-// the parent's node, its members' values and its elements, the places a
-// grammar appends a finished node to (the array of tables a toml document's
-// root holds). An element keeps its place, for a grammar that finds a node
-// by position.
+// the parent's node and, near their end, in its members' values and its
+// elements, the places a grammar appends a finished node to (the array of
+// tables a toml document's root holds); the node near the array's end. An
+// element keeps its place, for a grammar that finds a node by position.
 function emptyBefore(rule: Rule): void {
   const node: unknown = (rule as any).node
   if (null === node || 'object' !== typeof node) return
@@ -527,19 +535,30 @@ function emptyBefore(rule: Rule): void {
   if (null === parent || 'object' !== typeof parent || parent === node) return
   if (emptyBeforeIn(parent, node)) return
   if (Array.isArray(parent)) {
-    for (const item of parent) if (emptyBeforeIn(item, node)) return
+    for (let i = parent.length - 1; i >= Math.max(0, parent.length - NEAR_THE_END); i--) {
+      if (emptyBeforeIn(parent[i], node)) return
+    }
   } else if (isMap(parent)) {
-    for (const key of Object.keys(parent)) if (emptyBeforeIn(parent[key], node)) return
+    // The engine's record of the keys' order, kept for the source
+    // (`map: { ordered: true }`), reads the last keys without listing all.
+    const order: unknown = (parent as any)[KEY_ORDER]
+    const keys: string[] = Array.isArray(order) ? order : Object.keys(parent)
+    for (let i = keys.length - 1; i >= Math.max(0, keys.length - NEAR_THE_END); i--) {
+      if (emptyBeforeIn(parent[keys[i]], node)) return
+    }
   }
 }
 
-// When `array` is an array holding `node`, set its elements before the last
-// place it holds `node` to `undefined`, and answer that it was found.
+// When `array` is an array holding `node` near its end, set its elements
+// before it to `undefined`, back to the first one an earlier close set, so
+// that each is set once, and answer that it was found.
 function emptyBeforeIn(array: unknown, node: unknown): boolean {
   if (!Array.isArray(array) || array === node) return false
-  const at = array.lastIndexOf(node)
-  if (at < 0) return false
-  for (let i = 0; i < at; i++) array[i] = undefined
+  let at = array.length - 1
+  const from = Math.max(0, array.length - NEAR_THE_END)
+  while (at >= from && array[at] !== node) at--
+  if (at < from) return false
+  for (let i = at - 1; i >= 0 && undefined !== array[i]; i--) array[i] = undefined
   return true
 }
 

@@ -131,7 +131,9 @@ const (
 //     sets the elements before it to nil: a list no rule's node is, such as
 //     the one a toml document's root holds its array of tables in, which
 //     the first case never reaches. The list keeps its length, and the node
-//     its place;
+//     its place. The node is looked for near the ends of the parent's
+//     containers, where a grammar appends it, and each element is set once,
+//     so a close costs the same however long the document grows;
 //   - whose rule's node is a map, for a grammar PrunesMaps lists, the source
 //     deletes that map's members too, so an INI document's sections and a
 //     JSON object's members go as a list's elements do.
@@ -508,14 +510,21 @@ func listOf(v any) []any {
 	return nil
 }
 
+// nearTheEnd is how far from its end a container is looked through for the
+// node that just closed, and for the lists that might hold it: a finished
+// node is the last a grammar appended, so a close costs the same however
+// long the document's lists and maps grow.
+const nearTheEnd = 8
+
 // emptyBefore sets to nil, when rule's node is a container that a list
 // within its parent's node holds, that list's elements before it: each was
 // closed before it, by passes the sink has seen. The list is looked for in
-// the parent's node, its members' values and its elements, the places a
-// grammar appends a finished node to (the array of tables a toml document's
-// root holds). An element keeps its place, for a grammar that finds a node
-// by position, and the list its length, so that every holder of it still
-// sees the same list.
+// the parent's node and, near their end, in its ordered members' values and
+// its elements, the places a grammar appends a finished node to (the array
+// of tables a toml document's root holds); the node near the list's end.
+// An element keeps its place, for a grammar that finds a node by position,
+// and the list its length, so that every holder of it still sees the same
+// list.
 func emptyBefore(rule *tabnas.Rule) {
 	node := identity(rule.NodeCell().Node)
 	parent := rule.Parent
@@ -526,42 +535,30 @@ func emptyBefore(rule *tabnas.Rule) {
 	if identity(held) == node || emptyBeforeIn(listOf(held), node) {
 		return
 	}
-	switch x := held.(type) {
-	case *tabnas.OrderedMap:
-		if x == nil {
-			return
-		}
-		for _, key := range x.Keys {
-			if emptyBeforeIn(listOf(x.Vals[key]), node) {
-				return
-			}
-		}
-	case tabnas.MapRef:
-		for _, value := range x.Val {
-			if emptyBeforeIn(listOf(value), node) {
-				return
-			}
-		}
-	case map[string]any:
-		for _, value := range x {
-			if emptyBeforeIn(listOf(value), node) {
+	if x, ok := held.(*tabnas.OrderedMap); ok && x != nil {
+		for i := len(x.Keys) - 1; i >= 0 && i >= len(x.Keys)-nearTheEnd; i-- {
+			if emptyBeforeIn(listOf(x.Vals[x.Keys[i]]), node) {
 				return
 			}
 		}
 	}
-	for _, item := range listOf(held) {
-		if emptyBeforeIn(listOf(item), node) {
+	items := listOf(held)
+	for i := len(items) - 1; i >= 0 && i >= len(items)-nearTheEnd; i-- {
+		if emptyBeforeIn(listOf(items[i]), node) {
 			return
 		}
 	}
 }
 
-// emptyBeforeIn sets list's elements before the last place it holds the
-// container node to nil, and reports whether node was found.
+// emptyBeforeIn sets list's elements before the container node, when the
+// list holds it near its end, to nil, back to the first one an earlier close
+// set, so that each is set once, and reports whether node was found.
 func emptyBeforeIn(list []any, node uintptr) bool {
-	for at := len(list) - 1; at >= 0; at-- {
+	for at := len(list) - 1; at >= 0 && at >= len(list)-nearTheEnd; at-- {
 		if identity(list[at]) == node {
-			clear(list[:at])
+			for i := at - 1; i >= 0 && list[i] != nil; i-- {
+				list[i] = nil
+			}
 			return true
 		}
 	}

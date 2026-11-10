@@ -197,7 +197,10 @@ sink has seen a close pass:
   elements before it to nothing (`Undefined`, `undefined`, `nil`): an array
   no rule's node is, which the first case never reaches, such as the one a
   toml document's root holds its array of tables in. Each element keeps its
-  place, so a grammar that finds a node by position still finds it;
+  place, so a grammar that finds a node by position still finds it. The
+  node is looked for among the last eight places of the parent's node, its
+  members and its elements, where a grammar appends it, and each element is
+  set once, so a close costs the same however long the document grows;
 - whose rule's node is a map, for a grammar `capability::PRUNES_MAPS`
   lists (`PRUNES_MAPS`, `PrunesMaps` in Go), the source deletes the map's
   members too, so an INI document's sections and a JSON object's members
