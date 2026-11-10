@@ -69,7 +69,7 @@ const SUITE: { name: string; generated: string[]; repo: string }[] = [
   { name: 'csv', generated: ['records.csv'], repo: 'csv' },
   { name: 'xml', generated: ['records.xml'], repo: 'xml' },
   { name: 'zon', generated: [], repo: 'zon' },
-  { name: 'markdown', generated: [], repo: 'markdown' },
+  { name: 'markdown', generated: ['paragraphs.md'], repo: 'markdown' },
   { name: 'feed', generated: [], repo: 'feed' },
   { name: 'pgn', generated: ['records.pgn'], repo: 'chess' },
 ]
@@ -94,6 +94,8 @@ function generated(name: string, records: number): string {
       return sectionsIni(records)
     case 'tables.toml':
       return tablesToml(records)
+    case 'paragraphs.md':
+      return paragraphsMd(records)
   }
   throw new Error('no generator for ' + name)
 }
@@ -111,6 +113,13 @@ function membersJson(records: number): string {
 function sectionsIni(records: number): string {
   let out = ''
   for (let i = 0; i < records; i++) out += `[s${i}]\nid = ${i}\nname = n${i}\ntext = the text of section ${i}\n\n`
+  return out
+}
+
+// A markdown document of `records` paragraphs.
+function paragraphsMd(records: number): string {
+  let out = ''
+  for (let i = 0; i < records; i++) out += `Paragraph ${i}. The text of paragraph ${i}, *with* some \`code\`.\n\n`
   return out
 }
 
@@ -417,6 +426,7 @@ describe('pruning', () => {
       ['json', 'members.json'],
       ['ini', 'sections.ini'],
       ['toml', 'tables.toml'],
+      ['markdown', 'paragraphs.md'],
     ]
     const wrong: string[] = []
     pairs.forEach(([name, doc], i) => {

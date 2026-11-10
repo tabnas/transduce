@@ -506,6 +506,13 @@ func emptyNode(rule *tabnas.Rule, maps bool) {
 			v.Val = v.Val[:0]
 			rule.SetNode(v)
 		}
+	case *[]any:
+		// A list a grammar shares by its address, so that what one rule
+		// appends every holder sees (markdown's children).
+		if v != nil && len(*v) > 0 {
+			clear(*v)
+			*v = (*v)[:0]
+		}
 	case *tabnas.OrderedMap:
 		if maps && v != nil && len(v.Keys) > 0 {
 			clear(v.Vals)
@@ -538,6 +545,10 @@ func identity(v any) uintptr {
 		if len(x.Val) > 0 {
 			return reflect.ValueOf(x.Val).Pointer()
 		}
+	case *[]any:
+		if x != nil && len(*x) > 0 {
+			return reflect.ValueOf(*x).Pointer()
+		}
 	case tabnas.MapRef:
 		return reflect.ValueOf(x.Val).Pointer()
 	case map[string]any:
@@ -553,6 +564,10 @@ func listOf(v any) []any {
 		return x
 	case tabnas.ListRef:
 		return x.Val
+	case *[]any:
+		if x != nil {
+			return *x
+		}
 	}
 	return nil
 }
