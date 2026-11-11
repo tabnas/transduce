@@ -330,10 +330,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabnas-abnf"
+version = "0.5.1"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde",
+ "serde_json",
+ "tabnas-bnf",
+ "tabnas-parser",
+]
+
+[[package]]
 name = "tabnas-alchemy"
 version = "0.4.0"
 dependencies = [
  "indexmap",
+ "serde_json",
+ "tabnas-parser",
+]
+
+[[package]]
+name = "tabnas-bnf"
+version = "0.1.33"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde",
  "serde_json",
  "tabnas-parser",
 ]
@@ -350,6 +373,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tabnas-css"
+version = "0.5.19"
+dependencies = [
+ "tabnas-jsonic",
+ "tabnas-parser",
+]
+
+[[package]]
 name = "tabnas-csv"
 version = "0.6.9"
 dependencies = [
@@ -357,6 +388,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tabnas-jsonic",
+ "tabnas-parser",
+]
+
+[[package]]
+name = "tabnas-ebnf"
+version = "0.2.2"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde_json",
+ "tabnas-bnf",
  "tabnas-parser",
 ]
 
@@ -369,6 +411,17 @@ dependencies = [
  "serde_json",
  "tabnas-parser",
  "tabnas-xml",
+]
+
+[[package]]
+name = "tabnas-gbnf"
+version = "0.2.1"
+dependencies = [
+ "indexmap",
+ "regex",
+ "serde_json",
+ "tabnas-bnf",
+ "tabnas-parser",
 ]
 
 [[package]]
@@ -482,10 +535,14 @@ version = "0.6.5"
 dependencies = [
  "criterion",
  "serde_json",
+ "tabnas-abnf",
  "tabnas-alchemy",
  "tabnas-chess",
+ "tabnas-css",
  "tabnas-csv",
+ "tabnas-ebnf",
  "tabnas-feed",
+ "tabnas-gbnf",
  "tabnas-ini",
  "tabnas-json",
  "tabnas-json5",

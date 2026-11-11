@@ -18,8 +18,8 @@
 /// (`tabnas-<name>`), but `pgn` for tabnas-chess, the name hosts ask by.
 /// The suite asserts the list in both directions.
 pub const PRUNABLE: &[&str] = &[
-    "csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "pgn", "toml",
-    "xml", "yaml", "zon",
+    "abnf", "css", "csv", "ebnf", "feed", "gbnf", "ini", "json", "json5", "jsonc", "jsonic",
+    "jsonl", "markdown", "pgn", "toml", "xml", "yaml", "zon",
 ];
 
 /// Whether `grammar`'s arrays may be emptied behind a
@@ -39,7 +39,8 @@ pub fn prunable(grammar: &str) -> bool {
 /// maps emptied they pass documents they refuse, or refuse documents they
 /// pass.
 pub const PRUNES_MAPS: &[&str] = &[
-    "csv", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "pgn",
+    "abnf", "css", "csv", "ebnf", "gbnf", "ini", "json", "json5", "jsonc", "jsonic", "jsonl",
+    "markdown", "pgn",
 ];
 
 /// Whether `grammar`'s maps are emptied behind a pruning
@@ -62,7 +63,8 @@ mod tests {
             prunable("toml"),
             "its message for a key defined twice names no value, since tabnas-toml 0.5.20"
         );
-        assert!(!prunable("css"), "the suite does not run it");
+        assert!(prunable("css"), "since the suite runs it, from 0.6.6");
+        assert!(!prunable("proto"), "the suite does not run it");
         assert!(!prunable("chess"), "the format's name, not the crate's");
         assert!(!prunable(""));
         for name in PRUNABLE {
