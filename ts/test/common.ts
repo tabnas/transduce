@@ -25,6 +25,10 @@ import { Xml } from '@tabnas/xml'
 import { Markdown } from '@tabnas/markdown'
 import { Feed } from '@tabnas/feed'
 import { Chess } from '@tabnas/chess'
+import { make as makeCss } from '@tabnas/css'
+import { make as makeAbnf } from '@tabnas/abnf'
+import { make as makeEbnf } from '@tabnas/ebnf'
+import { make as makeGbnf } from '@tabnas/gbnf'
 import { findSpecDir, parseExpect, equalValue, formatValue } from '@tabnas/support'
 
 import {
@@ -87,7 +91,9 @@ export const FIXTURES = [
 
 // Every grammar the harness and the differential suite can build, by the
 // name of the format it reads (its package's, but `pgn` for @tabnas/chess),
-// as a fresh parser per call (a source owns its parser).
+// as a fresh parser per call (a source owns its parser). css and the grammar
+// notations are each their package's `make()`, the parser dmog streams them
+// through, whose value is the format's tree.
 export const GRAMMARS: Record<string, () => any> = {
   json: () => makeJson(),
   jsonl: () => makeJsonl(),
@@ -103,6 +109,10 @@ export const GRAMMARS: Record<string, () => any> = {
   markdown: () => new Tabnas().use(Markdown),
   feed: () => new Tabnas().use(jsonic).use(Feed),
   pgn: () => new Tabnas().use(Chess),
+  css: () => makeCss(),
+  abnf: () => makeAbnf(),
+  ebnf: () => makeEbnf(),
+  gbnf: () => makeGbnf(),
 }
 
 // The grammar a row names, as a fresh parser.

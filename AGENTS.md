@@ -158,14 +158,22 @@ Pruning empties two shapes for every listed grammar, and a third for some
   merge), toml (a key or a table defined twice, and the table a dotted key
   or a header walks through), xml (a closing tag held to the name of the
   element it closes, which the element's map holds), zon (a field defined
-  twice) and feed (xml's own check). Never list a grammar the suite does
-  not pass, and never empty another shape without a list the suite holds.
+  twice) and feed (xml's own check). TypeScript's list leaves out css and
+  the grammar notations abnf, ebnf and gbnf too, which Rust's and Go's
+  name: each appends a finished rule to a list member of a map, and its
+  TypeScript port fails once emptying the map deleted the list, where the
+  other ports append only while it is there or make it again
+  (`DIVERGENCE.md` 7). Never list a grammar the suite does not pass, and
+  never empty another shape without a list the suite holds.
 
 What the source cannot reach stays: a grammar's own bookkeeping, outside
 the tree. Rust's toml finds a table by its path from the document's root
 cell, so the table's node is never a closed rule's own, and keeps about ten
 entries in the context's bag per table (tabnas/toml#121); markdown's
-block phase keeps every block it made (tabnas/markdown#100).
+block phase keeps every block it made (tabnas/markdown#100); and chess's
+Go plugin keeps a PGN database as a typed value, which no shape empties,
+so a pruned PGN run keeps every game in Go (`DIVERGENCE.md` 8,
+tabnas/chess#74).
 
 **A pruning run bounds the rule history, for a grammar verified to read no
 further.** The engine links each rule to the rule it replaced and the rule

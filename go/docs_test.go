@@ -84,3 +84,15 @@ func recordsYAML(n int) string {
 	}
 	return b.String()
 }
+
+// recordsPGN is the PGN variant: a database of n games of one shape, a
+// game per record, its number in the Round tag and the record's name in a
+// comment.
+func recordsPGN(n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "[Event \"Records\"]\n[Round \"%d\"]\n[Result \"1-0\"]\n\n"+
+			"1. e4 e5 2. Nf3 {Person number %d} Nc6 $1 (2... d6 3. d4) 3. Bb5 1-0\n\n", i, i)
+	}
+	return b.String()
+}

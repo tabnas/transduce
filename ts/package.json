@@ -39,10 +39,14 @@
     "@tabnas/parser": ">=0"
   },
   "devDependencies": {
+    "@tabnas/abnf": "*",
     "@tabnas/alchemy": "*",
     "@tabnas/chess": "*",
+    "@tabnas/css": "*",
     "@tabnas/csv": "*",
+    "@tabnas/ebnf": "*",
     "@tabnas/feed": "*",
+    "@tabnas/gbnf": "*",
     "@tabnas/ini": "*",
     "@tabnas/json": "*",
     "@tabnas/json5": "*",

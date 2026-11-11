@@ -14,8 +14,13 @@ import (
 	"strings"
 	"testing"
 
+	tabnasabnf "github.com/tabnas/abnf/go"
+	tabnaschess "github.com/tabnas/chess/go"
+	tabnascss "github.com/tabnas/css/go"
 	tabnascsv "github.com/tabnas/csv/go"
+	tabnasebnf "github.com/tabnas/ebnf/go"
 	tabnasfeed "github.com/tabnas/feed/go"
+	tabnasgbnf "github.com/tabnas/gbnf/go"
 	tabnasini "github.com/tabnas/ini/go"
 	tabnasjson "github.com/tabnas/json/go"
 	tabnasjson5 "github.com/tabnas/json5/go"
@@ -45,7 +50,11 @@ func specDir(t *testing.T) string {
 	return dir
 }
 
-// makeGrammar is the grammar a row (or the differential suite) names.
+// makeGrammar is the grammar a row (or the differential suite) names, by
+// the name of the format it reads: its module's, but pgn for
+// github.com/tabnas/chess/go. css, the grammar notations and pgn are the
+// parsers dmog streams them through: css's MakeJsonic, and the others'
+// Make, whose value is the format's tree.
 func makeGrammar(name string) *tabnas.Tabnas {
 	use := func(plugin tabnas.Plugin, defaults map[string]any) *tabnas.Tabnas {
 		j := jsonic.Make()
@@ -91,6 +100,16 @@ func makeGrammar(name string) *tabnas.Tabnas {
 		return tabnasmarkdown.Make()
 	case "feed":
 		return use(tabnasfeed.Feed, tabnasfeed.Defaults)
+	case "pgn":
+		return tabnaschess.Make()
+	case "css":
+		return tabnascss.MakeJsonic()
+	case "abnf":
+		return tabnasabnf.Make()
+	case "ebnf":
+		return tabnasebnf.Make()
+	case "gbnf":
+		return tabnasgbnf.Make()
 	}
 	panic(fmt.Sprintf("no grammar %q in the fixture harness", name))
 }

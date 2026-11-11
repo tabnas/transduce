@@ -103,8 +103,9 @@
 // That alters the value the engine returns, which this source never reads,
 // and it is sound for a grammar whose passes do not depend on what its tree
 // holds: yaml, toml, xml, zon and feed read their maps back, to find a key
-// or a table defined twice or a name to merge or resolve, which is why
-// their maps are left. So it is a verified capability: `test/prune.test.ts`
+// or a table defined twice or a name to merge or resolve, and css, abnf,
+// ebnf and gbnf append to a list member a map's emptying deletes
+// (DIVERGENCE.md 7), which is why their maps are left. So it is a verified capability: `test/prune.test.ts`
 // runs every document of every grammar in the devDependencies pruned and
 // not, and with its maps emptied and not, and `capability.prunable` and
 // `capability.prunesMaps` list the grammars whose passes and outcomes never
