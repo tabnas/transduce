@@ -1,19 +1,4 @@
 {
   "note": "Register of tabnas runtime dependencies that differ between this repository's ports (tabnas/admin ADR-24). tools/port-deps.cjs fails on a difference that is not listed here, and on an entry that no longer matches the manifests, so the list cannot outlive what it records. Every entry states the ports that have the dependency today, the reason, and the repair.",
-  "differ": {
-    "csv": {
-      "ports": [
-        "ts"
-      ],
-      "reason": "ts/package.json still declares @tabnas/csv as an optional peer, which nothing in ts/src loads: the TypeScript and Go ports retired LinesSource and LineFormat at step 19 of alchemy's streaming plan, their own step 12, as Rust did in tabnas/transduce#66, and a host reads CSV through csv's transducer part, over ParserEventSource's passes, in every runtime. go/lines.go was the Go port's one non-test importer of github.com/tabnas/csv/go, which go/go.mod still requires for the tests that read CSV; in Rust tabnas-csv is only a dev-dependency (tabnas/transduce#67).",
-      "repair": "ts/package.json drops @tabnas/csv from peerDependencies and peerDependenciesMeta, keeping it a devDependency for the tests, as tabnas/transduce#67 made it a dev-dependency in Rust. That is a dependency change, made on the maintainer's instruction (ADR-22), and this entry goes with it."
-    },
-    "json": {
-      "ports": [
-        "ts"
-      ],
-      "reason": "ts/package.json still declares @tabnas/json as an optional peer, which nothing in ts/src loads: the TypeScript and Go ports retired LinesSource and LineFormat, and with them the rule-event inference their JSON Lines line sources read through, at step 19 of alchemy's streaming plan, their own steps 12 and 13, as Rust did in tabnas/transduce#62, #63 and #66, and a host reads JSON Lines through jsonl's transducer part, over ParserEventSource's passes, in every runtime. go/lines.go and go/rule_events.go were the Go port's non-test importers of github.com/tabnas/json/go, which go/go.mod still requires for the tests that read JSON; in Rust tabnas-json is only a dev-dependency (tabnas/transduce#67).",
-      "repair": "ts/package.json drops @tabnas/json from peerDependencies and peerDependenciesMeta, keeping it a devDependency for the tests, as tabnas/transduce#67 made it a dev-dependency in Rust. That is a dependency change, made on the maintainer's instruction (ADR-22), and this entry goes with it."
-    }
-  }
+  "differ": {}
 }

@@ -56,6 +56,15 @@ tabnas-feed = { path = "../../feed/rs" }
 # each game on a stack and stored it in the database only once complete.
 # Taken on the maintainer's instruction of 2026-10-14.
 tabnas-chess = { path = "../../chess/rs" }
+# Read CSS and the grammar notations ABNF, EBNF and GBNF, each through the
+# parser its `make` builds, whose value is the format's tree, so that the
+# differential suite runs them and the verified lists can name them
+# (tabnas/transduce#82 and #88). abnf, ebnf and gbnf take tabnas-bnf in
+# turn. Taken on the maintainer's instruction of 2026-11-11.
+tabnas-css = { path = "../../css/rs" }
+tabnas-abnf = { path = "../../abnf/rs" }
+tabnas-ebnf = { path = "../../ebnf/rs" }
+tabnas-gbnf = { path = "../../gbnf/rs" }
 # The fleet's TSV fixture loader and runner, for the shared fixtures in
 # ../test/spec that every runtime of this crate runs (rs/tests/spec_*.rs).
 tabnas-support = { path = "../../support/rs", features = ["serde_json"] }

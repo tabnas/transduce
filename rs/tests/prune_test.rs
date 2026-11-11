@@ -43,8 +43,9 @@
 //! The second half measures what pruning is for: ten times the records of
 //! a document leave the pruned tree holding exactly as many elements,
 //! while the tree a run that does not prune hands back holds every record;
-//! and so do ten times an INI document's sections, and a JSON object's
-//! members, whose grammars have their maps emptied.
+//! and so do ten times an INI document's sections, a JSON object's
+//! members, a stylesheet's rules and a grammar's rules in ABNF, EBNF and
+//! GBNF, whose grammars have their maps emptied.
 
 mod support;
 
@@ -170,6 +171,30 @@ const GRAMMARS: &[Grammar] = &[
         generated: &["records.pgn"],
         repo: "chess",
     },
+    Grammar {
+        name: "css",
+        make: tabnas_css::make,
+        generated: &["rules.css"],
+        repo: "css",
+    },
+    Grammar {
+        name: "abnf",
+        make: tabnas_abnf::make,
+        generated: &["rules.abnf"],
+        repo: "abnf",
+    },
+    Grammar {
+        name: "ebnf",
+        make: tabnas_ebnf::make,
+        generated: &["rules.ebnf"],
+        repo: "ebnf",
+    },
+    Grammar {
+        name: "gbnf",
+        make: tabnas_gbnf::make,
+        generated: &["rules.gbnf"],
+        repo: "gbnf",
+    },
 ];
 
 fn generated(name: &str, records: usize) -> String {
@@ -184,8 +209,53 @@ fn generated(name: &str, records: usize) -> String {
         "sections.ini" => sections_ini(records),
         "tables.toml" => tables_toml(records),
         "paragraphs.md" => paragraphs_md(records),
+        "rules.css" => rules_css(records),
+        "rules.abnf" => rules_abnf(records),
+        "rules.ebnf" => rules_ebnf(records),
+        "rules.gbnf" => rules_gbnf(records),
         other => panic!("no generator for {other}"),
     }
+}
+
+/// A stylesheet of `records` rules, each of two declarations.
+fn rules_css(records: usize) -> String {
+    let mut out = String::new();
+    for i in 0..records {
+        let _ = writeln!(
+            out,
+            ".c{i} {{ margin: {i}px; content: \"the text of rule {i}\"; }}"
+        );
+    }
+    out
+}
+
+/// An ABNF grammar of `records` rules, each of two alternatives, its lines
+/// ended as RFC 5234 ends them.
+fn rules_abnf(records: usize) -> String {
+    let mut out = String::new();
+    for i in 0..records {
+        let _ = write!(out, "r{i} = \"a{i} the text of rule {i}\" / \"b{i}\"\r\n");
+    }
+    out
+}
+
+/// An EBNF grammar of `records` rules, each of two alternatives.
+fn rules_ebnf(records: usize) -> String {
+    let mut out = String::new();
+    for i in 0..records {
+        let _ = writeln!(out, "r{i} ::= \"a{i} the text of rule {i}\" | \"b{i}\"");
+    }
+    out
+}
+
+/// A GBNF grammar of `records` rules, each of two alternatives, after the
+/// `root` that starts it.
+fn rules_gbnf(records: usize) -> String {
+    let mut out = String::from("root ::= r0\n");
+    for i in 0..records {
+        let _ = writeln!(out, "r{i} ::= \"a{i} the text of rule {i}\" | \"b{i}\"");
+    }
+    out
 }
 
 /// A JSON object of `records` members, each an object of three.
@@ -525,6 +595,10 @@ prunes_as_the_list_says! {
     markdown_prunes_as_the_list_says: "markdown",
     feed_prunes_as_the_list_says: "feed",
     pgn_prunes_as_the_list_says: "pgn",
+    css_prunes_as_the_list_says: "css",
+    abnf_prunes_as_the_list_says: "abnf",
+    ebnf_prunes_as_the_list_says: "ebnf",
+    gbnf_prunes_as_the_list_says: "gbnf",
 }
 
 /// Every element of every array in `value` that holds something, and every
@@ -621,6 +695,10 @@ leaves_the_pruned_tree_as_it_was! {
     ten_times_the_ini_sections_leave_the_pruned_tree_as_it_was: "ini" "sections.ini",
     ten_times_the_toml_tables_leave_the_pruned_tree_as_it_was: "toml" "tables.toml",
     ten_times_the_markdown_paragraphs_leave_the_pruned_tree_as_it_was: "markdown" "paragraphs.md",
+    ten_times_the_css_rules_leave_the_pruned_tree_as_it_was: "css" "rules.css",
+    ten_times_the_abnf_rules_leave_the_pruned_tree_as_it_was: "abnf" "rules.abnf",
+    ten_times_the_ebnf_rules_leave_the_pruned_tree_as_it_was: "ebnf" "rules.ebnf",
+    ten_times_the_gbnf_rules_leave_the_pruned_tree_as_it_was: "gbnf" "rules.gbnf",
 }
 
 /// A grammar `capability::prunes_maps` lists has its maps emptied with its

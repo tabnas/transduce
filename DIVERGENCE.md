@@ -12,13 +12,12 @@ here is re-measured by running its input through each runtime, and an
 entry that closes is deleted together with the test that pins it. The
 others keep their numbers, which other repositories cite.
 
-Entry 4 is measured: a verified list that differs, because one runtime's
-suite cannot earn an entry the others' do. Entry 6
-is measured: a token's value as two engines give it and the third does
-not. The rest is what the shared
-fixtures deliberately leave out, because it belongs to the Rust runtime
-or is not yet decided, so that a port does not read the absence of a row
-as coverage, or as licence.
+Entries 4 and 7 are measured: a verified list that differs, because one
+runtime's suite cannot earn an entry the others' do. Entry 6 is measured:
+a token's value as two engines give it and the third does not. The rest
+is what the shared fixtures deliberately leave out, because it belongs to
+the Rust runtime or is not yet decided, so that a port does not read the
+absence of a row as coverage, or as licence.
 
 ## Where these are pinned
 
@@ -133,3 +132,32 @@ Pinned in Rust by `a_space_token_item_carries_its_text_as_its_value`
 (`rs/src/source/parser_events.rs`), in TypeScript by `a space token item
 has no value` (`ts/test/parser-events.test.ts`) and in Go by
 `TestASpaceTokenItemHasNoValue` (`go/parser_events_test.go`).
+
+## 7. TypeScript and Go do not prune css or the grammar notations
+
+Rust's lists (`capability::PRUNABLE` and `capability::PRUNES_MAPS`,
+`rs/src/source/capability.rs`) name `abnf`, `css`, `ebnf` and `gbnf`, and
+TypeScript's and Go's (`ts/src/capability.ts`, `go/capability.go`) name
+none of them. So a TypeScript or Go run that prunes a stylesheet, or a
+grammar in ABNF, EBNF or GBNF, is refused before the parse with
+`STREAMABILITY_UNKNOWN`, as for every unlisted grammar, and a host reads
+it through the format's part unpruned, its tree holding every rule. Rust
+empties the tree behind the stream: ten times a stylesheet's rules, or an
+ABNF, EBNF or GBNF grammar's, leave the pruned tree holding none, where a
+run that does not prune keeps 2,602 and then 26,002 elements of the
+stylesheet, and 2,802 and then 28,002 of an ABNF grammar.
+
+Why: the Rust crate takes tabnas-css, tabnas-abnf, tabnas-ebnf and
+tabnas-gbnf as dev-dependencies (on the maintainer's instruction of
+2026-11-11), and its prune suite reads their documents, each through the
+parser its `make` builds, whose value is its tree. The TypeScript and Go
+suites run none of them yet: a suite reads a grammar's own corpus from the
+grammar's sibling checkout, and the workflow that runs those two suites
+(`.github/workflows/ci.yml`) clones no css, bnf, abnf, ebnf or gbnf. A
+list names only a grammar its suite runs: the suite asserts each list in
+both directions, and a name it does not run fails it.
+
+Pinned in Rust by `css_prunes_as_the_list_says` and its three twins and by
+the tests of ten times a stylesheet's and a grammar's rules
+(`rs/tests/prune_test.rs`), and in TypeScript and Go by their prune
+suites, which fail on a listed grammar they do not run.
