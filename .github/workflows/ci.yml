@@ -16,10 +16,13 @@ jobs:
   # as indirect), and json/go/debugtest's `replace` points the workspace
   # at a ../debug clone, so without the two clones the workspace cannot
   # load ini and every test that reads an INI document fails to build.
+  # css, bnf, abnf, ebnf and gbnf are test-only: the prune suites read
+  # each grammar's own test/spec from its clone (the maintainer's
+  # instruction of 2026-11-11), and so does Go's for chess.
   ci:
     uses: tabnas/.github/.github/workflows/polyglot-ci.yml@main
     with:
-      deps: "parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed chess alchemy"
+      deps: "parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed chess alchemy css bnf abnf ebnf gbnf"
 
   # The shared workflow runs `go test ./...` with no build tags and takes
   # none as an input (its inputs are deps, build-order, run-ts, run-go,
@@ -62,7 +65,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for dep in parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed alchemy; do
+          for dep in parser support debug json hoover jsonic csv json5 jsonc jsonl markdown toml xml yaml zon ini feed alchemy chess css bnf abnf ebnf gbnf; do
             git clone --depth 1 "https://github.com/tabnas/$dep.git" "$dep"
           done
 

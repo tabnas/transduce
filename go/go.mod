@@ -31,4 +31,19 @@ require (
 	github.com/tabnas/zon/go v0.5.19
 )
 
-require github.com/tabnas/hoover/go v0.3.15 // indirect
+// css, the grammar notations abnf, ebnf and gbnf, and chess (the pgn
+// format), which the prune suites run so that the verified lists can name
+// them, taken on the maintainer's instruction of 2026-11-11 and imported by
+// the tests alone. abnf, ebnf and gbnf take bnf in turn.
+require (
+	github.com/tabnas/abnf/go v0.5.1
+	github.com/tabnas/chess/go v0.1.19
+	github.com/tabnas/css/go v0.5.19
+	github.com/tabnas/ebnf/go v0.2.2
+	github.com/tabnas/gbnf/go v0.2.1
+)
+
+require (
+	github.com/tabnas/bnf/go v0.1.33 // indirect
+	github.com/tabnas/hoover/go v0.3.15 // indirect
+)

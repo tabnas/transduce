@@ -20,10 +20,15 @@
 // name of the format each reads: its package's (`@tabnas/<name>`), but
 // `pgn` for @tabnas/chess, the name hosts ask by. The suite asserts the
 // list in both directions. `toml` joined it with @tabnas/toml 0.5.20, whose
-// message for a key defined twice names no value.
+// message for a key defined twice names no value, and css and the grammar
+// notations abnf, ebnf and gbnf once the suite ran them.
 export const PRUNABLE: readonly string[] = Object.freeze([
+  'abnf',
+  'css',
   'csv',
+  'ebnf',
   'feed',
+  'gbnf',
   'ini',
   'json',
   'json5',
@@ -52,7 +57,10 @@ export function isPrunable(grammar: string): boolean {
 // their maps back during the parse: yaml, toml, xml, zon and feed find a key
 // or a table defined twice, or a name to merge or resolve, by looking it up
 // in the tree they are building, so with their maps emptied they pass
-// documents they refuse, or refuse documents they pass.
+// documents they refuse, or refuse documents they pass; css, abnf, ebnf and
+// gbnf append a finished rule to a list member of a map, which emptying
+// the map deletes, and their TypeScript ports then fail where their Rust
+// and Go ports go on (DIVERGENCE.md 7).
 export const PRUNES_MAPS: readonly string[] = Object.freeze([
   'csv',
   'ini',
@@ -79,8 +87,12 @@ export function prunesMaps(grammar: string): boolean {
 // unbounded history, because what it reads back through the rule links
 // reaches further than the bound keeps.
 export const BOUNDS_HISTORY: readonly string[] = Object.freeze([
+  'abnf',
+  'css',
   'csv',
+  'ebnf',
   'feed',
+  'gbnf',
   'ini',
   'json',
   'json5',

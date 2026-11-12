@@ -18,10 +18,12 @@ package tabnastransduce
 
 // prunableGrammars are the grammars prune_test.go verified in this
 // runtime: their passes are the same whether ParserEventSource prunes or
-// not, on every document the suite reads them. Go's omits pgn, which its
-// suite does not run (DIVERGENCE.md 4).
+// not, on every document the suite reads them. pgn is among them, but the
+// database chess's plugin keeps is a typed value, which pruning does not
+// empty (DIVERGENCE.md 8).
 var prunableGrammars = []string{
-	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "yaml", "zon",
+	"abnf", "css", "csv", "ebnf", "feed", "gbnf", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown",
+	"pgn", "toml", "xml", "yaml", "zon",
 }
 
 // PrunableGrammars is the grammars a ParserEventSource may prune, by the
@@ -42,7 +44,7 @@ func PrunableGrammars() []string {
 // their maps emptied they pass documents they refuse, or refuse documents
 // they pass.
 var prunesMapsGrammars = []string{
-	"csv", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown",
+	"abnf", "css", "csv", "ebnf", "gbnf", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "pgn",
 }
 
 // PrunesMapsGrammars is the grammars whose maps a pruning ParserEventSource
@@ -84,7 +86,8 @@ func Prunable(grammar string) bool {
 // history, because what it reads back through the rule links reaches
 // further than the bound keeps.
 var boundsHistoryGrammars = []string{
-	"csv", "feed", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown", "toml", "xml", "yaml", "zon",
+	"abnf", "css", "csv", "ebnf", "feed", "gbnf", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown",
+	"pgn", "toml", "xml", "yaml", "zon",
 }
 
 // BoundsHistoryGrammars is the grammars a pruning ParserEventSource bounds

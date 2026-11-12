@@ -204,10 +204,9 @@ func ParserEventSourceFromReader(parser *tabnas.Tabnas, r io.Reader) *ParserEven
 
 // Grammar names the grammar the parser implements, by the name of the
 // format it reads: its module's (github.com/tabnas/<name>/go), as
-// PrunableGrammars names them, but pgn for github.com/tabnas/chess/go,
-// which this port's list does not name (DIVERGENCE.md 4). A run that
-// prunes needs a name PrunableGrammars lists; one that does not prune
-// needs no name.
+// PrunableGrammars names them, but pgn for github.com/tabnas/chess/go. A
+// run that prunes needs a name PrunableGrammars lists; one that does not
+// prune needs no name.
 func (p *ParserEventSource) Grammar(name string) *ParserEventSource {
 	p.grammar = name
 	return p

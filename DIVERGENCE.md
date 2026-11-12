@@ -12,12 +12,14 @@ here is re-measured by running its input through each runtime, and an
 entry that closes is deleted together with the test that pins it. The
 others keep their numbers, which other repositories cite.
 
-Entries 4 and 7 are measured: a verified list that differs, because one
-runtime's suite cannot earn an entry the others' do. Entry 6 is measured:
-a token's value as two engines give it and the third does not. The rest
-is what the shared fixtures deliberately leave out, because it belongs to
-the Rust runtime or is not yet decided, so that a port does not read the
-absence of a row as coverage, or as licence.
+Entry 6 is measured: a token's value as two engines give it and the third
+does not. Entries 7 and 8 are measured too: a verified list that differs,
+because one runtime's ports of four grammars read back what the others'
+do not, and what a pruned run keeps of a tree one runtime's grammar holds
+out of pruning's reach. The rest is what the shared fixtures deliberately
+leave out, because it belongs to the Rust runtime or is not yet decided,
+so that a port does not read the absence of a row as coverage, or as
+licence.
 
 ## Where these are pinned
 
@@ -82,28 +84,6 @@ gap:
   borrowed or an owned sink, a reader of each runtime's kind), not
   results a row can name.
 
-## 4. Go does not prune PGN
-
-`ParserEventSource`'s pruning is a verified capability, and Go's list
-(`PrunableGrammars`, `go/capability.go`) omits `pgn`, which Rust's and
-TypeScript's (`capability::PRUNABLE`, `ts/src/capability.ts`) name. So a
-Go run that prunes a PGN database is refused before the parse with
-`STREAMABILITY_UNKNOWN`, as for every unlisted grammar, and a Go host
-reads the database through tabnas-chess's part unpruned, its tree holding
-every game; Rust and TypeScript empty the database behind the stream.
-
-Why: the Rust and TypeScript sides take tabnas-chess as a dev-dependency
-(on the maintainer's instruction of 2026-10-14), and their prune suites
-read its documents. Go takes none and runs no PGN, so its list cannot
-name it: the suite asserts the list in both directions, and a name it
-does not run fails it. (Until step 13 of alchemy's streaming plan this
-entry was the incremental source's list, which named `pgn` in TypeScript
-and not in Go; every port has retired that list.)
-
-Pinned in Go by `TestEveryGrammarPrunesAsTheListSays` (`go/prune_test.go`),
-and in TypeScript by the prune suite's `pgn` case
-(`ts/test/prune.test.ts`).
-
 ## 6. The engine's own space, line and comment tokens carry their text as their value in Rust
 
 A token item (`ParserEvent::Token`) carries the token's value as the
@@ -133,31 +113,67 @@ Pinned in Rust by `a_space_token_item_carries_its_text_as_its_value`
 has no value` (`ts/test/parser-events.test.ts`) and in Go by
 `TestASpaceTokenItemHasNoValue` (`go/parser_events_test.go`).
 
-## 7. TypeScript and Go do not prune css or the grammar notations
+## 7. TypeScript does not empty the maps of css and the grammar notations
 
-Rust's lists (`capability::PRUNABLE` and `capability::PRUNES_MAPS`,
-`rs/src/source/capability.rs`) name `abnf`, `css`, `ebnf` and `gbnf`, and
-TypeScript's and Go's (`ts/src/capability.ts`, `go/capability.go`) name
-none of them. So a TypeScript or Go run that prunes a stylesheet, or a
-grammar in ABNF, EBNF or GBNF, is refused before the parse with
-`STREAMABILITY_UNKNOWN`, as for every unlisted grammar, and a host reads
-it through the format's part unpruned, its tree holding every rule. Rust
-empties the tree behind the stream: ten times a stylesheet's rules, or an
-ABNF, EBNF or GBNF grammar's, leave the pruned tree holding none, where a
-run that does not prune keeps 2,602 and then 26,002 elements of the
-stylesheet, and 2,802 and then 28,002 of an ABNF grammar.
+`capability::PRUNES_MAPS` (`rs/src/source/capability.rs`) and Go's
+`PrunesMapsGrammars` (`go/capability.go`) name `abnf`, `css`, `ebnf` and
+`gbnf`, and TypeScript's (`ts/src/capability.ts`) names none of them. Each
+is prunable in every runtime, and its rule history is bounded in
+TypeScript and Go: the third shape is what differs, and with it what a
+pruned run leaves of the tree.
 
-Why: the Rust crate takes tabnas-css, tabnas-abnf, tabnas-ebnf and
-tabnas-gbnf as dev-dependencies (on the maintainer's instruction of
-2026-11-11), and its prune suite reads their documents, each through the
-parser its `make` builds, whose value is its tree. The TypeScript and Go
-suites run none of them yet: a suite reads a grammar's own corpus from the
-grammar's sibling checkout, and the workflow that runs those two suites
-(`.github/workflows/ci.yml`) clones no css, bnf, abnf, ebnf or gbnf. A
-list names only a grammar its suite runs: the suite asserts each list in
-both directions, and a name it does not run fails it.
+Each of the four builds a node as a map and appends a finished child to a
+list member of it in the parent's close phase: css's pushers
+(`@cssPushRule` in `items`, `@cssPushDecl` in `decls` and the others), and
+each notation's `prod`, whose `bc` appends a rule to the grammar's
+`rules`. Emptying the map at its close pass deletes the list, and the next
+append finds none. The Rust ports append only while the list is there, or
+make it again, and the Go ports make it again, so their passes are the
+same with the maps emptied. The TypeScript ports push onto it as it was
+(`node.rules.push(...)`), which throws (`Cannot read properties of
+undefined (reading 'push')`): with the maps emptied, 24 of css's 233
+documents end so, 2 of abnf's 229, 2 of ebnf's 83 and 1 of gbnf's 104, the
+generated document of 200 rules among each.
 
-Pinned in Rust by `css_prunes_as_the_list_says` and its three twins and by
-the tests of ten times a stylesheet's and a grammar's rules
-(`rs/tests/prune_test.rs`), and in TypeScript and Go by their prune
-suites, which fail on a listed grammar they do not run.
+What it costs: a child is appended after its own close pass, so the second
+shape, an array's elements before a node whose close the sink has seen,
+never finds it, and the maps are all that would let the tree go. Ten times
+a stylesheet's rules leave TypeScript's pruned tree holding 2,602 and then
+26,002 elements, as many as a run that does not prune keeps, and ten times
+a grammar's rules 802 and then 8,002 (807 and 8,007 in GBNF), each rule's
+alternatives emptied and the rule kept, where Rust's and Go's hold none.
+The repair is the grammars' (tabnas/css#79, tabnas/abnf#134,
+tabnas/ebnf#81, tabnas/gbnf#80): once a TypeScript port makes a missing
+list, as the Go ports do, the suite fails until TypeScript's list names
+it, and this entry closes for it.
+
+Pinned in TypeScript by the prune suite's `every grammar prunes as the
+lists say` (`ts/test/prune.test.ts`), which holds `PRUNES_MAPS` both ways,
+and in Rust and Go by the same suites and by their tests of ten times a
+stylesheet's and a grammar's rules (`rs/tests/prune_test.rs`,
+`go/prune_test.go`).
+
+## 8. A pruned run keeps every game of a PGN database in Go
+
+Every runtime's lists name `pgn`, and its passes are the same pruned or
+not, but only Rust's and TypeScript's sources empty the database behind
+the stream. chess's Go plugin keeps the database as a typed value, a
+`*tabnaschess.Database` (a slice of `*Game`), and a Go source empties the
+engine's own containers alone (`[]any`, `*[]any`, `tabnas.ListRef`,
+`map[string]any`, `*tabnas.OrderedMap` and `tabnas.MapRef`), so a Go run
+that prunes a PGN database keeps every game to its end: 200 games of 200,
+and 2,000 of 2,000, where the Rust and TypeScript trees hold none.
+
+Entry 4, "Go does not prune PGN", recorded the same consequence for
+another reason until Go's suite ran PGN: its lists could not name it,
+and a Go run that pruned a PGN database was refused. Go's suite runs PGN
+now (on the maintainer's instruction of 2026-11-11), and its lists name
+`pgn` as the others do. The repair is chess's (tabnas/chess#74): once
+its Go plugin keeps its games where pruning reaches them, this entry
+closes, and pgn's games join Go's test of ten times the records.
+
+Pinned in Go by `TestAPrunedPGNRunKeepsEveryGame` (`go/prune_test.go`),
+and in Rust and TypeScript by their tests of ten times PGN's games
+(`ten_times_the_pgn_games_leave_the_pruned_tree_as_it_was` in
+`rs/tests/prune_test.rs`, and the `pgn` pair of `ten times the records
+leave the pruned tree as it was` in `ts/test/prune.test.ts`).

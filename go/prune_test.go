@@ -24,7 +24,9 @@ package tabnastransduce
 // suite asserts both lists in both directions. The second half measures
 // what pruning is for: ten times the records leave the pruned tree as it
 // was, and so do ten times an INI document's sections, a JSON object's
-// members and a toml document's array of tables.
+// members, a toml document's array of tables, a stylesheet's rules and a
+// grammar's rules in ABNF, EBNF and GBNF. A PGN database's games stay, in
+// a typed value pruning does not empty (DIVERGENCE.md 8).
 
 import (
 	"fmt"
@@ -34,6 +36,7 @@ import (
 	"strings"
 	"testing"
 
+	tabnaschess "github.com/tabnas/chess/go"
 	tabnas "github.com/tabnas/parser/go"
 	support "github.com/tabnas/support/go"
 )
@@ -72,6 +75,11 @@ var pruneGrammars = []pruneGrammar{
 	{"zon", nil, "zon"},
 	{"markdown", []string{"paragraphs.md"}, "markdown"},
 	{"feed", nil, "feed"},
+	{"pgn", []string{"records.pgn"}, "chess"},
+	{"css", []string{"rules.css"}, "css"},
+	{"abnf", []string{"rules.abnf"}, "abnf"},
+	{"ebnf", []string{"rules.ebnf"}, "ebnf"},
+	{"gbnf", []string{"rules.gbnf"}, "gbnf"},
 }
 
 type prunedDoc struct{ name, text string }
@@ -96,8 +104,57 @@ func pruneGenerated(name string, records int) string {
 		return tablesTOML(records)
 	case "paragraphs.md":
 		return paragraphsMD(records)
+	case "records.pgn":
+		return recordsPGN(records)
+	case "rules.css":
+		return rulesCSS(records)
+	case "rules.abnf":
+		return rulesABNF(records)
+	case "rules.ebnf":
+		return rulesEBNF(records)
+	case "rules.gbnf":
+		return rulesGBNF(records)
 	}
 	panic("no generator for " + name)
+}
+
+// rulesCSS is a stylesheet of records rules, each of two declarations.
+func rulesCSS(records int) string {
+	var b strings.Builder
+	for i := 0; i < records; i++ {
+		fmt.Fprintf(&b, ".c%d { margin: %dpx; content: \"the text of rule %d\"; }\n", i, i, i)
+	}
+	return b.String()
+}
+
+// rulesABNF is an ABNF grammar of records rules, each of two alternatives,
+// its lines ended as RFC 5234 ends them.
+func rulesABNF(records int) string {
+	var b strings.Builder
+	for i := 0; i < records; i++ {
+		fmt.Fprintf(&b, "r%d = \"a%d the text of rule %d\" / \"b%d\"\r\n", i, i, i, i)
+	}
+	return b.String()
+}
+
+// rulesEBNF is an EBNF grammar of records rules, each of two alternatives.
+func rulesEBNF(records int) string {
+	var b strings.Builder
+	for i := 0; i < records; i++ {
+		fmt.Fprintf(&b, "r%d ::= \"a%d the text of rule %d\" | \"b%d\"\n", i, i, i, i)
+	}
+	return b.String()
+}
+
+// rulesGBNF is a GBNF grammar of records rules, each of two alternatives,
+// after the root that starts it.
+func rulesGBNF(records int) string {
+	var b strings.Builder
+	b.WriteString("root ::= r0\n")
+	for i := 0; i < records; i++ {
+		fmt.Fprintf(&b, "r%d ::= \"a%d the text of rule %d\" | \"b%d\"\n", i, i, i, i)
+	}
+	return b.String()
 }
 
 // membersJSON is a JSON object of records members, each an object of three.
@@ -441,6 +498,7 @@ func TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas(t *testing.T) {
 		{"xml", "records.xml"}, {"csv", "records.csv"},
 		{"json", "members.json"}, {"ini", "sections.ini"}, {"toml", "tables.toml"},
 		{"markdown", "paragraphs.md"},
+		{"css", "rules.css"}, {"abnf", "rules.abnf"}, {"ebnf", "rules.ebnf"}, {"gbnf", "rules.gbnf"},
 	}
 	var wrong []string
 	for i, pair := range pairs {
@@ -458,6 +516,39 @@ func TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas(t *testing.T) {
 	}
 	if len(wrong) > 0 {
 		t.Fatal(strings.Join(wrong, "\n"))
+	}
+}
+
+// TestAPrunedPGNRunKeepsEveryGame pins DIVERGENCE.md entry 8. chess's Go
+// plugin keeps its database as a typed *tabnaschess.Database, a slice of
+// *Game, and pruning empties the engine's own lists and maps, so a pruned
+// run of a PGN database keeps every game, where Rust's and TypeScript's
+// sources empty the database behind the stream. Once the plugin keeps its
+// games where pruning reaches them, this test fails: delete it and the
+// entry, and add pgn's records to
+// TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas.
+func TestAPrunedPGNRunKeepsEveryGame(t *testing.T) {
+	for _, games := range []int{200, 2000} {
+		source := NewParserEventSource(makeGrammar("pgn"), pruneGenerated("records.pgn", games)).Grammar("pgn").Prune()
+		var rec passRecorder
+		_, f, value := source.RunWithValue(&rec)
+		if f != nil {
+			t.Fatalf("%d games: %v", games, f)
+		}
+		db, ok := value.(*tabnaschess.Database)
+		if !ok || db == nil {
+			t.Fatalf("%d games: the value is %T, not chess's database", games, value)
+		}
+		kept := 0
+		for _, game := range *db {
+			if game != nil {
+				kept++
+			}
+		}
+		t.Logf("pgn: %d games pruned, %d kept", games, kept)
+		if kept != games {
+			t.Errorf("a pruned run of %d games kept %d of them: DIVERGENCE.md entry 8 may have closed", games, kept)
+		}
 	}
 }
 

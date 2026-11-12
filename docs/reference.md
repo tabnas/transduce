@@ -229,12 +229,12 @@ Pruning alters the value the engine returns, so it is sound only for a
 grammar whose passes do not depend on what its tree holds, and it is a
 verified capability. `capability::PRUNABLE` lists `abnf`, `css`, `csv`,
 `ebnf`, `feed`, `gbnf`, `ini`, `json`, `json5`, `jsonc`, `jsonic`,
-`jsonl`, `markdown`, `pgn`, `toml`, `xml`, `yaml` and `zon`, and
-`capability::PRUNES_MAPS` lists `abnf`, `css`, `csv`, `ebnf`, `gbnf`,
-`ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown` and `pgn`.
-TypeScript's and Go's omit `abnf`, `css`, `ebnf` and `gbnf`, which their
-suites do not run yet (`DIVERGENCE.md` 7), and Go's omits `pgn`, which
-its suite does not run (`DIVERGENCE.md` 4). `rs/tests/prune_test.rs` and
+`jsonl`, `markdown`, `pgn`, `toml`, `xml`, `yaml` and `zon` in every
+runtime, and `capability::PRUNES_MAPS` lists `abnf`, `css`, `csv`, `ebnf`,
+`gbnf`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown` and
+`pgn`. TypeScript's `PRUNES_MAPS` omits `abnf`, `css`, `ebnf` and `gbnf`,
+whose TypeScript ports fail once a map's emptying deleted a list member
+they append to (`DIVERGENCE.md` 7). `rs/tests/prune_test.rs` and
 its ports run every
 document each grammar reads, pruned and not, and again with its maps
 emptied too (`unverified_maps`): the committed fixtures, the generated
@@ -262,8 +262,12 @@ none does. `toml` joined the list with tabnas-toml 0.5.20, whose message
 for a key defined twice names the key and says it is already defined:
 before, it quoted the earlier value, which pruning empties (`cannot define
 arr, it already has the value []`). css and the grammar notations abnf,
-ebnf and gbnf joined Rust's lists in 0.6.6, once its suite ran them, each
-through the parser its crate's `make` builds, whose value is its tree.
+ebnf and gbnf joined Rust's lists in 0.6.6, once its suite ran them, and
+TypeScript's and Go's once theirs did, each through the parser its
+package's `make` builds (`MakeJsonic` for css in Go), whose value is its
+tree. Go's suite runs PGN since then too, and its lists name `pgn`; but
+Go's source cannot empty the typed database chess's Go plugin keeps, so a
+pruned Go run keeps every game (`DIVERGENCE.md` 8).
 
 ### The rule history a source leaves the engine
 
@@ -305,8 +309,9 @@ source bounded every run, pruned or not, whatever the grammar, and a Go
 source bounded none.
 The suite asserts the list in both directions, and measures what pruning
 is for: ten times the records of a JSON, JSON Lines, CSV, YAML, XML or PGN
-document, and in Rust ten times a stylesheet's rules or a grammar's in
-ABNF, EBNF or GBNF, leave the pruned tree holding as many elements as
+document (PGN in Rust and TypeScript), and in Rust and Go ten times a
+stylesheet's rules or a grammar's in ABNF, EBNF or GBNF, leave the pruned
+tree holding as many elements as
 before (none for the worked example's JSON, four for its XML, and for its
 YAML 15 in Rust and 6 in TypeScript and Go), where the tree without
 pruning holds every record.

@@ -22,7 +22,9 @@
 // and the suite asserts both lists in both directions. The second half
 // measures what pruning is for: ten times the records leave the pruned
 // tree as it was, and so do ten times an INI document's sections, a JSON
-// object's members and a toml document's array of tables.
+// object's members and a toml document's array of tables. A stylesheet's
+// rules and a grammar's are not measured here: their maps are not emptied
+// in this runtime, so the rules stay in the tree (DIVERGENCE.md 7).
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
@@ -72,6 +74,10 @@ const SUITE: { name: string; generated: string[]; repo: string }[] = [
   { name: 'markdown', generated: ['paragraphs.md'], repo: 'markdown' },
   { name: 'feed', generated: [], repo: 'feed' },
   { name: 'pgn', generated: ['records.pgn'], repo: 'chess' },
+  { name: 'css', generated: ['rules.css'], repo: 'css' },
+  { name: 'abnf', generated: ['rules.abnf'], repo: 'abnf' },
+  { name: 'ebnf', generated: ['rules.ebnf'], repo: 'ebnf' },
+  { name: 'gbnf', generated: ['rules.gbnf'], repo: 'gbnf' },
 ]
 
 function generated(name: string, records: number): string {
@@ -96,8 +102,46 @@ function generated(name: string, records: number): string {
       return tablesToml(records)
     case 'paragraphs.md':
       return paragraphsMd(records)
+    case 'rules.css':
+      return rulesCss(records)
+    case 'rules.abnf':
+      return rulesAbnf(records)
+    case 'rules.ebnf':
+      return rulesEbnf(records)
+    case 'rules.gbnf':
+      return rulesGbnf(records)
   }
   throw new Error('no generator for ' + name)
+}
+
+// A stylesheet of `records` rules, each of two declarations.
+function rulesCss(records: number): string {
+  let out = ''
+  for (let i = 0; i < records; i++) out += `.c${i} { margin: ${i}px; content: "the text of rule ${i}"; }\n`
+  return out
+}
+
+// An ABNF grammar of `records` rules, each of two alternatives, its lines
+// ended as RFC 5234 ends them.
+function rulesAbnf(records: number): string {
+  let out = ''
+  for (let i = 0; i < records; i++) out += `r${i} = "a${i} the text of rule ${i}" / "b${i}"\r\n`
+  return out
+}
+
+// An EBNF grammar of `records` rules, each of two alternatives.
+function rulesEbnf(records: number): string {
+  let out = ''
+  for (let i = 0; i < records; i++) out += `r${i} ::= "a${i} the text of rule ${i}" | "b${i}"\n`
+  return out
+}
+
+// A GBNF grammar of `records` rules, each of two alternatives, after the
+// `root` that starts it.
+function rulesGbnf(records: number): string {
+  let out = 'root ::= r0\n'
+  for (let i = 0; i < records; i++) out += `r${i} ::= "a${i} the text of rule ${i}" | "b${i}"\n`
+  return out
 }
 
 // A JSON object of `records` members, each an object of three.
