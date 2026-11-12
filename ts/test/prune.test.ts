@@ -471,6 +471,7 @@ describe('pruning', () => {
       ['ini', 'sections.ini'],
       ['toml', 'tables.toml'],
       ['markdown', 'paragraphs.md'],
+      ['css', 'rules.css'],
     ]
     const wrong: string[] = []
     pairs.forEach(([name, doc], i) => {

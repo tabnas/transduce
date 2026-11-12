@@ -113,45 +113,43 @@ Pinned in Rust by `a_space_token_item_carries_its_text_as_its_value`
 has no value` (`ts/test/parser-events.test.ts`) and in Go by
 `TestASpaceTokenItemHasNoValue` (`go/parser_events_test.go`).
 
-## 7. TypeScript does not empty the maps of css and the grammar notations
+## 7. TypeScript does not empty the maps of the grammar notations
 
 `capability::PRUNES_MAPS` (`rs/src/source/capability.rs`) and Go's
-`PrunesMapsGrammars` (`go/capability.go`) name `abnf`, `css`, `ebnf` and
-`gbnf`, and TypeScript's (`ts/src/capability.ts`) names none of them. Each
-is prunable in every runtime, and its rule history is bounded in
-TypeScript and Go: the third shape is what differs, and with it what a
-pruned run leaves of the tree.
+`PrunesMapsGrammars` (`go/capability.go`) name `abnf`, `ebnf` and `gbnf`,
+and TypeScript's (`ts/src/capability.ts`) names none of them. Each is
+prunable in every runtime, and its rule history is bounded in TypeScript
+and Go: the third shape is what differs, and with it what a pruned run
+leaves of the tree.
 
-Each of the four builds a node as a map and appends a finished child to a
-list member of it in the parent's close phase: css's pushers
-(`@cssPushRule` in `items`, `@cssPushDecl` in `decls` and the others), and
-each notation's `prod`, whose `bc` appends a rule to the grammar's
-`rules`. Emptying the map at its close pass deletes the list, and the next
-append finds none. The Rust ports append only while the list is there, or
-make it again, and the Go ports make it again, so their passes are the
-same with the maps emptied. The TypeScript ports push onto it as it was
-(`node.rules.push(...)`), which throws (`Cannot read properties of
-undefined (reading 'push')`): with the maps emptied, 24 of css's 233
-documents end so, 2 of abnf's 229, 2 of ebnf's 83 and 1 of gbnf's 104, the
-generated document of 200 rules among each.
+Each of the three builds a grammar as a map and appends a finished rule to
+its `rules` in the close phase of its `prod` (`bc`). Emptying the map at
+its close pass deletes the list, and the next append finds none. The Rust
+ports append only while the list is there, or make it again, and the Go
+ports make it again, so their passes are the same with the maps emptied.
+The TypeScript ports push onto it as it was (`node.rules.push(...)`),
+which throws (`Cannot read properties of undefined (reading 'push')`):
+with the maps emptied, 2 of abnf's 229 documents end so, 2 of ebnf's 83
+and 1 of gbnf's 104, the generated document of 200 rules among each.
 
-What it costs: a child is appended after its own close pass, so the second
+What it costs: a rule is appended after its own close pass, so the second
 shape, an array's elements before a node whose close the sink has seen,
 never finds it, and the maps are all that would let the tree go. Ten times
-a stylesheet's rules leave TypeScript's pruned tree holding 2,602 and then
-26,002 elements, as many as a run that does not prune keeps, and ten times
-a grammar's rules 802 and then 8,002 (807 and 8,007 in GBNF), each rule's
-alternatives emptied and the rule kept, where Rust's and Go's hold none.
-The repair is the grammars' (tabnas/css#79, tabnas/abnf#134,
-tabnas/ebnf#81, tabnas/gbnf#80): once a TypeScript port makes a missing
-list, as the Go ports do, the suite fails until TypeScript's list names
-it, and this entry closes for it.
+a grammar's rules leave TypeScript's pruned tree holding 802 and then
+8,002 elements (807 and 8,007 in GBNF), each rule's alternatives emptied
+and the rule kept, where Rust's and Go's hold none. The repair is the
+grammars' (tabnas/abnf#134, tabnas/ebnf#81, tabnas/gbnf#80): once a
+TypeScript port makes a missing list, as the Go ports do, the suite fails
+until TypeScript's list names it, and this entry closes for it. css's did
+so in tabnas/css 0.5.20 (tabnas/css#79), and TypeScript's list names css
+since 0.6.8.
 
 Pinned in TypeScript by the prune suite's `every grammar prunes as the
 lists say` (`ts/test/prune.test.ts`), which holds `PRUNES_MAPS` both ways,
 and in Rust and Go by the same suites and by their tests of ten times a
-stylesheet's and a grammar's rules (`rs/tests/prune_test.rs`,
-`go/prune_test.go`).
+grammar's rules (`rs/tests/prune_test.rs`, `go/prune_test.go`).
+TypeScript's test of ten times the records holds a stylesheet's pruned
+tree flat over ten times its rules, as Rust's and Go's do.
 
 ## 8. A pruned run keeps every game of a PGN database in Go
 
