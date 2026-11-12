@@ -4,8 +4,8 @@ github.com/tabnas/alchemy/go v0.4.0 h1:GEkL8ihJwXl27K5ckc7O8eXyNP8nLAxz5h+U4znwC
 github.com/tabnas/alchemy/go v0.4.0/go.mod h1:xvryoA4eXZ04A9p88cVMlimzb5ue30GWd0QvoTIt/s4=
 github.com/tabnas/bnf/go v0.1.33 h1:D+fkcIQYxgp6i21dIl51g07Mi7/N5boZGmtTDnxMDXg=
 github.com/tabnas/bnf/go v0.1.33/go.mod h1:JEiPdU/LKw8sJpxtFpswmOTN/RyBWEzE030yP4eRVBk=
-github.com/tabnas/chess/go v0.1.19 h1:nmWhIxSBoR3sDD3tnQX0N/WBgENWWF76ZmbKKDjjvHk=
-github.com/tabnas/chess/go v0.1.19/go.mod h1:2J2O2voRd9CRcV8yZAUD3i9z+u+MvCH2qFH97GXI0s8=
+github.com/tabnas/chess/go v0.2.0 h1:EEEP1Whmse0D0Lcj5qEf9kB/ej3/AB9oUkyy1kfk3uc=
+github.com/tabnas/chess/go v0.2.0/go.mod h1:+mu7TygC1QkoY5M/B/OBeHnrnvIIS0jrzM3rjY1lA8Y=
 github.com/tabnas/css/go v0.5.19 h1:MsKgQH6coToNpfggnMjbos0a9uCbqaNgUf67Ocy7Ot4=
 github.com/tabnas/css/go v0.5.19/go.mod h1:tbl8EUqm0461RLy9pylQlRPMvjR3WGFeu2+b8pwtg4s=
 github.com/tabnas/csv/go v0.6.10 h1:axgtBWeh21fZVBtwPDvMhnDtH/Cjb/VcyPvXsHL625I=

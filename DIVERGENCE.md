@@ -13,13 +13,11 @@ entry that closes is deleted together with the test that pins it. The
 others keep their numbers, which other repositories cite.
 
 Entry 6 is measured: a token's value as two engines give it and the third
-does not. Entries 7 and 8 are measured too: a verified list that differs,
-because one runtime's ports of four grammars read back what the others'
-do not, and what a pruned run keeps of a tree one runtime's grammar holds
-out of pruning's reach. The rest is what the shared fixtures deliberately
-leave out, because it belongs to the Rust runtime or is not yet decided,
-so that a port does not read the absence of a row as coverage, or as
-licence.
+does not. Entry 7 is measured too: a verified list that differs, because
+one runtime's ports of three grammars read back what the others' do not.
+The rest is what the shared fixtures deliberately leave out, because it
+belongs to the Rust runtime or is not yet decided, so that a port does not
+read the absence of a row as coverage, or as licence.
 
 ## Where these are pinned
 
@@ -150,28 +148,3 @@ and in Rust and Go by the same suites and by their tests of ten times a
 grammar's rules (`rs/tests/prune_test.rs`, `go/prune_test.go`).
 TypeScript's test of ten times the records holds a stylesheet's pruned
 tree flat over ten times its rules, as Rust's and Go's do.
-
-## 8. A pruned run keeps every game of a PGN database in Go
-
-Every runtime's lists name `pgn`, and its passes are the same pruned or
-not, but only Rust's and TypeScript's sources empty the database behind
-the stream. chess's Go plugin keeps the database as a typed value, a
-`*tabnaschess.Database` (a slice of `*Game`), and a Go source empties the
-engine's own containers alone (`[]any`, `*[]any`, `tabnas.ListRef`,
-`map[string]any`, `*tabnas.OrderedMap` and `tabnas.MapRef`), so a Go run
-that prunes a PGN database keeps every game to its end: 200 games of 200,
-and 2,000 of 2,000, where the Rust and TypeScript trees hold none.
-
-Entry 4, "Go does not prune PGN", recorded the same consequence for
-another reason until Go's suite ran PGN: its lists could not name it,
-and a Go run that pruned a PGN database was refused. Go's suite runs PGN
-now (on the maintainer's instruction of 2026-11-11), and its lists name
-`pgn` as the others do. The repair is chess's (tabnas/chess#74): once
-its Go plugin keeps its games where pruning reaches them, this entry
-closes, and pgn's games join Go's test of ten times the records.
-
-Pinned in Go by `TestAPrunedPGNRunKeepsEveryGame` (`go/prune_test.go`),
-and in Rust and TypeScript by their tests of ten times PGN's games
-(`ten_times_the_pgn_games_leave_the_pruned_tree_as_it_was` in
-`rs/tests/prune_test.rs`, and the `pgn` pair of `ten times the records
-leave the pruned tree as it was` in `ts/test/prune.test.ts`).

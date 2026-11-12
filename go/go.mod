@@ -37,7 +37,7 @@ require (
 // the tests alone. abnf, ebnf and gbnf take bnf in turn.
 require (
 	github.com/tabnas/abnf/go v0.5.1
-	github.com/tabnas/chess/go v0.1.19
+	github.com/tabnas/chess/go v0.2.0
 	github.com/tabnas/css/go v0.5.19
 	github.com/tabnas/ebnf/go v0.2.2
 	github.com/tabnas/gbnf/go v0.2.1

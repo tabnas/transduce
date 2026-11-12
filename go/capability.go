@@ -18,9 +18,7 @@ package tabnastransduce
 
 // prunableGrammars are the grammars prune_test.go verified in this
 // runtime: their passes are the same whether ParserEventSource prunes or
-// not, on every document the suite reads them. pgn is among them, but the
-// database chess's plugin keeps is a typed value, which pruning does not
-// empty (DIVERGENCE.md 8).
+// not, on every document the suite reads them.
 var prunableGrammars = []string{
 	"abnf", "css", "csv", "ebnf", "feed", "gbnf", "ini", "json", "json5", "jsonc", "jsonic", "jsonl", "markdown",
 	"pgn", "toml", "xml", "yaml", "zon",

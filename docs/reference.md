@@ -265,9 +265,11 @@ arr, it already has the value []`). css and the grammar notations abnf,
 ebnf and gbnf joined Rust's lists in 0.6.6, once its suite ran them, and
 TypeScript's and Go's once theirs did, each through the parser its
 package's `make` builds (`MakeJsonic` for css in Go), whose value is its
-tree. Go's suite runs PGN since then too, and its lists name `pgn`; but
-Go's source cannot empty the typed database chess's Go plugin keeps, so a
-pruned Go run keeps every game (`DIVERGENCE.md` 8).
+tree. Go's suite runs PGN since then too, and its lists name `pgn`. Until
+tabnas/chess 0.2.0, chess's Go plugin kept a PGN database as a typed
+value the source could not empty, so a pruned Go run kept every game; it
+keeps the games in the engine's own list now, and a pruned Go run keeps
+none, as in Rust and TypeScript (tabnas/chess#74).
 
 ### The rule history a source leaves the engine
 
@@ -309,9 +311,9 @@ source bounded every run, pruned or not, whatever the grammar, and a Go
 source bounded none.
 The suite asserts the list in both directions, and measures what pruning
 is for: ten times the records of a JSON, JSON Lines, CSV, YAML, XML or PGN
-document (PGN in Rust and TypeScript), and in Rust and Go ten times a
-stylesheet's rules or a grammar's in ABNF, EBNF or GBNF, leave the pruned
-tree holding as many elements as
+document, ten times a stylesheet's rules, and in Rust and Go ten times a
+grammar's in ABNF, EBNF or GBNF, leave the pruned tree holding as many
+elements as
 before (none for the worked example's JSON, four for its XML, and for its
 YAML 15 in Rust and 6 in TypeScript and Go), where the tree without
 pruning holds every record.
