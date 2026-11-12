@@ -158,9 +158,9 @@ Pruning empties two shapes for every listed grammar, and a third for some
   merge), toml (a key or a table defined twice, and the table a dotted key
   or a header walks through), xml (a closing tag held to the name of the
   element it closes, which the element's map holds), zon (a field defined
-  twice) and feed (xml's own check). TypeScript's list leaves out css and
-  the grammar notations abnf, ebnf and gbnf too, which Rust's and Go's
-  name: each appends a finished rule to a list member of a map, and its
+  twice) and feed (xml's own check). TypeScript's list leaves out the
+  grammar notations abnf, ebnf and gbnf too, which Rust's and Go's name:
+  each appends a finished rule to a list member of a map, and its
   TypeScript port fails once emptying the map deleted the list, where the
   other ports append only while it is there or make it again
   (`DIVERGENCE.md` 7). Never list a grammar the suite does not pass, and

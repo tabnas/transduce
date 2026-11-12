@@ -8,7 +8,7 @@ go 1.24.7
 require (
 	github.com/tabnas/csv/go v0.6.10
 	github.com/tabnas/json/go v0.5.20
-	github.com/tabnas/jsonic/go v0.7.11
+	github.com/tabnas/jsonic/go v0.7.12
 	github.com/tabnas/parser/go v0.12.20
 )
 
@@ -38,7 +38,7 @@ require (
 require (
 	github.com/tabnas/abnf/go v0.5.1
 	github.com/tabnas/chess/go v0.2.0
-	github.com/tabnas/css/go v0.5.19
+	github.com/tabnas/css/go v0.5.20
 	github.com/tabnas/ebnf/go v0.2.2
 	github.com/tabnas/gbnf/go v0.2.1
 )
