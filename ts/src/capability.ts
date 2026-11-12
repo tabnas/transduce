@@ -57,11 +57,13 @@ export function isPrunable(grammar: string): boolean {
 // their maps back during the parse: yaml, toml, xml, zon and feed find a key
 // or a table defined twice, or a name to merge or resolve, by looking it up
 // in the tree they are building, so with their maps emptied they pass
-// documents they refuse, or refuse documents they pass; css, abnf, ebnf and
-// gbnf append a finished rule to a list member of a map, which emptying
-// the map deletes, and their TypeScript ports then fail where their Rust
-// and Go ports go on (DIVERGENCE.md 7).
+// documents they refuse, or refuse documents they pass; abnf, ebnf and gbnf
+// append a finished rule to a list member of a map, which emptying the map
+// deletes, and their TypeScript ports then fail where their Rust and Go ports
+// go on (DIVERGENCE.md 7). css appended so too until tabnas/css 0.5.20, whose
+// TypeScript makes the list again as its Go port does.
 export const PRUNES_MAPS: readonly string[] = Object.freeze([
+  'css',
   'csv',
   'ini',
   'json',
