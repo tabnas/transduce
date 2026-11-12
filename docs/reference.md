@@ -232,8 +232,8 @@ verified capability. `capability::PRUNABLE` lists `abnf`, `css`, `csv`,
 `jsonl`, `markdown`, `pgn`, `toml`, `xml`, `yaml` and `zon` in every
 runtime, and `capability::PRUNES_MAPS` lists `abnf`, `css`, `csv`, `ebnf`,
 `gbnf`, `ini`, `json`, `json5`, `jsonc`, `jsonic`, `jsonl`, `markdown` and
-`pgn`. TypeScript's `PRUNES_MAPS` omits `abnf`, `css`, `ebnf` and `gbnf`,
-whose TypeScript ports fail once a map's emptying deleted a list member
+`pgn`. TypeScript's `PRUNES_MAPS` omits `abnf`, `ebnf` and `gbnf`, whose
+TypeScript ports fail once a map's emptying deleted a list member
 they append to (`DIVERGENCE.md` 7). `rs/tests/prune_test.rs` and
 its ports run every
 document each grammar reads, pruned and not, and again with its maps
