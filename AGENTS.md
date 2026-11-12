@@ -169,11 +169,11 @@ Pruning empties two shapes for every listed grammar, and a third for some
 What the source cannot reach stays: a grammar's own bookkeeping, outside
 the tree. Rust's toml finds a table by its path from the document's root
 cell, so the table's node is never a closed rule's own, and keeps about ten
-entries in the context's bag per table (tabnas/toml#121); markdown's
-block phase keeps every block it made (tabnas/markdown#100); and chess's
-Go plugin keeps a PGN database as a typed value, which no shape empties,
-so a pruned PGN run keeps every game in Go (`DIVERGENCE.md` 8,
-tabnas/chess#74).
+entries in the context's bag per table (tabnas/toml#121); and markdown's
+block phase keeps every block it made (tabnas/markdown#100). chess's Go
+plugin kept a PGN database as a typed value, which no shape empties, so a
+pruned PGN run kept every game in Go, until tabnas/chess 0.2.0 kept the
+games in the engine's own list (tabnas/chess#74).
 
 **A pruning run bounds the rule history, for a grammar verified to read no
 further.** The engine links each rule to the rule it replaced and the rule

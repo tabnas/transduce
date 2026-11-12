@@ -23,10 +23,9 @@ package tabnastransduce
 // checkout. A grammar is listed only when no document differs, and the
 // suite asserts both lists in both directions. The second half measures
 // what pruning is for: ten times the records leave the pruned tree as it
-// was, and so do ten times an INI document's sections, a JSON object's
-// members, a toml document's array of tables, a stylesheet's rules and a
-// grammar's rules in ABNF, EBNF and GBNF. A PGN database's games stay, in
-// a typed value pruning does not empty (DIVERGENCE.md 8).
+// was, and so do ten times a PGN database's games, an INI document's
+// sections, a JSON object's members, a toml document's array of tables, a
+// stylesheet's rules and a grammar's rules in ABNF, EBNF and GBNF.
 
 import (
 	"fmt"
@@ -495,7 +494,7 @@ func TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas(t *testing.T) {
 	pairs := [][2]string{
 		{"json", "records.json"}, {"jsonc", "records.json"}, {"json5", "records.json"},
 		{"jsonic", "records.json"}, {"jsonl", "records.jsonl"}, {"yaml", "records.yaml"},
-		{"xml", "records.xml"}, {"csv", "records.csv"},
+		{"xml", "records.xml"}, {"csv", "records.csv"}, {"pgn", "records.pgn"},
 		{"json", "members.json"}, {"ini", "sections.ini"}, {"toml", "tables.toml"},
 		{"markdown", "paragraphs.md"},
 		{"css", "rules.css"}, {"abnf", "rules.abnf"}, {"ebnf", "rules.ebnf"}, {"gbnf", "rules.gbnf"},
@@ -519,35 +518,44 @@ func TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas(t *testing.T) {
 	}
 }
 
-// TestAPrunedPGNRunKeepsEveryGame pins DIVERGENCE.md entry 8. chess's Go
-// plugin keeps its database as a typed *tabnaschess.Database, a slice of
-// *Game, and pruning empties the engine's own lists and maps, so a pruned
-// run of a PGN database keeps every game, where Rust's and TypeScript's
-// sources empty the database behind the stream. Once the plugin keeps its
-// games where pruning reaches them, this test fails: delete it and the
-// entry, and add pgn's records to
-// TestTenTimesTheRecordsLeaveThePrunedTreeAsItWas.
-func TestAPrunedPGNRunKeepsEveryGame(t *testing.T) {
+// TestAPrunedPGNRunKeepsNoGame: chess's Go plugin keeps a database's games
+// in the engine's own list, a *[]any of *Game, since tabnas/chess 0.2.0
+// (tabnas/chess#74), and a pruning source empties that list at each close
+// pass on it, so a pruned run of a PGN database keeps no game, as Rust's
+// and TypeScript's do, not even in the array behind the list; a run that
+// does not prune keeps every one. Until 0.2.0 the plugin kept a typed
+// *tabnaschess.Database, which pruning does not empty, and a pruned Go run
+// kept every game.
+func TestAPrunedPGNRunKeepsNoGame(t *testing.T) {
 	for _, games := range []int{200, 2000} {
-		source := NewParserEventSource(makeGrammar("pgn"), pruneGenerated("records.pgn", games)).Grammar("pgn").Prune()
-		var rec passRecorder
-		_, f, value := source.RunWithValue(&rec)
-		if f != nil {
-			t.Fatalf("%d games: %v", games, f)
-		}
-		db, ok := value.(*tabnaschess.Database)
-		if !ok || db == nil {
-			t.Fatalf("%d games: the value is %T, not chess's database", games, value)
-		}
-		kept := 0
-		for _, game := range *db {
-			if game != nil {
-				kept++
+		for _, prune := range []bool{true, false} {
+			source := NewParserEventSource(makeGrammar("pgn"), pruneGenerated("records.pgn", games)).Grammar("pgn")
+			if prune {
+				source.Prune()
 			}
-		}
-		t.Logf("pgn: %d games pruned, %d kept", games, kept)
-		if kept != games {
-			t.Errorf("a pruned run of %d games kept %d of them: DIVERGENCE.md entry 8 may have closed", games, kept)
+			var rec passRecorder
+			_, f, value := source.RunWithValue(&rec)
+			if f != nil {
+				t.Fatalf("%d games: %v", games, f)
+			}
+			db, ok := value.(*[]any)
+			if !ok || db == nil {
+				t.Fatalf("%d games: the value is %T, not chess's database", games, value)
+			}
+			kept := 0
+			for _, game := range (*db)[:cap(*db)] {
+				if _, ok := game.(*tabnaschess.Game); ok {
+					kept++
+				}
+			}
+			want := games
+			if prune {
+				want = 0
+			}
+			t.Logf("pgn: %d games, pruned %v, %d kept", games, prune, kept)
+			if kept != want {
+				t.Errorf("a run of %d games, pruned %v, kept %d of them, not %d", games, prune, kept, want)
+			}
 		}
 	}
 }
