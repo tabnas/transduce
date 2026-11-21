@@ -383,7 +383,7 @@ JsonEvents | Selector | Text | String | Record | Fn`. A binding of stream type
 may be consumed at most once in a scope (`STREAM_REUSED`); a `fn` body may not
 capture a one-shot stream from an enclosing scope; unknown or dynamic
 higher-order functions are `STREAMABILITY_UNKNOWN` in strict mode (default
-for `aless`, `alchemy check`). Stdlib operators carry signatures and effect
+for `aless`, `dmog check`). Stdlib operators carry signatures and effect
 metadata in a registry (`stdlib/registry.rs`): retention scope, readiness,
 order constraints, how callback effects propagate. `explain()` prints the
 spec §15.5 report from the `EffectSummary`.
